@@ -48,6 +48,7 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
     term.attachCustomKeyEventHandler((event) => {
       if (!event.ctrlKey || !event.shiftKey || !["c", "v"].includes(event.key.toLowerCase())) return true;
       if (event.type === "keydown") {
+        event.preventDefault();
         if (event.key.toLowerCase() === "c") void navigator.clipboard.writeText(term.getSelection()).catch(report);
         else void navigator.clipboard.readText().then((text) => { if (!disposed) term.paste(text); }).catch(report);
       }
