@@ -573,9 +573,6 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .terminal-tab-close { color: #999daa; padding: 3px 7px; }
 .terminal-tab-close:hover { color: #fff; background: #3b3036; }
 .terminal-add, .console-collapse { padding: 4px 12px; }
-.terminal-toolbar { display: flex; align-items: center; gap: 10px; padding: 6px 12px; flex-shrink: 0; background: #1e1f24; border-bottom: 1px solid #2a2b30; }
-.terminal-hint { flex: 1; color: #8c909e; font-size: 12px; }
-.terminal-status { font-size: 12px; }
 .terminal-connected { color: #9bcea5; }
 .terminal-failed { color: #eda4a4; }
 .terminal-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: inline-block; margin-right: 7px; vertical-align: middle; }

@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { api, type TerminalStatus } from "../src/api";
 import { useTerminalStore, terminalActive } from "../src/terminalStore";
 import { terminalInput, readTerminal } from "../src/terminalIO";
@@ -22,6 +24,13 @@ function reset(t: test.TestContext) {
   t.after(() => { endConsoleTabCycle(); useTerminalStore.setState(before); });
   return useTerminalStore.getState();
 }
+
+test("terminal page does not restore the duplicate status and close toolbar", () => {
+  const component = readFileSync(resolve("src/components/TerminalPage.tsx"), "utf8");
+  const styles = readFileSync(resolve("src/styles.css"), "utf8");
+  assert.doesNotMatch(component, /terminal-toolbar|t\("terminal\.close"\)/);
+  assert.doesNotMatch(styles, /\.terminal-toolbar\b/);
+});
 
 test("terminals are independent from runs and do not save or upload the workspace", async (t) => {
   const s = reset(t);

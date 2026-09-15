@@ -109,15 +109,6 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
   };
 
   return <section className="terminal-page" role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} hidden={!visible}>
-    <div className="terminal-toolbar">
-      <span className={`terminal-status terminal-${tab.status?.state ?? "connecting"}`} aria-live="polite">
-        {tab.busy ? t("terminal.busy") : tab.status ? t(`terminal.${tab.status.state}`) : t("terminal.notConnected")}
-        {tab.status?.exit_code != null && ` · exit=${tab.status.exit_code}`}
-      </span>
-      <span className="terminal-hint">{t("terminal.hint")}</span>
-      {!terminalActive(tab) && <button onClick={() => void useTerminalStore.getState().reconnect(tab.id)}>{t("terminal.reconnect")}</button>}
-      <button disabled={tab.busy} title={t("terminal.closeTitle")} onClick={() => void useTerminalStore.getState().close(tab.id)}>{t("terminal.close")}</button>
-    </div>
     {(tab.error || tab.status?.error) && <div className="terminal-error" role="alert">{tab.error || tab.status?.error}</div>}
     <div className="console-body" ref={container} onContextMenu={openMenu} />
     <ContextMenu menu={menu} onClose={() => setMenu(null)} />
