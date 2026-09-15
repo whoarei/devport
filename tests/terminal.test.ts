@@ -32,6 +32,14 @@ test("terminal page does not restore the duplicate status and close toolbar", ()
   assert.doesNotMatch(styles, /\.terminal-toolbar\b/);
 });
 
+test("terminal quick-add targets the default device and keeps a separate device picker", () => {
+  const component = readFileSync(resolve("src/components/ConsolePanel.tsx"), "utf8");
+  assert.match(component, /defaultDevice = devices\.find\(\(device\) => device\.is_default\)/);
+  assert.match(component, /onClick=\{\(\) => defaultDevice && open\(defaultDevice\.id\)\}>＋<\/button>/);
+  assert.match(component, /className="terminal-device-picker"/);
+  assert.match(component, /aria-label=\{t\("console\.chooseTerminalDevice"\)\}/);
+});
+
 test("terminals are independent from runs and do not save or upload the workspace", async (t) => {
   const s = reset(t);
   const runState = useAppStore.getState();

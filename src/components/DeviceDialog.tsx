@@ -7,6 +7,7 @@ import { useAppStore } from "../store";
 export const emptyDevice = (): DeviceProfile => ({
   id: "",
   name: "",
+  is_default: false,
   transport: "ssh",
   serial: { port: "", baud_rate: 115200 },
   wsl: { distribution: "", user: "" },
@@ -26,6 +27,7 @@ export function DeviceDialog() {
   const { t } = useTranslation();
   const editing = useAppStore((s) => s.editingDevice);
   const loadDevices = useAppStore((s) => s.loadDevices);
+  const selectDevice = useAppStore((s) => s.selectDevice);
   const closeDeviceDialog = useAppStore((s) => s.closeDeviceDialog);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [ports, setPorts] = useState<string[]>([]);
@@ -68,8 +70,9 @@ export function DeviceDialog() {
 
   const save = async (d: DeviceProfile) => {
     try {
-      await api.saveDevice(d);
+      const saved = await api.saveDevice(d);
       await loadDevices();
+      if (saved.is_default) selectDevice(saved.id);
       closeDeviceDialog();
     } catch (e) { setTestResult(t("device.saveFailed", { message: String(e) })); }
   };
@@ -102,6 +105,12 @@ export function DeviceDialog() {
             onChange={(e) => update({ name: e.target.value })}
           />
         </label>
+        <label className="checkbox-label">
+          <input type="checkbox" checked={editing.is_default} disabled={editing.is_default}
+            onChange={(e) => update({ is_default: e.target.checked })} />
+          {t("device.defaultDevice")}
+        </label>
+        <p className="field-hint">{t("device.defaultDeviceHint")}</p>
         <label>
           {t("device.transport")}
           <select value={editing.transport} disabled={testing} onChange={(e) => {

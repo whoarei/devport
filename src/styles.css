@@ -566,13 +566,18 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .console-tabs-bar { display: flex; align-items: stretch; flex-shrink: 0; min-height: 34px; background: #1b1c21; border-bottom: 1px solid #34353d; }
 .console-tabs { display: flex; flex: 1; min-width: 0; overflow-x: auto; }
 .console-tab { display: flex; flex-shrink: 0; }
-.console-tabs button, .console-collapse, .terminal-add { border: 0; border-radius: 0; background: transparent; white-space: nowrap; }
+.console-tabs button, .console-collapse, .terminal-add, .terminal-device-picker { border: 0; border-radius: 0; background: transparent; white-space: nowrap; }
 .console-tabs button[role="tab"] { padding: 7px 12px; border-bottom: 2px solid transparent; color: #9fa2b0; }
 .console-tabs button[aria-selected="true"] { color: #e5eafa; background: #242630; border-bottom-color: #8fa9e8; }
 .console-tabs button:focus-visible { outline: 1px solid #8fa9e8; outline-offset: -3px; }
 .terminal-tab-close { color: #999daa; padding: 3px 7px; }
 .terminal-tab-close:hover { color: #fff; background: #3b3036; }
-.terminal-add, .console-collapse { padding: 4px 12px; }
+.terminal-add-group { display: flex; flex-shrink: 0; border-left: 1px solid #2f3037; }
+.terminal-add { padding: 4px 10px 4px 12px; }
+.terminal-device-picker { padding: 4px 8px 4px 5px; color: #aeb2c0; }
+.terminal-device-picker-icon { display: block; width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg); }
+.terminal-add:hover:not(:disabled), .terminal-device-picker:hover:not(:disabled) { background: #2a2c34; color: #fff; }
+.console-collapse { padding: 4px 12px; }
 .terminal-connected { color: #9bcea5; }
 .terminal-failed { color: #eda4a4; }
 .terminal-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: inline-block; margin-right: 7px; vertical-align: middle; }
@@ -895,6 +900,10 @@ button:disabled {
   font-size: 12px;
   color: #999;
 }
+
+.modal .checkbox-label { flex-direction: row; align-items: center; gap: 7px; color: #d3d5dd; }
+.modal .checkbox-label input { margin: 0; }
+.field-hint { margin: -6px 0 0 23px; color: #777b88; font-size: 11px; }
 
 .modal-actions {
   display: flex;

@@ -121,7 +121,7 @@ export function RunToolbar() {
       <select aria-label={t("run.selectDeviceAria")} value={selectedDeviceId ?? ""} onChange={(e) => selectDevice(e.target.value || null)}>
         {devices.length === 0 && <option value="">{t("run.noDevicesHint")}</option>}
         {devices.map((d) => (
-          <option key={d.id} value={d.id}>{deviceLabel(d)}</option>
+          <option key={d.id} value={d.id}>{deviceLabel(d)}{d.is_default ? t("device.defaultSuffix") : ""}</option>
         ))}
       </select>
       <select value={mode} onChange={(e) => setDraft({ mode: e.target.value as "script" | "command" })}>

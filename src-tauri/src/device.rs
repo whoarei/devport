@@ -57,6 +57,7 @@ mod tests {
             "id": "old", "name": "old board", "host": "localhost", "username": "root"
         }))
         .unwrap();
+        assert!(!ssh.is_default);
         assert_eq!(ssh.transport, TransportKind::Ssh);
         assert!(ssh.serial.is_none());
         ssh.validate().unwrap();
@@ -119,6 +120,26 @@ mod tests {
         // local 能力：pipe 与 resize 均支持
         let caps = TransportKind::Local.capabilities();
         assert!(caps.pipe && caps.resize);
+    }
+
+    #[test]
+    fn default_device_normalization_migrates_missing_and_deduplicates_flags() {
+        let profile = |id: &str, is_default: bool| -> DeviceProfile {
+            serde_json::from_value(serde_json::json!({
+                "id": id, "name": id, "host": "localhost", "username": "root",
+                "is_default": is_default
+            }))
+            .unwrap()
+        };
+        let mut missing = vec![profile("first", false), profile("second", false)];
+        normalize_default(&mut missing);
+        assert!(missing[0].is_default);
+        assert!(!missing[1].is_default);
+
+        let mut duplicate = vec![profile("first", true), profile("second", true)];
+        normalize_default(&mut duplicate);
+        assert!(duplicate[0].is_default);
+        assert!(!duplicate[1].is_default);
     }
 }
 
@@ -189,6 +210,9 @@ impl Default for AuthMethod {
 pub struct DeviceProfile {
     pub id: String,
     pub name: String,
+    /// The device preselected for runs and used by the terminal quick-add action.
+    #[serde(default)]
+    pub is_default: bool,
     #[serde(default)]
     pub transport: TransportKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -295,8 +319,9 @@ impl DeviceStore {
             return Ok(Vec::new());
         }
         let data = std::fs::read_to_string(&self.path)?;
-        let devices: Vec<DeviceProfile> =
+        let mut devices: Vec<DeviceProfile> =
             serde_json::from_str(&data).map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
+        normalize_default(&mut devices);
         Ok(devices)
     }
 
@@ -313,17 +338,29 @@ impl DeviceStore {
         if device.id.is_empty() {
             device.id = uuid::Uuid::new_v4().to_string();
         }
+        if device.is_default {
+            devices
+                .iter_mut()
+                .for_each(|existing| existing.is_default = false);
+        }
         match devices.iter_mut().find(|d| d.id == device.id) {
             Some(existing) => *existing = device.clone(),
             None => devices.push(device.clone()),
         }
+        normalize_default(&mut devices);
+        let saved = devices
+            .iter()
+            .find(|candidate| candidate.id == device.id)
+            .cloned()
+            .expect("saved device must remain in the device list");
         self.write_all(&devices)?;
-        Ok(device)
+        Ok(saved)
     }
 
     pub fn delete(&self, id: &str) -> Result<()> {
         let mut devices = self.list()?;
         devices.retain(|d| d.id != id);
+        normalize_default(&mut devices);
         self.write_all(&devices)
     }
 
@@ -335,5 +372,17 @@ impl DeviceStore {
             .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
         std::fs::write(&self.path, data)?;
         Ok(())
+    }
+}
+
+/// Keep exactly one default whenever at least one device exists. Old profiles did
+/// not have this field, so the first device becomes their migration default.
+fn normalize_default(devices: &mut [DeviceProfile]) {
+    let keep = devices
+        .iter()
+        .position(|device| device.is_default)
+        .unwrap_or(0);
+    for (index, device) in devices.iter_mut().enumerate() {
+        device.is_default = index == keep;
     }
 }

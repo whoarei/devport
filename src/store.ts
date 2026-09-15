@@ -88,6 +88,12 @@ let loadSequence = 0;
 /** 工作区被替换后作废仍在进行的目录加载与变更响应 */
 let workspaceSequence = 0;
 
+/** Preserve an explicit current choice; otherwise prefer the configured default. */
+export function selectedDeviceAfterLoad(devices: DeviceProfile[], current: string | null): string | null {
+  if (current && devices.some((device) => device.id === current)) return current;
+  return devices.find((device) => device.is_default)?.id ?? devices[0]?.id ?? null;
+}
+
 /** 工作区变更（新建 / 重命名 / 删除）的前置检查，返回可见提示或 null */
 function workspaceChangeBlocker(
   state: Pick<AppState, "workspaceDir" | "workspaceMutating" | "saving" | "starting" | "guarding" | "runs">,
@@ -178,10 +184,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const devices = await api.listDevices();
     set((s) => ({
       devices,
-      selectedDeviceId:
-        s.selectedDeviceId && devices.some((d) => d.id === s.selectedDeviceId)
-          ? s.selectedDeviceId
-          : devices[0]?.id ?? null,
+      selectedDeviceId: selectedDeviceAfterLoad(devices, s.selectedDeviceId),
     }));
   },
 

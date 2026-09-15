@@ -20,7 +20,9 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
   const updating = useAppStore((s) => s.updating);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [error, setError] = useState("");
-  const addButton = useRef<HTMLButtonElement>(null);
+  const deviceButton = useRef<HTMLButtonElement>(null);
+  const defaultDevice = devices.find((device) => device.is_default) ?? devices[0];
+  const defaultTerminalAvailable = !!defaultDevice && defaultDevice.transport !== "serial";
   const activeRunId = useAppStore((s) => s.activeRunId);
   const previousRun = useRef(activeRunId);
   useEffect(() => {
@@ -36,7 +38,7 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
   };
   const newTerminalEntries = (): MenuEntry[] => devices.length
     ? devices.map((device) => ({
-      label: `${deviceLabel(device)}${device.transport === "serial" ? t("console.serialNoTerminal") : ""}`,
+      label: `${deviceLabel(device)}${device.is_default ? t("device.defaultSuffix") : ""}${device.transport === "serial" ? t("console.serialNoTerminal") : ""}`,
       disabled: device.transport === "serial",
       onSelect: () => open(device.id),
     }))
@@ -48,7 +50,7 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
   };
   const toggleMenu = () => {
     if (menu) { setMenu(null); return; }
-    const rect = addButton.current?.getBoundingClientRect();
+    const rect = deviceButton.current?.getBoundingClientRect();
     openNewTerminalMenu(rect?.left ?? 0, (rect?.bottom ?? 0) + 4);
   };
   const openTabsBlankMenu = (event: MouseEvent<HTMLDivElement>) => {
@@ -125,7 +127,18 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
           <button className="terminal-tab-close" disabled={tab.busy} aria-label={t("console.closeTerminalAria", { name: tab.deviceName, index: index + 1 })} onClick={() => void useTerminalStore.getState().close(tab.id)}>×</button>
         </div>)}
       </div>
-      <button className="terminal-add" ref={addButton} aria-label={t("console.newTerminal")} aria-haspopup="menu" aria-expanded={!!menu} disabled={updating || shuttingDown || tabs.length >= 8} onClick={toggleMenu}>＋</button>
+      <div className="terminal-add-group">
+        <button className="terminal-add" aria-label={t("console.newDefaultTerminal")} title={defaultTerminalAvailable
+          ? t("console.newDefaultTerminalTitle", { name: defaultDevice.name })
+          : defaultDevice?.transport === "serial" ? t("console.defaultSerialNoTerminal") : t("console.noDefaultDevice")}
+          disabled={updating || shuttingDown || tabs.length >= 8 || !defaultTerminalAvailable}
+          onClick={() => defaultDevice && open(defaultDevice.id)}>＋</button>
+        <button className="terminal-device-picker" ref={deviceButton} aria-label={t("console.chooseTerminalDevice")}
+          title={t("console.chooseTerminalDevice")} aria-haspopup="menu" aria-expanded={!!menu}
+          disabled={updating || shuttingDown || tabs.length >= 8} onClick={toggleMenu}>
+          <span className="terminal-device-picker-icon" aria-hidden="true" />
+        </button>
+      </div>
     </div>
     <ContextMenu menu={menu} onClose={() => setMenu(null)} />
     {error && <div className="terminal-error" role="alert">{error}</div>}

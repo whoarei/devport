@@ -161,13 +161,13 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
           onSelect: () => void useAppStore.getState().setWorkspaceDir(null),
         },
         { type: "separator" },
-        { label: t("menu.addDevice"), onSelect: () => useAppStore.getState().openDeviceDialog(emptyDevice()) },
+        { label: t("menu.addDevice"), onSelect: () => useAppStore.getState().openDeviceDialog({ ...emptyDevice(), is_default: devices.length === 0 }) },
         {
           label: t("menu.editDevice"),
           disabled: devices.length === 0,
           children: devices.length > 0
             ? devices.map((device) => ({
-                label: deviceLabel(device),
+                label: `${deviceLabel(device)}${device.is_default ? t("device.defaultSuffix") : ""}`,
                 onSelect: () => useAppStore.getState().openDeviceDialog({ ...device }),
               }))
             : [{ label: t("menu.noDevices"), disabled: true }],

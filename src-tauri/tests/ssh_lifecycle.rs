@@ -124,6 +124,7 @@ async fn run_case(behavior: Behavior, timeout: u64) -> (RunStatus, Vec<u8>) {
         let _ = connection.await;
     });
     let device = DeviceProfile {
+        is_default: false,
         transport: Default::default(),
         serial: None,
         wsl: None,

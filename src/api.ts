@@ -7,6 +7,7 @@ export type AuthMethod =
 export interface DeviceProfile {
   id: string;
   name: string;
+  is_default: boolean;
   transport: "ssh" | "serial" | "wsl" | "local";
   serial?: { port: string; baud_rate: number } | null;
   wsl?: { distribution: string; user: string } | null;

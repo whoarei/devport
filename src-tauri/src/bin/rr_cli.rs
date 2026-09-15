@@ -65,6 +65,7 @@ async fn main() {
         .unwrap();
 
         let device = DeviceProfile {
+            is_default: false,
             transport: Default::default(),
             serial: None,
             wsl: None,
@@ -207,6 +208,7 @@ async fn main() {
     std::fs::create_dir_all(&config_dir).ok();
 
     let device = DeviceProfile {
+        is_default: false,
         transport: Default::default(),
         serial: None,
         wsl: None,
