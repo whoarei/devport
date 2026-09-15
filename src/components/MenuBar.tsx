@@ -12,6 +12,7 @@ import { panelVisibilityPatch } from "../layoutState";
 import { panelsInDock } from "../panels/registry";
 import { emptyDevice, deviceLabel } from "./DeviceDialog";
 import { openWorkspace } from "../workspacePicker";
+import { UI_ZOOM_LEVELS, type UiZoomAction } from "../uiZoom";
 
 interface MenuEntry {
   type?: "item" | "checkbox" | "separator";
@@ -20,6 +21,7 @@ interface MenuEntry {
   disabled?: boolean;
   onSelect?: () => void;
   children?: MenuEntry[];
+  shortcut?: string;
 }
 
 interface TopMenu {
@@ -74,11 +76,17 @@ function MenuItem({ entry, close }: { entry: MenuEntry; close: () => void }) {
     >
       <span className="menu-check" aria-hidden="true">{entry.checked ? "✓" : ""}</span>
       <span className="menu-label">{entry.label}</span>
+      {entry.shortcut && <span className="menu-shortcut" aria-hidden="true">{entry.shortcut}</span>}
     </button>
   );
 }
 
-export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onCheckUpdate: () => void }) {
+export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
+  uiZoom: number;
+  onUiZoom: (action: UiZoomAction) => void;
+  onAbout: () => void;
+  onCheckUpdate: () => void;
+}) {
   const { t } = useTranslation();
   const [openMenu, setOpenMenu] = useState<number | null>(null);
   // 本地持有偏好状态：切到「跟随系统」且解析结果不变时 changeLanguage 不触发重渲染
@@ -103,6 +111,7 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
   const [autostart, setAutostart] = useState(false);
   const tabCycleOrder = useTerminalStore((state) => state.tabCycleOrder);
   const setTabCycleOrder = useTerminalStore((state) => state.setTabCycleOrder);
+  const shortcutModifier = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
 
   useEffect(() => {
     void isAutostartEnabled().then(setAutostart).catch(() => {});
@@ -218,6 +227,10 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
             { type: "checkbox", label: "English", checked: languagePreference === "en", onSelect: () => chooseLanguage("en") },
           ],
         },
+        { type: "separator" },
+        { label: t("menu.zoomIn"), shortcut: `${shortcutModifier}++`, disabled: uiZoom >= UI_ZOOM_LEVELS[UI_ZOOM_LEVELS.length - 1], onSelect: () => onUiZoom("in") },
+        { label: t("menu.zoomOut"), shortcut: `${shortcutModifier}+-`, disabled: uiZoom <= UI_ZOOM_LEVELS[0], onSelect: () => onUiZoom("out") },
+        { label: t("menu.resetZoom", { percent: uiZoom }), shortcut: `${shortcutModifier}+0`, disabled: uiZoom === 100, onSelect: () => onUiZoom("reset") },
         { type: "separator" },
         { label: t("menu.resetLayout"), onSelect: () => resetLayout() },
       ],

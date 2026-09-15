@@ -12,12 +12,19 @@ import { startOneClickUpdate } from "../updateFlow";
 import { updateButtonLabel, type UpdateButtonPhase } from "../updateStatus";
 import { MenuBar } from "./MenuBar";
 import appIcon from "../../src-tauri/icons/64x64.png";
+import type { UiZoomAction } from "../uiZoom";
 
 function reportWindowError(error: unknown) {
   useAppStore.setState({ editorError: i18n.t("app.windowError", { message: errorMessage(error) }) });
 }
 
-export function TitleBar({ closeReady, onAbout, onCheckUpdate }: { closeReady: boolean; onAbout: () => void; onCheckUpdate: () => void }) {
+export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
+  closeReady: boolean;
+  uiZoom: number;
+  onUiZoom: (action: UiZoomAction) => void;
+  onAbout: () => void;
+  onCheckUpdate: () => void;
+}) {
   const { t } = useTranslation();
   const workspaceDir = useAppStore((state) => state.workspaceDir);
   const availableUpdate = useAppStore((state) => state.availableUpdate);
@@ -62,7 +69,7 @@ export function TitleBar({ closeReady, onAbout, onCheckUpdate }: { closeReady: b
       <div className="titlebar-brand">
         <img className="titlebar-logo" src={appIcon} alt="" width="18" height="18" />
       </div>
-      <MenuBar onAbout={onAbout} onCheckUpdate={onCheckUpdate} />
+      <MenuBar uiZoom={uiZoom} onUiZoom={onUiZoom} onAbout={onAbout} onCheckUpdate={onCheckUpdate} />
       <div className="titlebar-drag" data-tauri-drag-region>
         <div className="titlebar-workspace" data-tauri-drag-region title={workspaceDir ?? t("titlebar.noWorkspaceTitle")}>
           <span className="titlebar-workspace-name">{workspaceName ?? t("titlebar.noWorkspace")}</span>

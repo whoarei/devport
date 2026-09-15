@@ -24,6 +24,7 @@ Remote Runner 是基于 Tauri 的桌面工具，用于在远程设备上运行�
 - 输出保留原始字节：Rust 后端将数据编码为 Base64 发送，前端解码后由 xterm.js 渲染。
 - WSL 通过 `wsl.exe` 直接启动本机发行版内的进程，支持 PTY、pipe、工作区上传、交互输入、缩放、停止与超时，无需 SSH 服务或认证。
 - 本机 Shell 直接在本机以指定 shell 运行（Windows：pwsh、powershell、cmd、msys2、Git Bash；macOS/Linux：bash、zsh、sh），工作区原地执行，支持 PTY、pipe、交互输入、缩放、停止与超时。
+- 支持通过 `Ctrl/Cmd + +`、`Ctrl/Cmd + -` 缩放整个界面，`Ctrl/Cmd + 0` 恢复 100%；缩放比例会自动保存。
 
 ## 环境要求
 

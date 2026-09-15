@@ -153,6 +153,11 @@ body,
   color: #9295a2;
 }
 
+.menu-shortcut {
+  margin-left: 18px;
+  color: #9295a2;
+}
+
 .menu-separator {
   height: 1px;
   margin: 4px 8px;

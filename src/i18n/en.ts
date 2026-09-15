@@ -27,6 +27,9 @@ export const en: Messages = {
     sidebarPosition: "Sidebar Position",
     left: "Left",
     right: "Right",
+    zoomIn: "Zoom In",
+    zoomOut: "Zoom Out",
+    resetZoom: "Reset Zoom ({{percent}}%)",
     resetLayout: "Reset Layout",
     tabCycleOrder: "Ctrl+Tab Order",
     tabCycleSequential: "Sequential",
@@ -59,6 +62,7 @@ export const en: Messages = {
     resizeSidebar: "Adjust sidebar width",
     resizeSideSplit: "Adjust workspace/history panel split",
     resizeCenter: "Adjust editor/control panel split",
+    zoomFailed: "Failed to zoom the interface: {{message}}",
   },
   editor: {
     reloadDisk: "Reload from disk…",

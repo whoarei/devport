@@ -71,14 +71,15 @@
 
 ## 前端 localStorage
 
-WebView 的 localStorage 中只有两个键，均为带版本后缀的 JSON：
+WebView 的 localStorage 使用带版本后缀的键保存界面偏好：
 
 | 键 | 内容 | 上限 |
 | --- | --- | --- |
 | `remote-runner.layout.v1` | 界面布局：工作区/历史/控制台三个面板的显隐与折叠、编辑区折叠、侧栏宽度（200–480 px）与左右位置、侧栏上下分割比（0.2–0.8）、控制台高度（120–720 px） | 单对象 |
 | `remote-runner.recent-workspaces.v1` | 最近打开的工作区目录路径（字符串数组，去重） | 10 条 |
+| `remote-runner.ui-zoom.v1` | 整个 WebView 的界面缩放百分比；允许 70%–200% 的预设档位 | 单个数值 |
 
-两者都有防御性读取：坏 JSON、缺字段、越界值逐字段回落到默认值（`normalizeLayout` / `normalizeHistory`）；写入失败仅告警不中断。localStorage 属于 WebView 数据目录，与应用配置目录不是同一位置，清除 WebView 数据不影响设备配置与运行历史。
+这些偏好都有防御性读取：坏数据、缺字段、越界值会回落到默认值；写入失败不会中断应用。localStorage 属于 WebView 数据目录，与应用配置目录不是同一位置，清除 WebView 数据不影响设备配置与运行历史。
 
 ## 用户工作区目录
 

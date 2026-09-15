@@ -28,6 +28,9 @@ export const zh = {
     sidebarPosition: "侧栏位置",
     left: "左侧",
     right: "右侧",
+    zoomIn: "放大",
+    zoomOut: "缩小",
+    resetZoom: "重置缩放（{{percent}}%）",
     resetLayout: "重置布局",
     tabCycleOrder: "Ctrl+Tab 切换顺序",
     tabCycleSequential: "左右顺序",
@@ -60,6 +63,7 @@ export const zh = {
     resizeSidebar: "调整侧栏宽度",
     resizeSideSplit: "调整工作区与历史面板比例",
     resizeCenter: "调整文件编辑区与控制面板比例",
+    zoomFailed: "界面缩放失败：{{message}}",
   },
   editor: {
     reloadDisk: "重新加载磁盘内容…",

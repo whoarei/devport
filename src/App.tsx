@@ -1,4 +1,4 @@
-import { Fragment, Suspense, useEffect, useRef, useState, type CSSProperties } from "react";
+import { Fragment, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { onRunEvents, api } from "./api";
 import { useAppStore } from "./store";
@@ -19,6 +19,7 @@ import { panelsInDock, type PanelId } from "./panels/registry";
 import { PANEL_COMPONENTS } from "./panels/components";
 import { checkForAvailableUpdate } from "./updateStatus";
 import { endConsoleTabCycle, handleConsoleTabKeyDown, handleConsoleTabKeyUp } from "./consoleTabs";
+import { applyUiZoom, changeUiZoom, loadUiZoom, saveUiZoom, uiZoomShortcut, type UiZoomAction } from "./uiZoom";
 
 export default function App() {
   const { t } = useTranslation();
@@ -28,6 +29,26 @@ export default function App() {
   const [closeReady, setCloseReady] = useState(false);
   const aboutDialog = useRef<HTMLDialogElement>(null);
   const [aboutAutoCheck, setAboutAutoCheck] = useState(0);
+  const initialUiZoom = useRef(loadUiZoom());
+  const uiZoomRef = useRef(initialUiZoom.current);
+  const [uiZoom, setUiZoom] = useState(initialUiZoom.current);
+
+  const updateUiZoom = useCallback((action: UiZoomAction) => {
+    const next = changeUiZoom(uiZoomRef.current, action);
+    if (next === uiZoomRef.current) return;
+    uiZoomRef.current = next;
+    setUiZoom(next);
+    saveUiZoom(next);
+    void applyUiZoom(next).catch((error) => {
+      useAppStore.setState({ editorError: i18n.t("app.zoomFailed", { message: errorMessage(error) }) });
+    });
+  }, []);
+
+  useEffect(() => {
+    void applyUiZoom(initialUiZoom.current).catch((error) => {
+      useAppStore.setState({ editorError: i18n.t("app.zoomFailed", { message: errorMessage(error) }) });
+    });
+  }, []);
 
   useEffect(() => {
     const report = (error: unknown) => useAppStore.setState({ editorError: errorMessage(error) });
@@ -44,7 +65,16 @@ export default function App() {
 
   useEffect(() => {
     // capture 阶段统一接管，确保事件不会先后被 xterm 与 window 处理两次。
-    const onKeyDown = (event: KeyboardEvent) => { handleConsoleTabKeyDown(event); };
+    const onKeyDown = (event: KeyboardEvent) => {
+      const zoomAction = uiZoomShortcut(event);
+      if (zoomAction) {
+        event.preventDefault();
+        event.stopPropagation();
+        updateUiZoom(zoomAction);
+        return;
+      }
+      handleConsoleTabKeyDown(event);
+    };
     const onKeyUp = (event: KeyboardEvent) => { handleConsoleTabKeyUp(event); };
     const onBlur = () => endConsoleTabCycle();
     window.addEventListener("keydown", onKeyDown, true);
@@ -56,7 +86,7 @@ export default function App() {
       window.removeEventListener("blur", onBlur);
       endConsoleTabCycle();
     };
-  }, []);
+  }, [updateUiZoom]);
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -209,6 +239,8 @@ export default function App() {
       <DeviceDialog />
       <TitleBar
         closeReady={closeReady}
+        uiZoom={uiZoom}
+        onUiZoom={updateUiZoom}
         onAbout={() => aboutDialog.current?.showModal()}
         onCheckUpdate={() => {
           setAboutAutoCheck((nonce) => nonce + 1);
