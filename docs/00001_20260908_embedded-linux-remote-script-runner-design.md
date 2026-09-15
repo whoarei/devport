@@ -1,7 +1,9 @@
-# Embedded Linux Remote Script Runner
-## 基于 Tauri 的远程脚本执行与环境管理工具设计文档
+# Remote Runner
+## 基于 Tauri 的跨传输脚本执行工具设计文档
 
-> 目标：让用户像“在本地运行脚本”一样，在远程嵌入式 Linux 设备上执行 Shell、Python、Node.js 等脚本，同时屏蔽 SSH/串口终端、远程路径、PTY、SFTP 等底层细节，并提供独立运行环境、交互式输入输出、文件同步、任务状态与执行历史。
+> 目标：让用户像“在本地运行脚本”一样，通过 SSH、串口 Shell、WSL 或本机 Shell 执行 Python、Shell 和自定义命令，同时由统一的运行模型处理工作区、交互式输入输出、任务状态与执行历史。Node.js 专用入口、独立运行环境、Artifact 下载和 Device Agent 仍是后续目标，不属于当前已实现能力。
+
+> 文档状态（2026-09-16）：本文保留最初的长期架构设想，并已按当前 `0.8.0` 实现修正基础架构和能力边界。标有“建议”“后续”或“目标”的内容不是完成声明；准确进度以 [实施进度](00002_20260908_implementation-progress.md) 为准，前端现状以 [前端总体设计](00025_20260915_frontend-design.md) 为准。
 
 ---
 
@@ -32,7 +34,7 @@
 - Node.js 版本管理；
 - 日志查看器。
 
-本项目希望将它们统一成一个“远程脚本运行器”。
+本项目希望将它们统一成一个脚本运行器。除远程设备外，也支持本机 WSL 发行版和本机 Shell；“设备”在代码中是执行目标的统一抽象，不限定为嵌入式硬件。
 
 用户面对的核心概念不是：
 
@@ -46,13 +48,9 @@
 
 # 2. 产品定位
 
-建议产品定位为：
+产品名称与定位为：
 
-**Embedded Linux Remote Script Runner**
-
-或者：
-
-**Remote Embedded Runner**
+**Remote Runner**
 
 核心体验：
 
@@ -61,7 +59,7 @@
     ↓
 选择目标设备
     ↓
-选择运行环境
+设置运行参数（运行环境管理为后续能力）
     ↓
 点击 Run
     ↓
@@ -70,7 +68,7 @@
 查看结果
 ```
 
-用户无需感知：
+在“运行”主流程中，用户无需感知：
 
 - SSH shell；
 - root prompt；
@@ -83,15 +81,15 @@
 - runtime 解压路径；
 - Python venv 激活命令。
 
-这些都属于系统内部实现。
+这些都属于系统内部实现。应用另提供独立交互终端作为辅助能力，但它与 Run Console、RunManager 和工作区运行相互独立；串口当前不支持独立终端。
 
 ---
 
 # 3. 核心设计原则
 
-## 3.1 屏蔽远程 Terminal
+## 3.1 运行主流程屏蔽远程 Terminal
 
-GUI 不提供“SSH Terminal”作为主要交互入口。
+GUI 不把“SSH Terminal”作为脚本运行的主要交互入口。
 
 用户看到的是：
 
@@ -150,10 +148,14 @@ resizeConsole
 downloadArtifact
 ```
 
+当前已实现 `run`、`writeStdin`、`stop` 和按能力支持的 `resizeConsole`；`downloadArtifact` 仍是规划接口。
+
 底层可以是：
 
 - SSH；
 - Serial；
+- WSL；
+- Local Shell；
 - 后续的 Device Agent；
 - ADB；
 - USB；
@@ -162,9 +164,9 @@ downloadArtifact
 
 ---
 
-## 3.4 环境是执行任务的一等公民
+## 3.4 环境是执行任务的一等公民（目标设计，未实现）
 
-脚本不能默认依赖目标系统的全局：
+长期目标是让脚本不必默认依赖目标系统的全局：
 
 ```text
 /usr/bin/python3
@@ -172,7 +174,7 @@ downloadArtifact
 /usr/lib/python...
 ```
 
-每个 Workspace / Script Task 可以绑定自己的运行环境。
+长期目标是让每个 Workspace / Script Task 可以绑定自己的运行环境。当前版本直接使用执行目标中可用的系统解释器或用户自定义命令，尚无 Runtime / Environment 模型。
 
 例如：
 
@@ -197,7 +199,7 @@ web-test
 
 # 4. 技术栈
 
-推荐：
+当前选型：
 
 ## Frontend
 
@@ -205,8 +207,9 @@ web-test
 - React
 - TypeScript
 - xterm.js
-- Monaco Editor
+- CodeMirror 6
 - Zustand
+- i18next / react-i18next
 
 ## Backend
 
@@ -215,17 +218,18 @@ web-test
 - serde
 - tracing
 - uuid
-- russh 或 ssh2
+- russh / russh-sftp
 - tokio-serial
-- SQLite
+- portable-pty
+- JSON 文件 + localStorage 持久化
 
-建议优先考虑：
+当前组合为：
 
 ```text
 Tauri 2
 React + TypeScript
 xterm.js
-Monaco Editor
+CodeMirror 6
 
 Rust
 Tokio
@@ -233,7 +237,7 @@ russh
 tokio-serial
 serde
 tracing
-SQLite
+JSON / localStorage
 ```
 
 ---
@@ -243,30 +247,28 @@ SQLite
 ```mermaid
 flowchart TB
     UI["Presentation Layer<br/>React / Tauri UI"]
-    API["Runner API"]
-    RE["Remote Execution"]
-    ENV["Runtime & Environment Management"]
-    EXE["Remote Executor"]
-    TRANS["Transport Layer"]
+    API["Tauri invoke API<br/>bounded output drain"]
+    RM["RunManager<br/>state / history / control"]
+    PROC["Transport-independent process contract"]
+    SSH["SSH + SFTP"]
+    SERIAL["Serial Shell V1"]
+    WSL["WSL helper"]
+    LOCAL["Local Shell"]
+    FUTURE["Runtime / Artifact / Agent<br/>planned"]
 
-    UI --> API
-    API --> RE
-    RE --> ENV
-    RE --> EXE
-    EXE --> TRANS
-
-    TRANS --> SSH["SSH Transport"]
-    TRANS --> SERIAL["Serial Transport"]
-
-    EXE --> SSHEX["SSH Executor"]
-    EXE --> SEREX["Serial Executor"]
+    UI --> API --> RM --> PROC
+    PROC --> SSH
+    PROC --> SERIAL
+    PROC --> WSL
+    PROC --> LOCAL
+    RM -.-> FUTURE
 ```
 
 ---
 
 # 6. 分层设计
 
-整体分为六个主要层次：
+长期设计可以分为六个层次：
 
 ```text
 Presentation
@@ -284,6 +286,8 @@ Transport
 
 各层职责必须保持清晰。
 
+当前已实现 Presentation → Tauri API → RunManager / process contract → transport-specific adapter；Runtime / Environment 层尚不存在，Remote Executor 也不是单一 trait，而是四个传输模块的共同约定。
+
 ---
 
 # 7. Presentation Layer
@@ -298,16 +302,19 @@ Workspace Explorer
 Script Editor
 Run Console
 Run History
-Environment Manager
+Preset Commands
+Independent Terminal Tabs
 Task Status
-Settings
+Menu / Layout / Update UI
 ```
 
-建议 UI：
+`Environment Manager` 仍是后续模块。当前编辑器使用 CodeMirror 6，支持目录树、文件增删改、冲突检测、多标签、保存和未保存保护；布局由面板注册表驱动。
+
+概念 UI（Runtime 区域属于后续能力）：
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
-│ Device: RK3588-Lab        Runtime: Python 3.12 / audio-env   │
+│ Device: RK3588-Lab        Runtime: System / future managed  │
 ├───────────────┬──────────────────────────────────────────────┤
 │ Workspace     │ test_audio.py                               │
 │               │                                              │
@@ -335,28 +342,38 @@ Settings
 
 Runner API 是 Frontend 与核心执行系统之间的唯一入口。
 
-建议 API：
+当前运行 API：
 
 ```text
-run()
-stop()
-write_stdin()
-resize_console()
+run_script()
+stop_run()
+send_run_input()
+resize_run_console()
 get_run_status()
+list_running_runs()
 get_run_history()
-download_artifact()
+export_run_record()
+export_run_output()
+clear_run_history()
+drain_run_events()
 ```
+
+设备、工作区、独立终端和应用更新另有各自的 invoke 命令。Artifact 枚举和下载尚未实现，不能与“导出本地持久化的运行输出”混为一谈。
 
 例如：
 
 ```rust
-run_script(
+run_script(RunRequest {
     device_id,
-    workspace_id,
-    script_id,
-    environment_id,
-    arguments
-) -> RunId
+    workspace_dir,
+    kind,
+    entry,
+    command,
+    args,
+    env,
+    console_mode,
+    timeout_secs,
+}) -> RunId
 ```
 
 前端只知道 `RunId`。
@@ -373,12 +390,14 @@ Remote Execution 是整个系统的核心。
 
 推荐正式定义：
 
-> Remote Execution 是负责将本地 Run 请求转换为目标设备上的实际进程执行，并管理工作空间同步、运行环境准备、远程进程创建、标准输入输出、交互式会话、退出状态、取消以及资源清理的执行层。
+> Remote Execution 是负责将本地 Run 请求转换为执行目标上的实际进程，并管理工作空间同步、进程创建、标准输入输出、交互式会话、退出状态和取消的执行层。运行环境准备与资源清理是后续扩展职责。
 
 它对上隐藏：
 
 - SSH；
 - Serial；
+- WSL；
+- Local Shell；
 - SFTP；
 - Shell；
 - PTY；
@@ -394,48 +413,45 @@ Remote Execution 是整个系统的核心。
 
 ---
 
-## 9.2 一次 Run 的完整过程
+## 9.2 一次 Run 的当前过程
 
 ```mermaid
 sequenceDiagram
     participant UI as Run Console
-    participant RE as Remote Execution
-    participant ENV as Environment Manager
-    participant EX as Remote Executor
-    participant DEV as Target Device
+    participant RM as RunManager
+    participant EX as Transport Adapter
+    participant DEV as Execution Target
 
-    UI->>RE: Run(script, device, environment)
-    RE->>EX: Prepare workspace
-    EX->>DEV: Create remote workspace
+    UI->>RM: Run(request, device)
+    RM->>EX: Validate and prepare
+    EX->>DEV: Create workspace if required
 
-    RE->>ENV: Resolve runtime
-    ENV->>DEV: Check/install runtime if needed
+    RM->>EX: Sync full workspace if required
+    EX->>DEV: Upload snapshot
 
-    RE->>EX: Sync files
-    EX->>DEV: Upload changed files
-
-    RE->>EX: Spawn process
+    RM->>EX: Spawn process
     EX->>DEV: Start script
 
     DEV-->>EX: stdout/stderr
-    EX-->>RE: Process output
-    RE-->>UI: Run output
+    EX-->>RM: Process output
+    RM-->>UI: Bounded output batches
 
-    UI->>RE: stdin
-    RE->>EX: stdin
+    UI->>RM: stdin
+    RM->>EX: stdin
     EX->>DEV: stdin
 
     DEV-->>EX: exit status
-    EX-->>RE: Exit code
-    RE->>EX: Cleanup
-    RE-->>UI: Run finished
+    EX-->>RM: Exit code
+    RM-->>UI: Persist history and finish
 ```
+
+Local Shell 跳过创建/上传步骤并在工作区原地运行。当前没有 Runtime resolve 或运行结束后的目标目录 Cleanup。
 
 ---
 
 # 10. Remote Execution 内部模块
 
-建议拆分为：
+长期建议拆分为：
 
 ```text
 Remote Execution
@@ -450,6 +466,8 @@ Remote Execution
 └── CleanupManager
 ```
 
+当前实现没有为了未落地能力建立空模块：`runner.rs` 负责 RunManager 与分派，`process.rs` 定义传输无关的状态、能力和会话控制，`ssh/`、`serial/`、`wsl/`、`local/` 各自封装协议与进程会话。`EnvironmentManager`、`ArtifactManager` 和 `CleanupManager` 尚未实现。
+
 ---
 
 # 11. RunManager
@@ -463,7 +481,7 @@ struct Run {
     id: RunId,
     device_id: DeviceId,
     workspace_id: WorkspaceId,
-    environment_id: EnvironmentId,
+    // environment_id: EnvironmentId, // planned
     state: RunState,
 }
 ```
@@ -483,13 +501,16 @@ RunManager 负责：
 - 转发 stdout/stderr；
 - 处理 cancel；
 - 保存历史；
-- 处理异常恢复。
+- 持久化最多 2 MiB 的单次运行输出；
+- 处理事件缺口后的状态重同步。
+
+当前不会在应用重启后恢复仍在远端运行的进程；“异常恢复”仅限状态/历史一致性与前端事件重同步，不应理解为跨进程接管。
 
 ---
 
 # 12. ExecutionContext
 
-每次 Run 都生成独立的 ExecutionContext。
+概念上每次 Run 都有独立的执行上下文。当前实现由已校验的 `RunRequest`、`DeviceProfile`、`run_id`、控制通道和各传输的局部状态共同承载，并没有名为 `ExecutionContext` 的结构体。
 
 例如：
 
@@ -498,8 +519,8 @@ struct ExecutionContext {
     run_id: RunId,
     device: DeviceProfile,
     workspace: RemoteWorkspace,
-    runtime: RuntimeInstance,
-    env: EnvironmentInstance,
+    runtime: RuntimeInstance,     // planned
+    env: EnvironmentInstance,    // planned
     command: SpawnRequest,
 }
 ```
@@ -510,7 +531,7 @@ ExecutionContext 是一次执行过程中各模块共享的信息容器。
 
 # 13. WorkspaceManager
 
-负责把本地 Workspace 映射到远端。
+负责把本地 Workspace 映射到执行目标。SSH、Serial 和 WSL 每次运行都使用独立目录；Local Shell 直接在本地工作区原地运行，不复制文件。
 
 本地：
 
@@ -538,7 +559,7 @@ flowchart LR
     B --> C["Remote Workspace<br/>/tmp/devrunner/workspaces/7f1a93"]
 ```
 
-用户永远只看到本地路径。
+运行界面只要求用户选择本地工作区。SSH/Serial/WSL 的目标工作区路径是内部细节；Local Shell 的产物直接落在本地工作区。
 
 ---
 
@@ -563,6 +584,8 @@ size
 mtime
 hash
 ```
+
+当前仍是每次运行收集并全量传输，没有增量同步。SSH/WSL 支持有界二进制快照，Serial Shell V1 仅支持有界 UTF-8 文本；Local Shell 不同步。
 
 同步内容：
 
@@ -595,13 +618,13 @@ python3 -u ./test.py
 /bin/bash ./test.sh
 ```
 
-## Node
+## Node（未提供专用 ScriptKind）
 
 ```text
 node ./test.js
 ```
 
-## Binary
+## Binary（未提供专用 ScriptKind）
 
 ```text
 ./decoder_test
@@ -624,6 +647,8 @@ enum RuntimeType {
     Custom,
 }
 ```
+
+当前 `ScriptKind` 只有 `Python`、`Shell`、`Command`。Node、二进制及其他工具可以由用户通过 Command 模式调用，但没有专用入口校验、运行时解析或环境管理。
 
 ---
 
@@ -658,16 +683,19 @@ GUI 中的 Run Console 实际上就是 ProcessSession 的可视化。
 
 # 17. Run State Machine
 
-建议状态机：
+当前状态机：
 
 ```mermaid
 stateDiagram-v2
     [*] --> Preparing
     Preparing --> Syncing
-    Syncing --> PreparingEnvironment
-    PreparingEnvironment --> Starting
+    Preparing --> Starting
+    Syncing --> Starting
     Starting --> Running
 
+    Preparing --> Stopping
+    Syncing --> Stopping
+    Starting --> Stopping
     Running --> Stopping
     Stopping --> Canceled
 
@@ -675,16 +703,12 @@ stateDiagram-v2
 
     Preparing --> Failed
     Syncing --> Failed
-    PreparingEnvironment --> Failed
     Starting --> Failed
     Running --> Failed
-
-    Exited --> Cleaning
-    Canceled --> Cleaning
-    Failed --> Cleaning
-
-    Cleaning --> Finished
+    Stopping --> Failed
 ```
+
+当前没有 `PreparingEnvironment`、`Cleaning` 或 `Finished` 状态，因为环境准备与远端工作区清理尚未实现。`Exited`、`Canceled`、`Failed` 是直接持久化的终态。
 
 ---
 
@@ -732,7 +756,7 @@ SSH Terminal
 
 # 19. 为什么仍然使用 xterm.js
 
-即使不提供远程 Terminal，xterm.js 仍然非常适合 Run Console。
+即使 Run Console 不等同于远程 Terminal，xterm.js 仍然非常适合进程控制台。应用也复用 xterm.js 提供独立的 SSH / WSL / Local Shell 终端标签；两类会话由不同的 store 和后端 manager 管理。
 
 因为脚本可能输出：
 
@@ -780,21 +804,20 @@ sys.stdin.isatty()
 [ -t 0 ]
 ```
 
-因此 Script Task 可以定义：
+当前 RunRequest 可以定义：
 
 ```yaml
-console:
-  mode: auto
+console_mode: pty
 ```
 
 支持：
 
 ```text
-none
 pipe
 pty
-auto
 ```
+
+默认是 `pty`。SSH、WSL、Local 支持 pipe / pty 和运行中 resize；Serial Shell V1 只有合并输出的 PTY-like 会话，不支持 pipe 和运行中 resize。`none` / `auto` 尚未实现。
 
 ### pipe
 
@@ -814,12 +837,6 @@ auto
 - 彩色输出；
 - 交互式 CLI。
 
-### auto
-
-由 ScriptRunner 根据任务配置选择。
-
----
-
 # 21. SSH Executor
 
 SSH Executor 建议提供：
@@ -833,6 +850,8 @@ spawnPty
 signal
 remove
 ```
+
+当前已实现 workspace prepare/upload、pipe/PTY spawn、输入/resize/分级停止；通用 download、运行目录 remove 和 Artifact API 尚未实现。
 
 底层：
 
@@ -854,7 +873,7 @@ flowchart LR
 
 重要原则：
 
-**SSH Channel 直接启动目标程序，而不是先进入用户 Shell 再输入命令。**
+**SSH Channel 通过 exec 请求启动一次有边界的包装命令，而不是打开登录 Shell 后模拟键盘输入。** 包装层用 shell 文件处理工作目录、环境变量、PID/进程组与退出码，随后 `exec` 目标程序；因此不会把交互式 shell prompt 混入 Run Console。
 
 这样可以避免：
 
@@ -889,7 +908,7 @@ $
 root@
 ```
 
-而是使用随机 marker。
+而是使用每次运行独有的随机 nonce marker。当前协议还用 RS (`0x1e`) / US (`0x1f`) 定界，按原始字节解析并剥离 prompt/echo，不使用下面的可打印示例作为真实帧格式。
 
 例如：
 
@@ -916,12 +935,12 @@ FINISHED
 
 ## 22.2 Serial 脚本上传
 
-文本脚本可以通过 heredoc：
+当前实现把每个 UTF-8 文本文件按最多 3 KiB 分块，base64 编码后通过带引号的 heredoc 逐块创建/追加，并等待每块命令确认；这样同时保留无末尾换行的内容并避开单个 shell 参数上限。例如概念上是：
 
 ```bash
-cat > /tmp/devrunner/test.py <<'__EOF_83A1__'
-print("hello")
-__EOF_83A1__
+base64 -d > /tmp/devrunner/test.py <<'RR_UPLOAD_EOF'
+cHJpbnQoImhlbGxvIikK
+RR_UPLOAD_EOF
 ```
 
 然后：
@@ -999,6 +1018,14 @@ write
 setBaudrate
 ```
 
+## WSL Bridge
+
+通过结构化 `wsl.exe` 参数启动发行版内的内嵌 Python helper，使用独立控制协议传递二进制工作区、PTY/pipe 输出、输入、resize、停止和明确的退出消息，不依赖 SSH 服务。
+
+## Local Shell
+
+通过 `portable-pty` 或独立管道直接启动本机 shell。工作区原地运行，不经过上传；不同 shell flavor 分别构造 argv，避免把路径和脚本内容拼接为同一条 shell 命令。
+
 Transport 不知道：
 
 - Script；
@@ -1012,7 +1039,7 @@ Transport 不知道：
 
 # 24. Remote Executor
 
-在 Transport 上面增加一层 Executor。
+在 Transport 上面增加一层执行适配。当前没有单一 `RemoteExecutor` trait；`RunManager` 按 `TransportKind` 分派到四个模块，并通过 `process.rs` 的状态、输出与控制消息保持共同契约。
 
 ```mermaid
 flowchart TB
@@ -1020,12 +1047,16 @@ flowchart TB
     EX["RemoteExecutor"]
     SSHEX["SSHExecutor"]
     SEREX["SerialExecutor"]
+    WSLEX["WSL Executor"]
+    LOCALEX["Local Executor"]
     SSHT["SSHTransport"]
     SERT["SerialTransport"]
 
     RE --> EX
     EX --> SSHEX
     EX --> SEREX
+    EX --> WSLEX
+    EX --> LOCALEX
     SSHEX --> SSHT
     SEREX --> SERT
 ```
@@ -1043,9 +1074,9 @@ trait RemoteExecutor {
 
 ---
 
-# 25. Runtime / Environment Management
+# 25. Runtime / Environment Management（后续目标，当前未实现）
 
-这是本项目区别于普通 SSH 脚本工具的重要能力。
+这是长期规划的重要能力。当前代码中没有 Runtime、Environment、Dependency、EnvironmentManager 或 RuntimeManager；Python 和 Shell 入口直接使用执行目标可用的系统解释器，Command 模式由用户显式指定命令。
 
 目标：
 
@@ -1755,7 +1786,14 @@ Container 作为高级选项。
 
 # 45. Device Profile
 
-每台设备保存：
+当前设备配置保存在 `devices.json`，统一字段包括 `id`、`name`、`is_default`、`transport` 和 `workspace_root`，再按传输保存：
+
+- SSH：host、port、username、密码或私钥认证；
+- Serial：port、baud rate；
+- WSL：distribution、可选 user；
+- Local：shell id、可选绝对可执行路径。
+
+下面的 runtime/capabilities 配置是后续目标，不是当前文件格式：
 
 ```yaml
 name: RK3588-Lab
@@ -1798,7 +1836,7 @@ runtime_root:
 
 不同 Transport / Device 能力不同。
 
-建议：
+长期建议：
 
 ```text
 EXEC
@@ -1835,6 +1873,8 @@ Serial Agent:
 
 Remote Execution 根据 Capability 自动选择策略。
 
+当前只实现了运行所需的两个静态能力位：`pipe` 和 `resize`。Serial 两者均为 false，SSH / WSL / Local 两者均为 true；UPLOAD、DOWNLOAD、MANAGED_RUNTIME、AGENT 尚未形成通用能力模型。
+
 ---
 
 # 47. Ctrl+C 与 Stop
@@ -1865,7 +1905,7 @@ PTY：
 Ctrl+C = 0x03
 ```
 
-Agent 模式：
+Agent 模式（后续目标）：
 
 ```text
 SIGNAL(SIGINT)
@@ -1875,7 +1915,7 @@ GUI 不需要知道具体机制。
 
 ---
 
-# 48. Expect / 自动应答
+# 48. Expect / 自动应答（后续目标，当前未实现）
 
 可以增加：
 
@@ -1912,39 +1952,28 @@ flowchart LR
 
 # 49. 输出与日志
 
-每次 Run 保存：
+当前每次 Run 在 `history.json` 保存：
 
 ```text
 RunId
 Device
-Script
-Runtime
-Environment
+Label
+State
 StartTime
 EndTime
 ExitCode
-stdout
-stderr
-Artifacts
+Error
+OutputBytes
+OutputTruncated
 ```
 
-例如：
+原始输出按运行保存到 `run_logs/<run_id>.log`，单次上限 2 MiB，并可从历史面板导出；历史上限为 200 条，淘汰或清空历史时同步清理日志。PTY/Serial 的输出本来就是合并流，日志文件也不额外写入 stdout/stderr 结构化标签。Runtime、Environment 和 Artifacts 元数据尚不存在。
 
-```text
-2026-09-07 21:03:11 RUN START
-2026-09-07 21:03:11 DEVICE RK3588-Lab
-2026-09-07 21:03:11 ENV python-3.12/audio-test
-2026-09-07 21:03:12 SYNC test.py
-2026-09-07 21:03:13 PROCESS START
-2026-09-07 21:03:13 STDOUT Initializing...
-2026-09-07 21:03:18 EXIT 0
-```
-
-底层调试日志与用户 Console 日志应该分开。
+`run_logs` 只保存用户进程的原始输出字节，不添加时间戳、设备、状态或 stream 前缀；结构化状态在 `history.json` 中单独保存。Rust `tracing` 调试日志与用户 Console 日志分开。
 
 ---
 
-# 50. Artifact
+# 50. Artifact（后续目标，当前未实现）
 
 脚本可能产生：
 
@@ -1981,38 +2010,29 @@ Local Workspace / Run History
 普通命令使用 `invoke`：
 
 ```text
-create_run
+run_script
 stop_run
 send_run_input
 resize_run_console
 ```
 
-长期流式输出建议使用 Tauri Channel / Event。
+运行输出没有使用原生 Tauri Event 直接推送到 WebView。后端写入有界 broadcast 队列，前端约每 33 ms 单飞行调用 `drain_run_events` 拉取一批事件；接收方落后时返回 `resync` 状态快照并标记输出缺口，避免无界 IPC 堆积。
 
 事件：
 
 ```text
-run_started
-run_stdout
-run_stderr
-run_status_changed
-run_exited
-run_failed
-artifact_ready
-environment_progress
+output { run_id, stream, data: base64 }
+status { status }
+resync { statuses }
 ```
 
-每个事件带：
-
-```text
-runId
-```
-
-避免多个并发任务串流混乱。
+`output` 直接携带 `run_id`，`status` 的 `RunStatus` 携带 `run_id`，`resync` 则携带多个 `RunStatus`。独立终端通过 `read_terminal` 使用另一套有界拉取协议。Artifact 与 environment 事件尚未实现。
 
 ---
 
-# 52. Rust 核心接口建议
+# 52. Rust 核心接口目标
+
+以下 trait 是环境/Artifact 能力扩展后的目标形态，当前未按这些名称落地。现有公共契约集中在 `process.rs` 的 `ExecutionEvent`、`SessionEvent`、`SessionControl`、`Outcome` 和 `Capabilities`，由 `RunManager` 调度具体传输。
 
 ```rust
 pub trait RemoteExecutor {
@@ -2053,7 +2073,24 @@ pub trait RuntimeProvider {
 
 ---
 
-# 53. 推荐 Rust 工程结构
+# 53. Rust 工程结构
+
+当前结构按已实现能力组织：
+
+```text
+src-tauri/src/
+├── commands.rs / device.rs / runner.rs / process.rs
+├── workspace.rs / workspace_upload.rs
+├── terminal.rs / events.rs
+├── ssh/
+├── serial/
+├── wsl/
+├── local/
+├── tray.rs
+└── update.rs
+```
+
+下面是能力继续扩展后的目标拆分；不应据此查找当前不存在的目录：
 
 ```text
 src-tauri/src/
@@ -2111,6 +2148,21 @@ src-tauri/src/
 
 # 54. Frontend 工程结构
 
+当前前端使用面板注册表和两个 Zustand store，详见 00025：
+
+```text
+src/
+├── App.tsx / api.ts / store.ts / terminalStore.ts
+├── panels/
+│   ├── registry.tsx
+│   └── components.ts
+├── components/
+├── i18n/
+└── *.ts                 # 可单测的纯逻辑模块
+```
+
+下面的 pages/stores 分域是最初建议，当前没有照此建立目录，也没有 Environment 页面：
+
 ```text
 src/
 ├── pages/
@@ -2139,7 +2191,7 @@ src/
 
 ---
 
-# 55. 配置模型
+# 55. 项目级配置模型（后续目标，当前未实现）
 
 建议项目级配置：
 
@@ -2188,7 +2240,7 @@ scripts:
 
 ## SSH Host Key
 
-第一次连接：
+当前采用自动 TOFU：首次连接把地址对应的 SHA256 指纹写入 `known_hosts.json`，后续不一致即拒绝连接。当前 UI 不提供首次指纹确认，因此下面的人工确认流程仍是安全增强目标：
 
 ```text
 Unknown host key
@@ -2204,7 +2256,7 @@ SHA256:...
 
 ## Credential
 
-密码不要直接保存在普通 YAML。
+目标上密码不应直接保存在普通配置文件。当前密码仍明文保存在 `devices.json`，这是已知安全缺口。
 
 Windows 下可以考虑：
 
@@ -2238,7 +2290,7 @@ architecture
 
 # 57. 第一阶段 MVP
 
-建议不要一开始实现所有功能。
+第一阶段的核心链路已完成并继续扩展到 WSL / Local，但最初清单中的 Node 专用入口、任意 executable 入口和 Environment 子系统没有纳入当前版本。现状如下：
 
 ## V1
 
@@ -2253,8 +2305,9 @@ architecture
 
 - `.sh`；
 - `.py`；
-- `.js`；
-- 任意 executable。
+- 自定义命令。
+
+`.js` 与任意 executable 可在自定义命令中显式调用，但不是可选择的脚本类型。
 
 ### Run
 
@@ -2290,6 +2343,8 @@ Node project node_modules
 ```
 
 同时把 Managed Runtime 的接口架构预留好。
+
+上述 Environment 项均尚未实现；当前只有 System Runtime 行为，也没有占位的 Environment API。
 
 ---
 
@@ -2362,7 +2417,7 @@ process info
 
 # 60. 推荐开发顺序
 
-建议先验证核心链路，而不是先写完整 GUI。
+以下是最初建议的验证顺序。PoC 1—5 的能力已经进入正式实现（PoC 5 实际使用分块 base64 heredoc）；PoC 6—7 的环境能力尚未开始。正式 UI 已建立，不能再把本节当作当前开发步骤。
 
 ## PoC 1
 
@@ -2403,7 +2458,7 @@ Serial
 
 ```text
 Serial
-→ heredoc
+→ chunked base64 heredoc
 → python script
 → interaction
 ```
@@ -2426,11 +2481,13 @@ Managed Python Runtime
 → Run
 ```
 
-这些验证完成后，再建设正式 UI。
+环境相关 PoC 完成与否不影响现有 System Runtime UI；若启动 Runtime / Environment 工作，应先补 PoC 6—7 再扩展正式界面。
 
 ---
 
-# 61. 最终核心对象关系
+# 61. 长期目标核心对象关系
+
+下图是引入 EnvironmentManager 和统一 RemoteExecutor 后的目标，不是当前 Rust 类型图；现状关系见第 5、10、52 节。
 
 ```mermaid
 classDiagram
@@ -2475,7 +2532,7 @@ classDiagram
 ```text
 Workspace: audio-test
 Device: RK3588-Lab
-Runtime: Python 3.12 / audio-env
+Runtime: System Python（Managed Runtime 为后续能力）
 
 test_audio.py
 
@@ -2508,62 +2565,47 @@ Select mode:
 flowchart LR
     SCRIPT["Local Script"] --> RUN["Run"]
     RUN --> RE["Remote Execution"]
-    RE --> ENV["Managed Runtime / Environment"]
     RE --> SYNC["Workspace Sync"]
-    SYNC --> EXEC["Remote Executor"]
-    ENV --> EXEC
-    EXEC --> DEVICE["Embedded Linux Device"]
+    SYNC --> EXEC["Transport Adapter"]
+    EXEC --> DEVICE["SSH / Serial / WSL / Local Target"]
     DEVICE --> PROC["Actual Process"]
     PROC --> CONSOLE["Run Console"]
 ```
 
 这是整个产品最重要的抽象：
 
-> **本地脚本 + 本地操作体验 + 远程真实执行。**
+> **本地脚本 + 本地操作体验 + 所选目标上的真实执行。**
 
 ---
 
 # 63. 结论
 
-推荐最终架构：
+当前已实现架构：
 
 ```text
 Tauri 2
 ├── React / TypeScript
-├── Monaco Editor
-└── xterm.js Run Console
+├── CodeMirror 6
+├── xterm.js Run Console / Terminal
+└── Zustand + i18n + registry-driven panels
 
 Rust Backend
 ├── Runner API
-├── Remote Execution
-│   ├── RunManager
-│   ├── WorkspaceManager
-│   ├── FileSync
-│   ├── ScriptRunner
-│   ├── ProcessSession
-│   ├── ArtifactManager
-│   └── CleanupManager
-│
-├── Runtime / Environment Management
-│   ├── System Runtime
-│   ├── Project Environment
-│   ├── Managed Runtime
-│   └── Container Environment
-│
-├── Remote Executor
-│   ├── SSHExecutor
-│   ├── SerialShellExecutor
-│   └── SerialAgentExecutor
-│
-└── Transport
-    ├── SSH
-    └── Serial
+├── RunManager + process contract
+├── Workspace file API + full snapshot upload
+├── History + bounded raw output logs
+├── Independent TerminalManager
+└── Execution adapters
+    ├── SSH + SFTP
+    ├── Serial Shell V1
+    ├── WSL helper
+    └── Local Shell
 ```
 
-其中最重要的三个设计原则：
+仍然成立的核心原则：
 
-1. **GUI 不暴露 Remote Terminal，只暴露 Run Console。**
-2. **Remote Execution 将一次 Run 映射成远程设备上的真实进程。**
-3. **Runtime / Environment Management 使脚本尽量脱离目标系统全局 Python、Node 与依赖环境。**
+1. **Run Console 绑定一次明确的 ProcessSession，不等同于登录 Shell。** 独立终端是隔离的辅助功能。
+2. **Remote Execution 将一次 Run 映射成所选执行目标上的真实进程，并保持原始输出字节。**
+3. **传输差异留在 SSH / Serial / WSL / Local 模块内，安全校验落在 Rust 边界。**
 
-这个结构既适合第一版快速实现，也为后续 Device Agent、多设备并发、自动化测试、环境缓存、运行时分发和 Artifact 管理留出了清晰的扩展空间。
+Runtime / Environment、Artifact 下载、远端清理、增量同步、Expect / Task Template / 批量运行和 Device Agent 仍是后续能力；不能把本文对应章节当作当前完成状态。

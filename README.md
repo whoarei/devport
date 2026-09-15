@@ -1,6 +1,6 @@
-# Remote Runner：远程脚本运行工具
+# Remote Runner：跨传输脚本运行工具
 
-Remote Runner 是基于 Tauri 的桌面工具，用于在远程设备上运行脚本和命令。只要目标设备支持 SSH、串口等通讯方式中的任意一种，即可使用本工具。它提供本地工作区界面、xterm 控制台、运行状态与历史记录，React 前端通过统一的运行接口调用 Rust 后端。
+Remote Runner 是基于 Tauri 的桌面脚本运行工具，通过统一界面在 SSH 设备、已登录 Shell 的串口设备、本机 WSL 发行版或本机 Shell 中运行脚本和命令。它提供本地工作区、CodeMirror 编辑器、xterm 控制台、独立终端、运行状态与历史记录，React 前端通过统一接口调用 Rust 后端。
 
 ## 当前进度
 
@@ -12,18 +12,28 @@ Remote Runner 是基于 Tauri 的桌面工具，用于在远程设备上运行�
 | 串口 Shell 第一版 | 已实现 |
 | WSL 本机发行版直接执行（无需 SSH） | 已实现 |
 | 本机 Shell 直接执行（pwsh / cmd / msys2 等） | 已实现 |
+| 工作区文件管理与 CodeMirror 多标签保存 | 已实现 |
+| 运行历史、原始输出持久化与导出 | 已实现 |
+| SSH / WSL / Local 独立终端 | 已实现 |
+| 托盘、自启动、单实例与应用内更新 | 已实现 |
 | 串口设备代理协议 | 待实现 |
 | Node.js、Python 虚拟环境、托管运行时 | 待实现 |
-| 运行产物下载、编辑器保存写回 | 待实现 |
+| 远端运行产物收集/下载、增量同步、远端工作区清理 | 待实现 |
+
+完整能力边界与未实现清单见 [实施进度](docs/00002_20260908_implementation-progress.md)。
 
 ## 功能特性
 
 - 支持运行 Python 脚本、Shell 脚本及自定义命令。
+- CodeMirror 6 支持 Python / Shell / text 高亮、多标签编辑、受限安全写回、版本冲突检测和未保存保护；工作区支持递归目录树及文件/目录增删改。
 - SSH 支持密钥、认证代理或密码认证，以及主机密钥校验、SFTP 上传、交互输入、终端尺寸调整、分级停止和历史记录持久化。
 - 串口支持 Windows COM 和 Unix tty 端口，可配置波特率，使用 8N1、无流控设置；通过每次命令独有的随机标记判断执行完成，支持文本工作区上传、交互输入、Ctrl+C 停止和超时报告。
 - 输出保留原始字节：Rust 后端将数据编码为 Base64 发送，前端解码后由 xterm.js 渲染。
 - WSL 通过 `wsl.exe` 直接启动本机发行版内的进程，支持 PTY、pipe、工作区上传、交互输入、缩放、停止与超时，无需 SSH 服务或认证。
 - 本机 Shell 直接在本机以指定 shell 运行（Windows：pwsh、powershell、cmd、msys2、Git Bash；macOS/Linux：bash、zsh、sh），工作区原地执行，支持 PTY、pipe、交互输入、缩放、停止与超时。
+- SSH、WSL 和本机 Shell 支持与运行控制台隔离的多标签交互终端；串口暂不支持独立终端。
+- 运行历史最多保存 200 条，单次运行原始输出最多持久化 2 MiB，可导出记录与输出。
+- 支持系统托盘、关闭到托盘、开机自启动、单实例和 Windows 安装版签名更新；portable 版本回退到手动下载。
 - 支持通过 `Ctrl/Cmd + +`、`Ctrl/Cmd + -` 缩放整个界面，`Ctrl/Cmd + 0` 恢复 100%；缩放比例会自动保存。
 
 ## 环境要求
@@ -84,9 +94,11 @@ $env:REMOTE_RUNNER_TEST_WSL = 'Ubuntu-24.04' # 替换为实际发行版名
 cargo test --offline --lib wsl::tests -- --include-ignored
 ```
 
-## 发布流程
+## 发布与本地打包
 
-当前采用手工发布，仓库尚未提供自动构建与发布工作流。本节以 **Windows 桌面客户端** 为例；远端设备是 Linux，不代表需要将桌面安装包编译为 Linux 程序。以下 PowerShell 命令均从仓库根目录执行，任一步骤返回非零退出码都应先处理失败再继续。
+正式发布由 [GitHub Actions Release 工作流](.github/workflows/release.yml)完成：推送稳定标签 `vX.Y.Z`（或对已存在标签手动触发）后，CI 精确 checkout 该标签，构建 Windows x86_64 NSIS 安装包和 portable exe，使用 minisign 私钥生成 updater 签名及 `latest.json`，验证资产完整性，并创建 **draft Release**。发布者完成真实安装/升级验收后再公开草稿。完整安全边界见 [应用升级设计](docs/00011_20260912_app-upgrade.md)。
+
+工作流要求仓库 Secrets `TAURI_SIGNING_PRIVATE_KEY`；有口令时还需 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。缺少私钥会直接失败，不会发布缺少更新清单的稳定版本。远端设备是 Linux 不代表 Windows 桌面安装包需要在 Linux 上编译。
 
 ### 1. 准备构建环境和发布配置
 
@@ -98,35 +110,23 @@ cargo test --offline --lib wsl::tests -- --include-ignored
 npm ci
 ```
 
-首次发布时，准备方形 PNG/SVG 应用图标，例如将源图标保存为仓库根目录的 `app-icon.png`，然后生成平台图标：
-
-```powershell
-npm run tauri -- icon ./app-icon.png --output ./src-tauri/icons
-```
-
-当前 `src-tauri/tauri.conf.json` 的 `bundle.icon` 是空数组。生成后将该字段设置为以下路径，并将源图标、生成的桌面图标和配置一起纳入版本管理；图标路径相对于 `src-tauri`：
+应用图标已经生成并纳入 `src-tauri/icons/`，`src-tauri/tauri.conf.json` 当前配置为：
 
 ```json
 ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
 ```
 
-已有安装用户后，保持应用 `identifier`（当前为 `com.devrunner.remote-runner`）稳定。当前未配置代码签名和自动更新；分发的是手动下载安装包。若发布签名版本，在构建前配置签名证书及 Tauri 签名选项，证书私钥不要提交到仓库。
+保持应用 `identifier`（当前为 `com.devrunner.remote-runner`）、updater 公钥、安装模式和产品名稳定。应用内更新已经实现，正式 release 通过 CI 的 minisign 私钥签名；私钥只能放在 GitHub Secrets 或安全的本地环境中，不能提交到仓库。该签名用于 Tauri updater 完整性验证，不等同于 Windows Authenticode 代码签名。
 
 ### 2. 更新版本号
 
-下面以 `0.1.1` 为示例，实际发布时替换成目标版本：
+下面以 `0.8.1` 为示例，实际发布时替换成目标稳定版本：
 
 ```powershell
-npm version 0.1.1 --no-git-tag-version
+node scripts/release.mjs sync v0.8.1
 ```
 
-此命令更新 `package.json` 和 `package-lock.json`，不创建 Git 标签。再将 `src-tauri/tauri.conf.json` 的 `version`、`src-tauri/Cargo.toml` 的 `[package].version` 改成同一版本，并让 Cargo 更新锁文件中的本项目版本：
-
-```powershell
-cargo check --manifest-path src-tauri/Cargo.toml
-```
-
-检查并保留 `src-tauri/Cargo.lock` 的相应变更。更新本次变更说明与已知限制，尤其要区分串口模拟测试结果与硬件实测结果。
+该脚本统一更新 `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock` 中的应用版本，不创建 Git 标签。检查并提交这些变更，同时更新发布说明与已知限制，尤其区分模拟测试与硬件实测。
 
 ### 3. 发布前验证
 
@@ -138,9 +138,11 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets
 git diff --check
 ```
 
-依赖已缓存时可以为 Cargo 测试添加 `--offline`。这些检查通过后，将本次版本、图标和文档变更提交，确认工作区干净；正式产物应从该提交构建。
+依赖已缓存时可以为 Cargo 测试添加 `--offline`。这些检查通过后提交版本和文档变更，确认工作区干净；正式标签必须指向该提交。
 
-### 4. 构建安装包
+### 4. 本地构建安装包
+
+以下命令用于本地开发验证，不替代正式 Release 工作流。普通本地配置不会启用 `createUpdaterArtifacts`，因此不要求 updater 私钥，也不会生成可供应用内升级使用的签名资产。
 
 常用的 Windows NSIS 安装包：
 
@@ -175,20 +177,20 @@ npm run tauri -- build --no-bundle -- --locked
 
 **离线安装：** 默认安装程序会在目标机器缺少 WebView2 时联网下载安装。若目标机器不能联网，应在步骤 1 将 `bundle.windows.webviewInstallMode` 设置为 `{"type":"offlineInstaller"}` 并纳入发布提交，把运行时安装程序包含在包内，包体积会增大；构建机器仍需准备相应依赖。详见 [WebView2 安装方式](https://v2.tauri.app/distribute/windows-installer/#webview2-installation-options)。直接分发主程序也需要目标机器已安装 WebView2。
 
-### 5. 验证产物并分发
+### 5. 创建并验证正式 Release
 
-1. 从本次构建输出中选择当前版本和架构的安装包，避免混入旧版本文件。在测试 Windows 机器上验证安装、启动、设备配置保存/重载、旧版本升级及卸载。
-2. 验证 SSH 和串口运行链路。有设备时检查脚本上传、交互、停止和超时；没有串口设备时，在发布说明中明确“串口仅完成模拟验证”，按实际验证范围发布测试版。
-3. 对最终安装包计算 SHA256；如果进行了签名，应在签名完成后计算。以下示例列出 NSIS 安装包的哈希，选取本次版本的结果随包提供：
+1. 给已经验证并提交的版本创建稳定标签，例如 `git tag -a v0.8.1 -m "Release v0.8.1"`，再推送该标签；Release 工作流会创建包含 NSIS、签名、portable 和 `latest.json` 的草稿。
+2. 检查工作流的资产完整性验证通过，并在独立 Windows 环境测试安装、启动、配置保留、从旧安装版升级、重启和卸载。portable 版本应只提供手动下载，不能误判为可自动安装。
+3. 验证 SSH 和串口运行链路。有设备时检查脚本上传、交互、停止和超时；没有串口设备时，在发布说明中明确实际验证范围。
+4. 需要额外发布 SHA256 时，应针对 CI 生成并签名后的最终资产计算。下面的命令仅适用于本地 NSIS 输出：
 
 ```powershell
 Get-ChildItem ./src-tauri/target/release/bundle/nsis/*-setup.exe | Get-FileHash -Algorithm SHA256
 ```
 
-4. 确认 `git status --short` 仍为空，给构建对应的提交创建标签，例如 `git tag -a v0.1.1 -m "Release v0.1.1"`。记录版本、标签、提交哈希、架构、验证范围和已知限制。
-5. 将安装包、SHA256 和发布说明上传到约定的下载位置；若使用 GitHub/GitLab，先配置实际仓库远程地址，再推送发布提交及对应标签，并在仓库的版本发布页面创建发布记录、上传附件。仓库目前没有会随标签自动上传产物的工作流。
+5. 验收完成后公开 draft Release，并确认它成为 GitHub Latest；只有公开后，应用使用的 `releases/latest/download/latest.json` 才能看到该版本。
 
-已有用户通过新安装包手动升级。回退时使用此前保留的安装包，并先备份应用配置；不要假定卸载或安装旧版本会自动回滚设备配置和历史数据。
+Windows 安装版用户可以通过应用内更新升级；portable、debug、不支持的平台或安装形态识别失败时回退到浏览器手动下载。回退仍需使用此前保留的安装包并先备份配置，不要假定卸载或安装旧版本会自动回滚设备配置和历史数据。
 
 ## 相关文档
 
@@ -196,5 +198,8 @@ Get-ChildItem ./src-tauri/target/release/bundle/nsis/*-setup.exe | Get-FileHash 
 - [实施进度](docs/00002_20260908_implementation-progress.md)
 - [代码审查记录](docs/00003_20260908_code-review.md)
 - [串口 Shell 第一版实现](docs/00004_20260908_serial-shell.md)
+- [脚本编辑器与语法高亮](docs/00006_20260911_script-editor-proposal.md)
+- [应用升级设计与实现](docs/00011_20260912_app-upgrade.md)
 - [本机 Shell 直连设计](docs/00023_20260913_local-shell.md)
 - [本机 Shell 直连实现细节](docs/00024_20260913_local-shell-implementation.md)
+- [前端总体设计](docs/00025_20260915_frontend-design.md)

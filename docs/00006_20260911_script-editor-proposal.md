@@ -2,19 +2,28 @@
 
 日期：2026-09-11
 
-状态：待实施；本次仅提交方案文档。
+状态：已实现。本文保留 2026-09-11 的方案与实施前基线；当前结果见下方“实施结果”，多标签见 00017，工作区文件管理见 00010。
 
-## 1. 建议与目标
+## 实施结果（2026-09-16 审核）
 
-可以把现有脚本内容区域升级为文本编辑器。建议采用 **CodeMirror 6**，首版支持 Python / Shell 语法高亮、基础代码编辑、本地保存和未保存修改保护，形成“打开脚本 → 修改 → 保存 → 上传运行”的完整流程。
+- 已采用 CodeMirror 6，没有引入 Monaco；支持 Python / Shell / text 高亮、行号、括号匹配与自动闭合、撤销/重做、查找/替换、语言切换和 one-dark 主题。
+- 已实现 UTF-8 有界读写、LF/CRLF 与 BOM 保留、revision 冲突检测、临时文件原子替换、路径/链接/特殊文件防护和 1 MiB 限制，接口位于 `workspace.rs` 与 `commands.rs`。
+- 编辑状态位于 `editorDocument.ts` 和主 Zustand store；当前是多标签模型，保存入口位于状态栏并支持 `Ctrl/Cmd+S`，关闭文件支持 `Ctrl/Cmd+W`。
+- 已实现保存/放弃/取消保护、加载序号与 generation 守卫、运行前保存全部脏标签，以及准备/同步/停止阶段的工作区变更互斥。
+- 已实现递归目录树、新建/重命名/删除、文件关闭、编辑区折叠与面板布局持久化，这些是后续文档 00010、00015—00017、00022 扩展的能力。
+- 仍未实现：另存为、自动保存、崩溃草稿恢复、格式化、LSP 补全/诊断和调试器。真实 Windows WebView 下的中文输入法、接近 1 MiB 长文本体验仍属于人工验收范围，Node 单元测试不能替代。
+
+## 1. 原始建议与目标
+
+方案提出把原有脚本内容区域升级为文本编辑器，并采用 **CodeMirror 6**。该方案现已落地，形成“打开脚本 → 修改 → 保存 → 上传运行”的完整流程。
 
 编辑对象是所选 Workspace 中的本地文件。SSH 和串口仍通过现有运行流程上传磁盘文件；编辑器不直接修改远端文件。
 
-原始设计及实施记录曾预留 Monaco。本方案建议调整为 CodeMirror 6，原因是当前主要需求是单文件脚本编辑；按需组合编辑功能更符合这一范围。该选型是基于需求的工程判断，尚未进行本项目内的包体积、内存或启动速度对比，不能视为实测性能结论。
+原始设计及实施记录曾预留 Monaco。本方案改为 CodeMirror 6，原因是当时主要需求是单文件脚本编辑；后续虽扩展为多标签，仍沿用该选型。没有进行 Monaco 与 CodeMirror 的同条件包体积、内存或启动速度对比，不能把选型理由表述为实测性能结论。
 
-## 2. 当前实现与缺口
+## 2. 方案提出时的实现与缺口（历史基线）
 
-| 位置 | 当前行为 | 所需变化 |
+| 位置 | 2026-09-11 行为 | 所需变化 |
 | --- | --- | --- |
 | `src/components/Editor.tsx` | 等宽、只读 `textarea`，显示文件名与内容 | 替换为编辑器，增加工具栏和状态栏 |
 | `src/store.ts` | 仅保存 `openFile`、`fileContent`；切换工作区会清空内容 | 增加文档基线、修改状态、保存状态和切换保护 |
@@ -23,21 +32,21 @@
 | `src-tauri/src/commands.rs` | 读取前校验规范路径位于工作区内，按 UTF-8 读取 | 补充受限读取、安全写回及文件版本检查 |
 | `src/components/RunToolbar.tsx` | 直接发起运行，上传的是磁盘内容 | 发起运行前处理未保存修改 |
 
-现有读取响应仅检查工作区是否相同：同一目录内快速点击 A、B 文件时，A 的迟到响应可能覆盖 B。接入编辑功能时应一起修复，避免编辑对象与用户选择不一致。
+当时读取响应仅检查工作区是否相同：同一目录内快速点击 A、B 文件时，A 的迟到响应可能覆盖 B。该问题已通过加载序号、工作区序号与标签 generation 守卫修复。
 
 ## 3. 选型
 
-| 方案 | 对当前需求的适配 | 代价与判断 |
+| 方案 | 对原始需求的适配 | 代价与判断 |
 | --- | --- | --- |
-| CodeMirror 6（推荐） | 可组合编辑、搜索和语言扩展，适合嵌入当前单文件面板 | 需自行接入 React 生命周期、文件状态与保存流程 |
+| CodeMirror 6（推荐） | 可组合编辑、搜索和语言扩展，适合嵌入当时的单文件面板，也可扩展为多标签 | 需自行接入 React 生命周期、文件状态与保存流程 |
 | Monaco Editor | 可作为后续更完整代码工作台的基础，与原设计一致 | 需管理 model 生命周期及按功能配置 worker；当前范围不要求完整工作台 |
 | `textarea` 叠加高亮层 | 可保留原生输入框 | 需自行同步滚动、选区、换行和输入法，维护成本不适合本项目 |
 
-CodeMirror 官方提供 [`@codemirror/lang-python`](https://github.com/codemirror/lang-python)，包含 Python 高亮和缩进支持；Shell 可通过 [`@codemirror/legacy-modes`](https://github.com/codemirror/legacy-modes) 的 `mode/shell` 与 `StreamLanguage` 接入。Shell 首版定位为词法高亮，不承诺语法诊断或完整结构化折叠。上述 GitHub 仓库已提示迁移至维护者的新托管地址，实施时应沿官方迁移链接核对源码和包版本。
+CodeMirror 官方提供 [`@codemirror/lang-python`](https://github.com/codemirror/lang-python)，包含 Python 高亮和缩进支持；Shell 通过 [`@codemirror/legacy-modes`](https://github.com/codemirror/legacy-modes) 的 `mode/shell` 与 `StreamLanguage` 接入。Shell 定位为词法高亮，不承诺语法诊断或完整结构化折叠。上述 GitHub 仓库已提示迁移至维护者的新托管地址，后续升级依赖时应沿官方迁移链接核对源码和包版本。
 
 Monaco 的语言服务使用 worker，Vite 有官方集成示例；VS Code 扩展不能直接视为可用的 Monaco 插件。参见 [Monaco 官方说明](https://github.com/microsoft/monaco-editor)及 [ESM / Vite 集成说明](https://github.com/microsoft/monaco-editor/blob/main/docs/integrate-esm.md)。
 
-建议直接封装 CodeMirror，无需额外 React 包装库。候选依赖为 `@codemirror/state`、`@codemirror/view`、`@codemirror/commands`、`@codemirror/language`、`@codemirror/search`、`@codemirror/autocomplete`、`@codemirror/lang-python`、`@codemirror/legacy-modes`。仅引入用到的扩展；实施时验证兼容版本并提交锁文件，资源随应用打包，运行时不依赖 CDN。
+实现直接封装 CodeMirror，没有使用额外 React 包装库。依赖包括 `@codemirror/state`、`@codemirror/view`、`@codemirror/commands`、`@codemirror/language`、`@codemirror/search`、`@codemirror/autocomplete`、`@codemirror/lang-python`、`@codemirror/legacy-modes` 等；资源随应用打包，运行时不依赖 CDN。
 
 ## 4. 首版功能与界面
 
@@ -47,28 +56,28 @@ Monaco 的语言服务使用 worker，Vite 有官方集成示例；VS Code 扩�
 | 手动语言选择 | 可切换纯文本 / Python / Shell，仅影响编辑器，不能改变文件名或运行类型 |
 | 基础编辑 | 行号、当前行提示、括号匹配与自动闭合、撤销/重做、选区缩进、查找/替换 |
 | 缩进 | Python 默认 4 空格，Shell 默认 2 空格；不自动重排原文件已有缩进 |
-| 保存 | 工具栏“保存”和 `Ctrl+S`；兼容平台可使用 `Cmd+S`；成功后显示“已保存” |
+| 保存 | 状态栏按需显示“保存”，并支持 `Ctrl+S` / `Cmd+S`；成功后显示“已保存” |
 | 状态栏 | 语言、光标行列、UTF-8、LF / CRLF、未保存 / 保存中 / 错误 |
 | 视觉 | 沿用现有深色主题和等宽字体；编辑区独立滚动，适配窗口尺寸变化 |
 | 可访问性 | 编辑区和按钮提供可读标签；可通过键盘退出编辑区，避免 Tab 焦点陷阱 |
 
-标题栏建议呈现为：`main.py ●    [Python ▾]    [保存]`。其中 `●` 表示有未保存修改，保存按钮在内容未变或保存中禁用。错误显示在编辑器区域，并保留可编辑内容。
+当前标签呈现文件名和未保存圆点，语言选择、光标/编码/换行状态及按需出现的保存按钮位于状态栏；保存中或工作区上传敏感阶段会锁定编辑。错误显示在编辑器区域，并保留编辑缓冲区。
 
 ~~首版维持一个打开的文件~~（00017 已实现多标签）和现有目录列表。递归文件树、新建/重命名/删除已在 00010 落地；另存为、自动保存、崩溃草稿恢复、格式化、LSP 补全/诊断和调试器作为后续扩展。`.bash` 可以高亮，但当前脚本模式仍只支持 `.py` / `.sh`；其他入口继续使用命令模式。
 
 ### 未保存修改与运行
 
-- 切换文件、切换工作区、正常关闭窗口时，若有修改，提供“保存并继续 / 放弃修改 / 取消”。保存失败则留在原文件；确认期间禁止并发切换。
-- 选择“放弃修改”后，仍先成功读取目标文件或目录，再替换当前状态，避免目标读取失败时顺带丢失当前内容。
+- 多标签之间切换不会丢弃缓冲区，因此无需确认；关闭脏标签、切换/关闭工作区、删除受影响文件或目录以及真正退出应用时，提供“保存并继续 / 放弃修改 / 取消”。窗口关闭按钮只隐藏到托盘，不触发退出或丢弃缓冲区。保存失败则保留原标签；确认期间禁止并发切换。
+- 重新加载或切换工作区时，选择“放弃修改”后仍先成功读取目标内容，再替换当前状态，避免目标读取失败时顺带丢失当前缓冲区。
 - 当前工作区有修改时，运行按钮显示“保存并运行”。先校验设备、入口或命令，再保存当前文档；保存成功且文档仍无新增修改时才发起运行。保存失败或版本冲突时不启动任务。
 - 该规则覆盖脚本和命令两种模式，因为命令模式也可能上传 Workspace；即使修改的文件不是入口脚本，也应保存，因为它可能是被导入的模块。
 - 启动操作期间固定工作区、入口与文档身份，短暂禁止编辑和切换，避免“保存 A 后运行 B”。后端返回 run ID 后可继续编辑，但任务在准备、同步阶段禁止再次保存该工作区文件；同步结束后保存只影响后续运行。
 - 最后一条只约束本应用的操作。外部编辑器仍可能在上传时修改磁盘文件，现有运行链路没有工作区快照；首版不承诺外部并发修改下的精确内容快照。
-- 关闭保护使用 Tauri 窗口关闭事件，确认后再关闭，并防止重复触发。强制结束进程或系统崩溃无法依靠该保护恢复内容。
+- 真退出保护由文件菜单/托盘退出事件统一进入 `requestQuit()`，完成忙状态检查、未保存确认和终端关闭后再销毁窗口；窗口关闭事件仅执行隐藏到托盘。强制结束进程或系统崩溃仍无法恢复未保存内容。
 
 ## 5. 前端实现
 
-建议将文档状态抽到 `src/editorDocument.ts`，供 Zustand 与测试使用；编辑器实例保存在组件 ref 中，不放入全局 store。
+文档状态已抽到 `src/editorDocument.ts`，供 Zustand 与测试使用；编辑器实例由组件管理，不放入全局 store。后续 00017 把原先的单文档模型扩展为 `EditorTab[]`，每个标签保留自己的内容、基线、revision、换行、BOM、语言和 generation。
 
 ```ts
 interface EditorDocument {
@@ -91,12 +100,12 @@ interface EditorDocument {
 2. 保存时捕获文档身份、内容和版本，同一文件串行保存。保存响应只更新对应文档的基线，不能用旧响应覆盖用户新输入；普通保存期间允许继续输入，新增输入仍标为未保存。
 3. CodeMirror 的单次编辑通过更新监听器写入文档状态；仅在打开另一文件或明确重新加载时整体替换文档，避免每次 React 渲染重置光标和撤销历史。
 4. `Editor` 仅订阅所需状态，避免每次终端输出都触发编辑器更新；卸载时销毁编辑器、事件监听和尺寸监听，兼容 React StrictMode。
-5. 保存快捷键与工具栏调用同一 action。编辑器内的查找/撤销快捷键不应影响 xterm；关闭监听统一注册一次并清理。
+5. 保存快捷键与状态栏保存入口调用同一 action。编辑器内的查找/撤销快捷键不应影响 xterm；关闭监听统一注册一次并清理。
 6. 工作区切换、文件切换和关闭共用一套未保存检查。面板显示读取失败原因，替换目前仅写入 `console.error` 的行为。
 
 ## 6. Rust 文件接口与数据保护
 
-建议把文件操作抽到 `src-tauri/src/workspace.rs`，让 Tauri command 仅负责参数转交。下面是拟定的接口契约，不是已有 API：
+文件操作已抽到 `src-tauri/src/workspace.rs`，Tauri command 负责互斥检查与参数转交。下面的接口契约已经实现：
 
 ```text
 read_workspace_file(dir, name)
@@ -106,7 +115,7 @@ write_workspace_file(dir, name, content, expectedRevision, eol, bom)
   -> { revision }
 ```
 
-`read_workspace_file` 从字符串改为结构化结果，需同步调整 `src/api.ts` 和全部调用点。新增命令在 `src-tauri/src/lib.rs` 注册；前端通过 Rust 命令保存，不开放通用前端文件写入能力。
+`read_workspace_file` 已从字符串改为结构化结果，`src/api.ts` 和调用点已同步；`write_workspace_file` 已在 `src-tauri/src/lib.rs` 注册。前端通过受限 Rust 命令保存，没有开放通用前端文件写入能力。
 
 ### 读取与写入规则
 
@@ -133,14 +142,14 @@ write_workspace_file(dir, name, content, expectedRevision, eol, bom)
 
 | 阶段 | 工作 | 完成条件 |
 | --- | --- | --- |
-| 1：编辑器接入 | 安装依赖，封装 CodeMirror，接入高亮、布局与语言选择；先保持只读 | Python / Shell 高亮、中文输入准备、尺寸适配和离线打包验证完成 |
-| 2：编辑与保存 | Rust 文件接口、文档基线、保存按钮、冲突及未保存保护一起接入 | 可编辑版本具备完整保存闭环，失败不丢内容 |
-| 3：运行联动 | 保存并运行、启动时身份固定、准备/同步阶段保存互斥 | 两种运行模式都不会静默上传本应用未保存的旧版本 |
-| 4：回归与文档 | 自动测试、桌面手工验证、更新实施记录及 Editor 注释 | 验收项通过，已实现能力与文档一致 |
+| 1：编辑器接入 | **已完成**：封装 CodeMirror，接入高亮、布局与语言选择 | 自动化与构建覆盖；中文输入法仍需桌面人工验收 |
+| 2：编辑与保存 | **已完成**：Rust 文件接口、文档基线、保存、冲突及未保存保护 | 具备完整保存闭环，失败保留内容 |
+| 3：运行联动 | **已完成**：运行前保存全部脏文档、启动身份固定、上传敏感阶段变更互斥 | 脚本和命令模式共用保护流程 |
+| 4：回归与文档 | **已完成自动化和文档同步** | 桌面输入法与极限长文本体验仍需人工验收 |
 
-主要修改：`Editor.tsx`、`WorkspacePanel.tsx`、`RunToolbar.tsx`、`App.tsx`（关闭保护）、`store.ts`、`api.ts`、`styles.css`、`commands.rs`、`lib.rs`、依赖及锁文件。预计新增 `src/editorDocument.ts`、`src/editorLanguage.ts`、`src-tauri/src/workspace.rs`；测试延续 `tests/store.test.ts` 与 Rust 单元测试结构。若使用拆分测试文件，应同步修改目前仅打包一个入口的 `scripts/test.mjs`。
+主要改动落在 `Editor.tsx`、`WorkspacePanel.tsx`、`RunToolbar.tsx`、`App.tsx`、`store.ts`、`api.ts`、`styles.css`、`commands.rs`、`lib.rs`、`src/editorDocument.ts` 和 `src-tauri/src/workspace.rs`。没有新增独立的 `editorLanguage.ts`；语言推断保留在 `editorDocument.ts`。测试已扩展为多个 `tests/*.test.ts` 入口，由 `scripts/test.mjs` 统一发现并打包。
 
-落地后更新 `docs/00002_20260908_implementation-progress.md` 的编辑器 TODO，并在原始设计中注明选型调整，保留历史记录的时间语义。本次方案不把待实施能力标记为已完成。
+`docs/00002_20260908_implementation-progress.md` 和原始设计 00001 已在 2026-09-16 审核中同步，阶段 1 的只读编辑器描述保留为历史快照，当前状态单独标为已实现。
 
 ## 8. 验收与验证
 
@@ -151,11 +160,11 @@ write_workspace_file(dir, name, content, expectedRevision, eol, bom)
 | 操作保护 | 切换与关闭的保存/放弃/取消分支；目标读取失败；保存失败阻止运行；命令模式及非入口文件修改也走保存流程 |
 | 文件操作 | 路径逃逸、绝对路径、链接/重定向、特殊文件、文件删除、版本冲突、无写权限、原子替换失败、执行位、UTF-8/BOM、LF/CRLF、混合行尾、大小边界 |
 | 联动与布局 | SSH / 串口请求仍使用正确的工作区和入口；准备/同步阶段保存互斥；窗口缩放、长行、接近上限文本与大量终端输出同时出现 |
-| 桌面集成 | Windows WebView 中离线启动、高亮资源加载、保存快捷键、关闭取消及确认关闭；浏览器预览不能替代 Tauri 验证 |
+| 桌面集成 | Windows WebView 中离线启动、高亮资源加载、保存快捷键、脏标签/真退出确认、关闭到托盘；浏览器预览不能替代 Tauri 验证 |
 
 状态与运行前流程使用 mock API 测试，文件校验使用临时目录；Windows 链接测试受环境权限限制时明确记录跳过原因。现有 Node 测试入口不覆盖真实 DOM / 输入法，这些项目通过桌面手工验收，必要时再引入浏览器测试。
 
-实施后执行：
+实现变更的完整验证命令：
 
 ```powershell
 # 仓库根目录
@@ -168,4 +177,4 @@ cargo fmt --all -- --check
 cargo test --offline --all-targets
 ```
 
-没有可用硬件时，使用既有 Tokio duplex 模拟器和本地 POSIX / Git Bash shell 回归串口链路；报告中明确 SSH / 物理串口实机验证未执行。记录编辑器加入前后的构建产物大小，以及接近 1 MiB 文本的打开和输入表现，再决定是否需要懒加载或进一步限制长行。
+没有可用硬件时，使用既有 Tokio duplex 模拟器和本地 POSIX / Git Bash shell 回归串口链路；报告中明确 SSH / 物理串口实机验证未执行。当前没有记录 CodeMirror 与旧 textarea 的同条件构建体积或性能基线；若接近 1 MiB 的文本出现实际性能问题，再补充桌面测量并决定是否进一步限制长行。

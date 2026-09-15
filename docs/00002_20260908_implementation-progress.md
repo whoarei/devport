@@ -4,9 +4,60 @@
 > 本文档持续更新，记录每个实施阶段完成了什么、怎么实现的、踩过的坑。
 > 2026-09-08 代码审查后的修复、验证和当前限制见 [代码审查记录](00003_20260908_code-review.md)。串口 Shell V1 的实现记录见 [串口实现记录](00004_20260908_serial-shell.md)。以下阶段 1 方法为首次实现时的记录。
 
+## 当前实现快照（2026-09-16，0.8.0）
+
+阶段 1 章节是 2026-09-08 的历史快照，其中的目录、事件传递方式、编辑器和待办不再代表当前状态。本节依据当前源码、测试及 00004—00026 实施文档汇总；具体限制仍以对应专题文档和代码为准。
+
+### 核心能力
+
+| 领域 | 当前状态 | 边界 |
+|---|---|---|
+| 执行目标 | **已实现** SSH、Serial Shell V1、WSL、Local Shell | Serial 假定设备已进入 Linux shell；WSL 需要发行版内 Python 3.8+；Local 原地运行 |
+| 脚本类型 | **已实现** Python、Shell、自定义命令 | 没有 Node / Binary 专用 `ScriptKind`；可由命令模式显式调用 |
+| 控制台 | **已实现** xterm.js、stdin、Stop、超时 | SSH / WSL / Local 支持 pipe、PTY、resize；Serial 为合并输出的 PTY-like 模式且不能运行中 resize |
+| 工作区同步 | **已实现** SSH SFTP、Serial 文本上传、WSL 二进制快照、Local 原地执行 | 每次运行全量处理；没有 hash / 增量同步；远端运行目录不自动回收 |
+| 工作区文件管理 | **已实现** 递归目录树、读写、新建、重命名、删除和路径边界校验 | 仅编辑 UTF-8 普通文件，单文件上限 1 MiB；运行同步敏感阶段阻止变更 |
+| 编辑器 | **已实现** CodeMirror 6、Python / Shell / text 高亮、保存、revision 冲突检测、多标签和未保存保护 | 无另存为、自动保存、草稿恢复、格式化、LSP、诊断和调试器 |
+| 运行状态与历史 | **已实现** 活动任务、200 条历史、原始输出日志、记录/输出导出和清空 | 单次持久化输出上限 2 MiB；不恢复应用退出前仍在远端运行的进程 |
+| 独立终端 | **已实现** SSH / WSL / Local 多标签终端，最多 8 个 | Serial 不支持独立终端；终端与 RunManager / 工作区相互独立 |
+| 桌面集成 | **已实现** 托盘、关闭到托盘、开机自启、单实例、应用内更新 | updater 的签名发布和真实覆盖升级仍需发布环境验收 |
+| 前端体验 | **已实现** 模块化 Dock / Panel 布局、最近工作区、预置命令、zh/en i18n、UI 缩放、Ctrl+Tab MRU | 持久化使用 localStorage；没有独立 Settings / Environment 页面 |
+
+### 当前运行架构
+
+```text
+React / Zustand / CodeMirror / xterm
+                ↓ Tauri invoke
+commands.rs → RunManager → process.rs 共同状态与控制契约
+                         ├── ssh/    （SFTP + exec channel）
+                         ├── serial/ （nonce marker + 文本上传）
+                         ├── wsl/    （wsl.exe + Python helper 协议）
+                         └── local/  （portable-pty / pipes）
+```
+
+运行输出先进入后端有界 broadcast 队列，前端约每 33 ms 通过 `drain_run_events` 单飞行批量拉取；落后时收到 `resync` 状态快照并把跨缺口输出分段。它已取代阶段 1 的原生 `run-event` 直接推送方案。输出在边界上以 base64 保留原始字节。
+
+持久化没有采用最初建议的 SQLite：设备、历史和运行日志由 Rust 写入应用配置目录中的 JSON / 日志文件；布局、语言、最近工作区和预置命令等 UI 偏好存入 localStorage。该选择与当前数据规模相符，但不提供数据库事务或跨实例共享；应用通过单实例机制避免并发写入。
+
+### 已确认仍未实现
+
+| 优先领域 | 未实现能力 | 现有替代或影响 |
+|---|---|---|
+| 环境管理 | Python venv、Node project environment、Managed Runtime、Runtime / Environment cache、Container mode | 当前依赖目标系统解释器或用户命令；无法保证不同设备的运行时一致性 |
+| Artifact | 按 glob 收集、远端产物枚举/下载、Artifact 元数据 | 只能导出 Remote Runner 已记录的控制台输出；Local 产物因原地运行会直接留在工作区 |
+| 同步与清理 | 增量同步、hash 缓存、SSH / Serial / WSL 运行目录自动清理 | 每次全量处理，远端目录可能累积；没有 CleanupManager |
+| 执行模型 | Node / Binary 专用入口、`none` / `auto` console mode、项目级 `.devrunner/project.yaml` | 需使用 Command 模式并逐次填写参数 |
+| 自动化 | Expect、Task Template、批量运行 | 预置命令只能启动单个 Command run，不是任务编排系统 |
+| 设备协议 | Serial Device Agent、ADB / USB / WebSocket executor | Serial 仍受登录 shell、文本上传和 marker 协议边界限制 |
+| 能力发现 | DeviceRuntimeProfile、动态 Capability Model | 当前只有按 transport 固定的 `pipe` / `resize` 两个能力位 |
+| 安全 | 系统凭据库、SSH 证书认证、首次 host-key 指纹确认 UI | SSH 密码仍明文保存在 `devices.json`；支持 agent、普通私钥和密码，host key 当前为自动 TOFU |
+| 生命周期 | 跨应用重启接管活动运行、远端孤儿进程发现 | 重启后只能看到已落盘终态历史，不能重新连接旧 ProcessSession |
+
+这些项目按原设计并不都是下一版本承诺。若继续实现，优先级应由真实使用场景决定；其中系统凭据库和远端目录清理属于现有能力的安全/运维缺口，Runtime、Artifact、Agent 属于新增产品能力。
+
 ---
 
-## 阶段 1（2026-09-08）：SSH-only MVP
+## 阶段 1（2026-09-08）：SSH-only MVP（历史记录）
 
 ### 本阶段范围（相比完整设计的裁剪）
 
@@ -171,16 +222,16 @@ rr-cli interact-test  # PTY + input() 自检        → isatty=True，stdin 输�
 rr-cli stop-test      # sleep 60 中途 stop        → canceled，exit=143，进程组无残留
 ```
 
-### 已知问题 / 待办
+### 阶段 1 待办的后续状态
 
-- [ ] 编辑器为只读，未实现保存写回本地文件；Monaco 未接入。
-- [ ] 设备密码明文存于 devices.json（应迁移到 Windows Credential Manager）。
-- [ ] 远程 workspace 运行后不清理（便于排查）；Artifact 下载未实现。
-- [ ] command 模式下复合命令（`a; b`）stop 只能杀到包装 sh，孙进程可能残留
-      （pipe 模式已由 setsid 进程组 kill 覆盖；pty 模式依赖 Ctrl+C 兜底）。
-- [ ] 首次连接偶发一次 run 不结束（仅出现 1 次未复现，疑似 TOFU 写盘时序，待观察）。
-- [x] 串口 Shell transport V1 已实现（端口枚举、8N1、marker 协议、文本工作区上传、stdin、停止与超时）；详见 `00004`。
-- [ ] Serial Agent、Node.js、Python venv / Managed Runtime、Expect、增量同步（hash）均未实现。
+- [x] 只读 textarea 已替换为 CodeMirror 6；保存写回、多标签、未保存保护和 revision 冲突检测已实现。项目没有采用 Monaco。
+- [ ] 设备密码仍明文存于 `devices.json`，尚未迁移到系统凭据库。
+- [ ] SSH / Serial / WSL 运行工作区仍不自动清理；Artifact 枚举与下载未实现。
+- [x] pipe 模式使用独立进程组并分级停止；各传输的完整停止边界分别记录在 00004、00007、00023/00024。PTY 下任意复合命令及目标程序自行脱离会话后仍只能尽力停止，不能承诺回收所有 daemon 化后代。
+- [ ] 2026-09-08 曾记录“首次连接偶发一次 run 不结束”，没有形成可复现用例或对应修复；现有自动化覆盖 TOFU 损坏/过期快照、SSH 拒绝与异常关闭，但不能据此宣称该历史现象已定位。
+- [x] Serial Shell transport V1 已实现（端口枚举、8N1、marker 协议、文本工作区上传、stdin、停止与超时）；详见 00004。
+- [x] WSL 直接执行、本机 Shell、独立终端、工作区文件管理、运行日志导出、更新、托盘/自启动、单实例、i18n、预置命令和模块化布局已实现；详见 00007—00026。
+- [ ] Serial Agent、Node/Binary 专用入口、Python venv / Managed Runtime、Expect、增量同步仍未实现；完整清单见本文顶部“已确认仍未实现”。
 
 ### 运行方式
 
@@ -191,3 +242,5 @@ npm run tauri build  # 打包
 ```
 
 无 GUI 冒烟测试：`cd src-tauri; cargo run --bin rr-cli -- <command|python|shell|interact-test|stop-test> ...`
+
+当前完整验证命令见仓库根目录 `AGENTS.md`：前端运行 `npm test`、`npm run build`；Rust 运行 `cargo fmt --all -- --check`、`cargo test --offline --all-targets`。WSL 真实发行版测试是显式 opt-in，物理串口与实际 SSH 设备不属于默认测试依赖。
