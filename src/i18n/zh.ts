@@ -308,8 +308,12 @@ export const zh = {
     run: "运行",
     stopRun: "停止运行",
     clearInputs: "清空命令与参数",
+    openSameDevice: "在此设备新建终端",
     reconnect: "重新连接",
     closeTerminal: "关闭终端",
+    closeOtherTerminals: "关闭其他终端（{{count}}）",
+    closeTerminalsToRight: "关闭右侧终端（{{count}}）",
+    closeAllTerminals: "关闭全部终端（{{count}}）",
   },
   replay: {
     gap: "[输出超过接收能力，部分输出已丢失；任务状态已重新同步]",

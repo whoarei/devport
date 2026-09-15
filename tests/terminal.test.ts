@@ -5,6 +5,7 @@ import { useTerminalStore, terminalActive } from "../src/terminalStore";
 import { terminalInput, readTerminal } from "../src/terminalIO";
 import { loadTabCycleOrder, mruCycleOrder, nextMruId, nextSequentialId } from "../src/tabCycle";
 import { cycleConsoleTab, endConsoleTabCycle, handleConsoleTabKeyDown, handleConsoleTabKeyUp } from "../src/consoleTabs";
+import { terminalCloseTargets } from "../src/terminalTabActions";
 import { useAppStore } from "../src/store";
 import i18n from "../src/i18n";
 
@@ -158,6 +159,32 @@ test("mru cycling builds a stable complete snapshot and moves in both directions
   assert.equal(nextMruId([], "X", true), "X");
 });
 
+test("closing the active terminal selects its right neighbor, then left, then Run", async (t) => {
+  const s = reset(t);
+  t.mock.method(api, "openTerminal", async (id) => status(id));
+  t.mock.method(api, "closeTerminal", async () => {});
+  await s.open("a", "A");
+  await s.open("b", "B");
+  await s.open("c", "C");
+  const [ta, tb, tc] = useTerminalStore.getState().tabs;
+  s.select(tb.id);
+  await useTerminalStore.getState().close(tb.id);
+  assert.equal(useTerminalStore.getState().activeTab, tc.id);
+  await useTerminalStore.getState().close(tc.id);
+  assert.equal(useTerminalStore.getState().activeTab, ta.id);
+  await useTerminalStore.getState().close(ta.id);
+  assert.equal(useTerminalStore.getState().activeTab, "run");
+});
+
+test("tab context-menu close scopes preserve visual order", () => {
+  const tabs = ["a", "b", "c"].map((id) => ({ id, deviceId: id, deviceName: id, busy: false }));
+  assert.deepEqual(terminalCloseTargets(tabs, "b", "current"), ["b"]);
+  assert.deepEqual(terminalCloseTargets(tabs, "b", "others"), ["a", "c"]);
+  assert.deepEqual(terminalCloseTargets(tabs, "b", "right"), ["c"]);
+  assert.deepEqual(terminalCloseTargets(tabs, "b", "all"), ["a", "b", "c"]);
+  assert.deepEqual(terminalCloseTargets(tabs, "missing", "all"), []);
+});
+
 test("mru stack tracks selection, opens, closes and shutdown", async (t) => {
   const s = reset(t);
   t.mock.method(api, "openTerminal", async (id) => status(id));
@@ -169,12 +196,11 @@ test("mru stack tracks selection, opens, closes and shutdown", async (t) => {
   assert.deepEqual(useTerminalStore.getState().mru, [tb.id, ta.id, "run"]);
   s.select(ta.id);
   assert.deepEqual(useTerminalStore.getState().mru, [ta.id, tb.id, "run"]);
-  // 关闭活动标签：回落 run 且栈中移除该 id、run 置顶
+  // 关闭活动标签：优先选中右侧相邻标签，并同步 MRU。
   await useTerminalStore.getState().close(ta.id);
   const after = useTerminalStore.getState();
-  assert.equal(after.activeTab, "run");
-  assert.deepEqual(after.mru, ["run", tb.id]);
-  // 关闭非活动标签：仅从栈中移除
+  assert.equal(after.activeTab, tb.id);
+  assert.deepEqual(after.mru, [tb.id, "run"]);
   await useTerminalStore.getState().close(tb.id);
   assert.deepEqual(useTerminalStore.getState().mru, ["run"]);
   await s.open("c", "C");

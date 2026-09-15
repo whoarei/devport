@@ -85,12 +85,18 @@ export const useTerminalStore = create<TerminalStore>((set, get) => {
       return track((async () => {
         try {
           if (tab.status) await api.closeTerminal(tab.status.session_id);
-          set((s) => ({
-            tabs: s.tabs.filter((t) => t.id !== id),
-            activeTab: s.activeTab === id ? "run" : s.activeTab,
-            // 关闭活动标签时回落运行控制台并置于栈顶，保证 mru 栈与 activeTab 一致
-            mru: s.activeTab === id ? touchMru(s.mru.filter((x) => x !== id), "run") : s.mru.filter((x) => x !== id),
-          }));
+          set((s) => {
+            const index = s.tabs.findIndex((t) => t.id === id);
+            // Prefer the tab to the right, then the one to the left, before falling back to Run.
+            const fallback = s.tabs[index + 1]?.id ?? s.tabs[index - 1]?.id ?? "run";
+            return {
+              tabs: s.tabs.filter((t) => t.id !== id),
+              activeTab: s.activeTab === id ? fallback : s.activeTab,
+              mru: s.activeTab === id
+                ? touchMru(s.mru.filter((x) => x !== id), fallback)
+                : s.mru.filter((x) => x !== id),
+            };
+          });
         } catch (error) { patch(id, { busy: false, error: errorMessage(error) }); }
       })());
     },

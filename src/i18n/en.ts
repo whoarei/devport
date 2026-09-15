@@ -307,8 +307,12 @@ export const en: Messages = {
     run: "Run",
     stopRun: "Stop Run",
     clearInputs: "Clear Command & Arguments",
+    openSameDevice: "New Terminal on This Device",
     reconnect: "Reconnect",
     closeTerminal: "Close Terminal",
+    closeOtherTerminals: "Close Other Terminals ({{count}})",
+    closeTerminalsToRight: "Close Terminals to the Right ({{count}})",
+    closeAllTerminals: "Close All Terminals ({{count}})",
   },
   replay: {
     gap: "[Output exceeded receive capacity; some output was lost. Task status has been resynchronized]",

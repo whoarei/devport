@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "../store";
-import { useTerminalStore } from "../terminalStore";
+import { terminalActive, useTerminalStore, type TerminalTab } from "../terminalStore";
+import { terminalCloseTargets, type TerminalCloseScope } from "../terminalTabActions";
 import { errorMessage } from "../api";
 import { ContextMenu, contextMenuPosition, type MenuEntry, type MenuState } from "./ContextMenu";
 import { deviceLabel } from "./DeviceDialog";
@@ -32,24 +34,79 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
     if (collapsed) onToggleCollapse();
     void useTerminalStore.getState().open(device.id, device.name).catch((e) => setError(errorMessage(e)));
   };
+  const newTerminalEntries = (): MenuEntry[] => devices.length
+    ? devices.map((device) => ({
+      label: `${deviceLabel(device)}${device.transport === "serial" ? t("console.serialNoTerminal") : ""}`,
+      disabled: device.transport === "serial",
+      onSelect: () => open(device.id),
+    }))
+    : [{ label: t("console.noDevices"), disabled: true, onSelect: () => undefined }];
+  const openNewTerminalMenu = (x: number, y: number) => {
+    setError("");
+    const entries = newTerminalEntries();
+    setMenu({ ...contextMenuPosition(x, y, entries.length), entries });
+  };
   const toggleMenu = () => {
     if (menu) { setMenu(null); return; }
-    setError("");
-    const entries: MenuEntry[] = devices.length
-      ? devices.map((device) => ({
-        label: `${deviceLabel(device)}${device.transport === "serial" ? t("console.serialNoTerminal") : ""}`,
-        disabled: device.transport === "serial",
-        onSelect: () => open(device.id),
-      }))
-      : [{ label: t("console.noDevices"), disabled: true, onSelect: () => undefined }];
     const rect = addButton.current?.getBoundingClientRect();
-    setMenu({ ...contextMenuPosition(rect?.left ?? 0, (rect?.bottom ?? 0) + 4, entries.length), entries });
+    openNewTerminalMenu(rect?.left ?? 0, (rect?.bottom ?? 0) + 4);
+  };
+  const openTabsBlankMenu = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    event.preventDefault();
+    if (updating || shuttingDown || tabs.length >= 8) return;
+    openNewTerminalMenu(event.clientX, event.clientY);
+  };
+  const closeTabs = (ids: string[]) => {
+    void Promise.all(ids.map((id) => useTerminalStore.getState().close(id)));
+  };
+  const openTabMenu = (event: MouseEvent, tab: TerminalTab) => {
+    event.preventDefault();
+    event.stopPropagation();
+    select(tab.id);
+    const targets = (scope: TerminalCloseScope) => terminalCloseTargets(tabs, tab.id, scope);
+    const others = targets("others");
+    const right = targets("right");
+    const all = targets("all");
+    const sameDeviceAvailable = devices.some((device) => device.id === tab.deviceId && device.transport !== "serial");
+    const anyBusy = (ids: string[]) => ids.some((id) => tabs.find((candidate) => candidate.id === id)?.busy);
+    const entries: MenuEntry[] = [
+      {
+        label: t("ctxmenu.openSameDevice"),
+        disabled: !sameDeviceAvailable || updating || shuttingDown || tabs.length >= 8,
+        onSelect: () => open(tab.deviceId),
+      },
+    ];
+    if (!terminalActive(tab) && !tab.busy) entries.push({
+      label: t("ctxmenu.reconnect"),
+      onSelect: () => void useTerminalStore.getState().reconnect(tab.id),
+    });
+    entries.push(
+      "separator",
+      {
+        label: t("ctxmenu.closeTerminal"), danger: true, disabled: tab.busy,
+        onSelect: () => closeTabs(targets("current")),
+      },
+      {
+        label: t("ctxmenu.closeOtherTerminals", { count: others.length }), danger: true,
+        disabled: others.length === 0 || anyBusy(others), onSelect: () => closeTabs(others),
+      },
+      {
+        label: t("ctxmenu.closeTerminalsToRight", { count: right.length }), danger: true,
+        disabled: right.length === 0 || anyBusy(right), onSelect: () => closeTabs(right),
+      },
+      {
+        label: t("ctxmenu.closeAllTerminals", { count: all.length }), danger: true,
+        disabled: all.length === 0 || anyBusy(all), onSelect: () => closeTabs(all),
+      },
+    );
+    setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
   };
   const contentVisible = visible && !collapsed;
   return <div className="console-panel">
     <div className="console-tabs-bar">
       <button className="console-collapse" aria-label={collapsed ? t("console.expand") : t("console.collapse")} aria-expanded={!collapsed} onClick={onToggleCollapse}>{collapsed ? "▸" : "▾"}</button>
-      <div className="console-tabs" role="tablist" aria-label={t("console.tabsAria")} onKeyDown={(event) => {
+      <div className="console-tabs" role="tablist" aria-label={t("console.tabsAria")} onContextMenu={openTabsBlankMenu} onKeyDown={(event) => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         if ((event.target as HTMLElement).getAttribute("role") !== "tab") return;
         event.preventDefault();
@@ -59,7 +116,7 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
         select(ids[next]); document.getElementById(`tab-${ids[next]}`)?.focus();
       }}>
         <button role="tab" id="tab-run" aria-controls="panel-run" aria-selected={activeTab === "run"} tabIndex={activeTab === "run" ? 0 : -1} onClick={() => select("run")}>{t("console.runTab")}</button>
-        {tabs.map((tab, index) => <div className="console-tab" key={tab.id}>
+        {tabs.map((tab, index) => <div className="console-tab" key={tab.id} onContextMenu={(event) => openTabMenu(event, tab)}>
           <button role="tab" id={`tab-${tab.id}`} aria-controls={`panel-${tab.id}`} aria-selected={activeTab === tab.id} tabIndex={activeTab === tab.id ? 0 : -1}
             onClick={() => select(tab.id)} title={t("console.terminalTitle", { name: tab.deviceName, index: index + 1 })}>
             <span className={`terminal-dot terminal-${tab.status?.state ?? "connecting"}`} aria-hidden="true" />
