@@ -101,8 +101,12 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
 
   useEffect(() => { replayRef.current?.pump(); }, [activeRunId, buffer]);
 
+  // 变为可见时 fit 并聚焦，保证 Ctrl+Tab 循环时焦点跟随当前标签（与 TerminalPage 行为一致）
   useEffect(() => {
-    if (!collapsed && containerRef.current?.clientWidth && containerRef.current.clientHeight) fitRef.current?.fit();
+    if (!collapsed) {
+      if (containerRef.current?.clientWidth && containerRef.current.clientHeight) fitRef.current?.fit();
+      termRef.current?.focus();
+    }
   }, [collapsed]);
 
   // 状态行

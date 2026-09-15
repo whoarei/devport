@@ -1,6 +1,10 @@
 import { create } from "zustand";
 import { api, errorMessage, type TerminalStatus } from "./api";
 import i18n from "./i18n";
+import { loadTabCycleOrder, saveTabCycleOrder, type TabCycleOrder } from "./tabCycle";
+
+/** 最近使用栈：把 id 移到栈顶 */
+const touchMru = (mru: string[], id: string) => [id, ...mru.filter((x) => x !== id)];
 
 export interface TerminalTab {
   id: string;
@@ -25,7 +29,14 @@ interface TerminalStore {
   tabs: TerminalTab[];
   activeTab: string;
   shuttingDown: boolean;
+  /** 最近使用栈（含 "run"），头为最新；供 Ctrl+Tab mru 模式切换 */
+  mru: string[];
+  /** Ctrl+Tab 切换顺序偏好，持久化于 localStorage */
+  tabCycleOrder: TabCycleOrder;
+  setTabCycleOrder: (order: TabCycleOrder) => void;
   select: (id: string) => void;
+  /** MRU 会话中的预览选择：只切换活动标签，松开 Ctrl 后再由 select 提交。 */
+  previewSelect: (id: string) => void;
   open: (deviceId: string, deviceName: string) => Promise<void>;
   reconnect: (id: string) => Promise<void>;
   close: (id: string) => Promise<void>;
@@ -37,13 +48,19 @@ interface TerminalStore {
 export const useTerminalStore = create<TerminalStore>((set, get) => {
   const patch = (id: string, value: Partial<TerminalTab>) => set((s) => ({ tabs: s.tabs.map((tab) => tab.id === id ? { ...tab, ...value } : tab) }));
   return {
-    tabs: [], activeTab: "run", shuttingDown: false,
-    select: (id) => { if (id === "run" || get().tabs.some((t) => t.id === id)) set({ activeTab: id }); },
+    tabs: [], activeTab: "run", shuttingDown: false, mru: ["run"], tabCycleOrder: loadTabCycleOrder(),
+    setTabCycleOrder: (order) => { saveTabCycleOrder(order); set({ tabCycleOrder: order }); },
+    select: (id) => {
+      if (id === "run" || get().tabs.some((t) => t.id === id)) set((s) => ({ activeTab: id, mru: touchMru(s.mru, id) }));
+    },
+    previewSelect: (id) => {
+      if (id === "run" || get().tabs.some((t) => t.id === id)) set({ activeTab: id });
+    },
     open: (deviceId, deviceName) => {
       if (get().shuttingDown) return Promise.reject(new Error(i18n.t("terminal.closingAll")));
       if (get().tabs.length >= 8) return Promise.reject(new Error(i18n.t("terminal.maxTabs")));
       const id = crypto.randomUUID();
-      set((s) => ({ tabs: [...s.tabs, { id, deviceId, deviceName, busy: true }], activeTab: id }));
+      set((s) => ({ tabs: [...s.tabs, { id, deviceId, deviceName, busy: true }], activeTab: id, mru: touchMru(s.mru, id) }));
       return track((async () => {
         try { patch(id, { status: await api.openTerminal(deviceId), busy: false }); }
         catch (error) { patch(id, { busy: false, error: errorMessage(error) }); }
@@ -68,7 +85,12 @@ export const useTerminalStore = create<TerminalStore>((set, get) => {
       return track((async () => {
         try {
           if (tab.status) await api.closeTerminal(tab.status.session_id);
-          set((s) => ({ tabs: s.tabs.filter((t) => t.id !== id), activeTab: s.activeTab === id ? "run" : s.activeTab }));
+          set((s) => ({
+            tabs: s.tabs.filter((t) => t.id !== id),
+            activeTab: s.activeTab === id ? "run" : s.activeTab,
+            // 关闭活动标签时回落运行控制台并置于栈顶，保证 mru 栈与 activeTab 一致
+            mru: s.activeTab === id ? touchMru(s.mru.filter((x) => x !== id), "run") : s.mru.filter((x) => x !== id),
+          }));
         } catch (error) { patch(id, { busy: false, error: errorMessage(error) }); }
       })());
     },
@@ -77,7 +99,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => {
       try {
         await Promise.allSettled([...pending]);
         await api.closeAllTerminals();
-        set({ tabs: [], activeTab: "run" });
+        set({ tabs: [], activeTab: "run", mru: ["run"] });
       } finally { set({ shuttingDown: false }); }
     },
     update: (id, sessionId, status) => {

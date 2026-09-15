@@ -18,6 +18,7 @@ import { clampSidebarWidth, clampSplit, panelCollapsePatch, DEFAULT_LAYOUT } fro
 import { panelsInDock, type PanelId } from "./panels/registry";
 import { PANEL_COMPONENTS } from "./panels/components";
 import { checkForAvailableUpdate } from "./updateStatus";
+import { endConsoleTabCycle, handleConsoleTabKeyDown, handleConsoleTabKeyUp } from "./consoleTabs";
 
 export default function App() {
   const { t } = useTranslation();
@@ -39,6 +40,22 @@ export default function App() {
   useEffect(() => {
     if (!isTauri()) return;
     void checkForAvailableUpdate(api.checkAppUpdate, (info) => useAppStore.setState({ availableUpdate: info }));
+  }, []);
+
+  useEffect(() => {
+    // capture 阶段统一接管，确保事件不会先后被 xterm 与 window 处理两次。
+    const onKeyDown = (event: KeyboardEvent) => { handleConsoleTabKeyDown(event); };
+    const onKeyUp = (event: KeyboardEvent) => { handleConsoleTabKeyUp(event); };
+    const onBlur = () => endConsoleTabCycle();
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", onBlur);
+      endConsoleTabCycle();
+    };
   }, []);
 
   useEffect(() => {

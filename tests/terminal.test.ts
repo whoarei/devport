@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { api, type TerminalStatus } from "../src/api";
 import { useTerminalStore, terminalActive } from "../src/terminalStore";
 import { terminalInput, readTerminal } from "../src/terminalIO";
+import { loadTabCycleOrder, mruCycleOrder, nextMruId, nextSequentialId } from "../src/tabCycle";
+import { cycleConsoleTab, endConsoleTabCycle, handleConsoleTabKeyDown, handleConsoleTabKeyUp } from "../src/consoleTabs";
 import { useAppStore } from "../src/store";
 import i18n from "../src/i18n";
 
@@ -13,9 +15,10 @@ const status = (id: string, state: TerminalStatus["state"] = "connected"): Termi
   ({ session_id: id, device_name: id, state, exit_code: null, error: null });
 const delay = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
 function reset(t: test.TestContext) {
+  endConsoleTabCycle();
   const before = useTerminalStore.getState();
-  useTerminalStore.setState({ tabs: [], activeTab: "run", shuttingDown: false });
-  t.after(() => useTerminalStore.setState(before));
+  useTerminalStore.setState({ tabs: [], activeTab: "run", shuttingDown: false, mru: ["run"] });
+  t.after(() => { endConsoleTabCycle(); useTerminalStore.setState(before); });
   return useTerminalStore.getState();
 }
 
@@ -128,4 +131,126 @@ test("StrictMode setup/cleanup does not consume native terminal output", async (
   let calls = 0;
   const stop = readTerminal(async () => { calls++; return { status: status("a"), data: "" }; }, async () => {}, () => {}, () => {});
   stop(); await delay(); assert.equal(calls, 0);
+});
+
+test("tab cycle order preference falls back to sequential on missing or invalid storage", () => {
+  assert.equal(loadTabCycleOrder(), "sequential");
+});
+
+test("sequential cycling wraps in both directions and falls back for unknown tabs", () => {
+  const ids = ["run", "a", "b"];
+  assert.equal(nextSequentialId(ids, "run", false), "a");
+  assert.equal(nextSequentialId(ids, "b", false), "run");
+  assert.equal(nextSequentialId(ids, "run", true), "b");
+  assert.equal(nextSequentialId(ids, "a", true), "run");
+  assert.equal(nextSequentialId(ids, "missing", false), "run");
+  assert.equal(nextSequentialId([], "run", false), "run");
+});
+
+test("mru cycling builds a stable complete snapshot and moves in both directions", () => {
+  assert.deepEqual(mruCycleOrder(["run", "A", "B", "C"], ["A", "B"], "B"), ["B", "A", "run", "C"]);
+  const mru = ["A", "B", "C"];
+  assert.equal(nextMruId(mru, "A", false), "B");
+  assert.equal(nextMruId(mru, "C", false), "A");
+  assert.equal(nextMruId(mru, "A", true), "C");
+  assert.equal(nextMruId(mru, "B", true), "A");
+  assert.equal(nextMruId(["A", "B"], "X", false), "A");
+  assert.equal(nextMruId([], "X", true), "X");
+});
+
+test("mru stack tracks selection, opens, closes and shutdown", async (t) => {
+  const s = reset(t);
+  t.mock.method(api, "openTerminal", async (id) => status(id));
+  t.mock.method(api, "closeTerminal", async () => {});
+  t.mock.method(api, "closeAllTerminals", async () => {});
+  await s.open("a", "A");
+  await s.open("b", "B");
+  const [ta, tb] = useTerminalStore.getState().tabs;
+  assert.deepEqual(useTerminalStore.getState().mru, [tb.id, ta.id, "run"]);
+  s.select(ta.id);
+  assert.deepEqual(useTerminalStore.getState().mru, [ta.id, tb.id, "run"]);
+  // 关闭活动标签：回落 run 且栈中移除该 id、run 置顶
+  await useTerminalStore.getState().close(ta.id);
+  const after = useTerminalStore.getState();
+  assert.equal(after.activeTab, "run");
+  assert.deepEqual(after.mru, ["run", tb.id]);
+  // 关闭非活动标签：仅从栈中移除
+  await useTerminalStore.getState().close(tb.id);
+  assert.deepEqual(useTerminalStore.getState().mru, ["run"]);
+  await s.open("c", "C");
+  await useTerminalStore.getState().closeAll();
+  assert.deepEqual(useTerminalStore.getState().mru, ["run"]);
+});
+
+test("Ctrl+Tab cycles run console and terminals sequentially in both directions", async (t) => {
+  const s = reset(t);
+  s.setTabCycleOrder("sequential");
+  t.mock.method(api, "openTerminal", async (id) => status(id));
+  t.mock.method(api, "closeAllTerminals", async () => {});
+  await s.open("a", "A");
+  await s.open("b", "B");
+  const [ta, tb] = useTerminalStore.getState().tabs;
+  s.select("run");
+  cycleConsoleTab(false);
+  assert.equal(useTerminalStore.getState().activeTab, ta.id);
+  cycleConsoleTab(false);
+  assert.equal(useTerminalStore.getState().activeTab, tb.id);
+  cycleConsoleTab(false);
+  assert.equal(useTerminalStore.getState().activeTab, "run");
+  cycleConsoleTab(true);
+  assert.equal(useTerminalStore.getState().activeTab, tb.id);
+  // 无终端标签时 no-op
+  await useTerminalStore.getState().closeAll();
+  cycleConsoleTab(false);
+  cycleConsoleTab(true);
+  assert.equal(useTerminalStore.getState().activeTab, "run");
+  s.setTabCycleOrder("sequential");
+});
+
+test("Ctrl+Tab in mru mode traverses a stable snapshot and commits only on Ctrl release", async (t) => {
+  const s = reset(t);
+  s.setTabCycleOrder("mru");
+  t.mock.method(api, "openTerminal", async (id) => status(id));
+  await s.open("a", "A");
+  await s.open("b", "B");
+  const [ta, tb] = useTerminalStore.getState().tabs;
+  const originalMru = [tb.id, ta.id, "run"];
+  assert.deepEqual(useTerminalStore.getState().mru, originalMru);
+  // Ctrl 按住期间按冻结顺序 tb -> ta -> run，再反向回到 ta；预览不污染 MRU。
+  cycleConsoleTab(false);
+  assert.equal(useTerminalStore.getState().activeTab, ta.id);
+  assert.deepEqual(useTerminalStore.getState().mru, originalMru);
+  cycleConsoleTab(false);
+  assert.equal(useTerminalStore.getState().activeTab, "run");
+  assert.deepEqual(useTerminalStore.getState().mru, originalMru);
+  cycleConsoleTab(true);
+  assert.equal(useTerminalStore.getState().activeTab, ta.id);
+  endConsoleTabCycle();
+  assert.deepEqual(useTerminalStore.getState().mru, [ta.id, tb.id, "run"]);
+  s.setTabCycleOrder("sequential");
+});
+
+test("the capture key handler consumes one Ctrl+Tab exactly once and commits on keyup", async (t) => {
+  const s = reset(t);
+  s.setTabCycleOrder("mru");
+  t.mock.method(api, "openTerminal", async (id) => status(id));
+  await s.open("a", "A");
+  s.select("run");
+  const tab = useTerminalStore.getState().tabs[0];
+  let prevented = 0;
+  let stopped = 0;
+  const event = {
+    ctrlKey: true, altKey: false, metaKey: false, shiftKey: false, key: "Tab",
+    preventDefault: () => { prevented++; },
+    stopPropagation: () => { stopped++; },
+  } as unknown as KeyboardEvent;
+  assert.equal(handleConsoleTabKeyDown(event), true);
+  assert.equal(useTerminalStore.getState().activeTab, tab.id);
+  assert.equal(prevented, 1);
+  assert.equal(stopped, 1);
+  assert.equal(handleConsoleTabKeyUp({ key: "Control" } as KeyboardEvent), true);
+  assert.deepEqual(useTerminalStore.getState().mru, [tab.id, "run"]);
+  assert.equal(handleConsoleTabKeyUp({ key: "Tab" } as KeyboardEvent), false);
+  assert.equal(handleConsoleTabKeyDown({ ...event, ctrlKey: false } as KeyboardEvent), false);
+  s.setTabCycleOrder("sequential");
 });

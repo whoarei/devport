@@ -7,6 +7,7 @@ import { requestQuit } from "../appLifecycle";
 import { dirtyTab } from "../editorDocument";
 import { loadLanguagePreference, setLanguage, type LanguagePreference } from "../i18n/language";
 import { useAppStore } from "../store";
+import { useTerminalStore } from "../terminalStore";
 import { panelVisibilityPatch } from "../layoutState";
 import { panelsInDock } from "../panels/registry";
 import { emptyDevice, deviceLabel } from "./DeviceDialog";
@@ -100,6 +101,8 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
   const openFile = useAppStore((state) => state.activeFile);
   const fileBusy = useAppStore((state) => state.loading || state.saving || state.starting || state.guarding);
   const [autostart, setAutostart] = useState(false);
+  const tabCycleOrder = useTerminalStore((state) => state.tabCycleOrder);
+  const setTabCycleOrder = useTerminalStore((state) => state.setTabCycleOrder);
 
   useEffect(() => {
     void isAutostartEnabled().then(setAutostart).catch(() => {});
@@ -196,6 +199,14 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
           children: [
             { type: "checkbox", label: t("menu.left"), checked: layout.sidebarPosition === "left", onSelect: () => setLayout({ sidebarPosition: "left" }) },
             { type: "checkbox", label: t("menu.right"), checked: layout.sidebarPosition === "right", onSelect: () => setLayout({ sidebarPosition: "right" }) },
+          ],
+        },
+        { type: "separator" },
+        {
+          label: t("menu.tabCycleOrder"),
+          children: [
+            { type: "checkbox", label: t("menu.tabCycleSequential"), checked: tabCycleOrder === "sequential", onSelect: () => setTabCycleOrder("sequential") },
+            { type: "checkbox", label: t("menu.tabCycleMru"), checked: tabCycleOrder === "mru", onSelect: () => setTabCycleOrder("mru") },
           ],
         },
         { type: "separator" },
