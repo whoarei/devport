@@ -48,6 +48,7 @@ const LEGACY_VISIBLE_KEYS: Record<PanelId, string> = {
   workspace: "workspaceVisible",
   commands: "commandsVisible",
   history: "historyVisible",
+  runtime: "runtimeVisible",
   editor: "editorVisible",
   console: "consoleVisible",
 };
@@ -56,6 +57,7 @@ const LEGACY_COLLAPSED_KEYS: Record<PanelId, string> = {
   workspace: "workspaceCollapsed",
   commands: "commandsCollapsed",
   history: "historyCollapsed",
+  runtime: "runtimeCollapsed",
   editor: "editorCollapsed",
   console: "consoleCollapsed",
 };

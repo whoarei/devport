@@ -93,6 +93,15 @@ export function HistoryPanel({ collapsed, onToggleCollapse }: { collapsed: boole
                   {h.device_name} · exit={h.exit_code ?? "-"} ·{" "}
                   {new Date(h.started_at).toLocaleTimeString()}
                 </span>
+                {h.environment_id && (
+                  <span className="history-meta managed" title={h.environment_id}>
+                    {t("history.managed", {
+                      uv: h.uv_version ?? "?",
+                      python: h.python_version ?? "?",
+                      env: h.environment_id.slice(0, 8),
+                    })}
+                  </span>
+                )}
               </li>
             );
           })}

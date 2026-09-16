@@ -5,6 +5,7 @@ pub mod events;
 pub mod local;
 pub mod process;
 pub mod runner;
+pub mod runtime;
 pub mod serial;
 pub mod ssh;
 pub mod terminal;
@@ -55,12 +56,18 @@ pub fn run() {
 
             let (event_tx, event_rx) = events::channel();
 
+            // RunManager 与管理命令共享同一个 Environment LeaseSet（00027 §16）
+            let leases = std::sync::Arc::new(crate::runtime::manager::LeaseSet::default());
+            let mut run_manager = RunManager::new(&config_dir, event_tx);
+            run_manager.attach_leases(leases.clone());
+
             let state = AppState {
                 terminal_manager: terminal::TerminalManager::default(),
-                run_manager: RunManager::new(&config_dir, event_tx),
+                run_manager,
                 device_store: DeviceStore::new(&config_dir),
                 config_dir,
                 event_rx: parking_lot::Mutex::new(event_rx),
+                leases,
             };
             app.manage(state);
 
@@ -101,6 +108,12 @@ pub fn run() {
             commands::export_run_output,
             commands::clear_run_history,
             commands::drain_run_events,
+            commands::inspect_python_project,
+            commands::list_managed_runtimes,
+            commands::list_project_environments,
+            commands::rebuild_project_environment,
+            commands::delete_project_environment,
+            commands::clean_runtime_cache,
             commands::open_terminal,
             commands::read_terminal,
             commands::send_terminal_input,

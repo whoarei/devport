@@ -79,6 +79,18 @@ pub(crate) fn invocation(shell: &Shell, req: &RunRequest) -> Result<(PathBuf, Ve
                 .workspace_dir
                 .as_deref()
                 .ok_or_else(|| failure("script requires a workspace"))?;
+            // Managed Runtime：直接 spawn 环境内 Python，不探测系统 Python（00027 §13）
+            if let Some(env_python) = &req.managed_env_python {
+                let mut args = vec!["-u".to_string()];
+                if req.managed_module {
+                    args.push("-m".to_string());
+                    args.push(entry.to_string());
+                } else {
+                    args.push(entry_path(workspace, entry).to_string_lossy().into_owned());
+                }
+                args.extend(req.args.iter().cloned());
+                return Ok((PathBuf::from(env_python), args));
+            }
             let mut args = vec![
                 "-u".to_string(),
                 entry_path(workspace, entry).to_string_lossy().into_owned(),
@@ -146,15 +158,29 @@ fn spec_for(shell: &Shell, req: &RunRequest) -> Result<SessionSpec> {
         None => default_working_directory()
             .ok_or_else(|| failure("cannot determine the local working directory"))?,
     };
+    let mut env: Vec<(String, String)> = req
+        .env
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    // Managed Runtime：python-path 由后端验证，展开为工作区内绝对路径加入 PYTHONPATH
+    if !req.managed_pythonpath.is_empty() {
+        if let Some(workspace) = &req.workspace_dir {
+            let paths: Vec<PathBuf> = req
+                .managed_pythonpath
+                .iter()
+                .map(|p| entry_path(workspace, p))
+                .collect();
+            if let Ok(joined) = std::env::join_paths(paths) {
+                env.push(("PYTHONPATH".into(), joined.to_string_lossy().into_owned()));
+            }
+        }
+    }
     Ok(SessionSpec {
         program,
         args,
         cwd: Some(cwd),
-        env: req
-            .env
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
+        env,
         mode: req.console_mode,
         cols: req.cols,
         rows: req.rows,

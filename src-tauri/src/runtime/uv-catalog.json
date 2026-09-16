@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "uvVersion": "0.12.13",
+  "assets": [
+    {
+      "platform": "linux-x86_64-gnu",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.12.13/uv-x86_64-unknown-linux-gnu.tar.gz",
+      "size": 0,
+      "sha256": "745765a3b6e360ad76743599ae5c42e9278c7edf8bbff9fc76d05bf2623a04dd"
+    },
+    {
+      "platform": "linux-aarch64-gnu",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.12.13/uv-aarch64-unknown-linux-gnu.tar.gz",
+      "size": 0,
+      "sha256": "2eaa5d94f5db7b3a1a092156b9420459e42ab0217d917fe74a876309cef9b5e9"
+    },
+    {
+      "platform": "linux-x86_64-musl",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.12.13/uv-x86_64-unknown-linux-musl.tar.gz",
+      "size": 0,
+      "sha256": "4e2bfd0c9007b1032a50e539e965fd0a6037d87ad93ae1580d220a92d4c94098"
+    },
+    {
+      "platform": "linux-aarch64-musl",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.12.13/uv-aarch64-unknown-linux-musl.tar.gz",
+      "size": 0,
+      "sha256": "f44bc1037a17889fe562fffd2002d4ed108e499fbe68b4f022af244dc7b8244f"
+    },
+    {
+      "platform": "windows-x86_64",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.12.13/uv-x86_64-pc-windows-msvc.zip",
+      "size": 0,
+      "sha256": "a86c9dc7bad9b03f388583b7187c05fe9951c2e0d392217e8fd43d97787f6ec2"
+    },
+    {
+      "platform": "windows-aarch64",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.12.13/uv-aarch64-pc-windows-msvc.zip",
+      "size": 0,
+      "sha256": "1efb2654b06e7063d4ac1fc9d49a9bda9a6704d82f035b589a2751a592f14151"
+    },
+    {
+      "platform": "macos-x86_64",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.12.13/uv-x86_64-apple-darwin.tar.gz",
+      "size": 0,
+      "sha256": "5e287ef61cb6a9b61b3a83fef124fd143e400468a7dac794230147a810e17119"
+    },
+    {
+      "platform": "macos-aarch64",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.12.13/uv-aarch64-apple-darwin.tar.gz",
+      "size": 0,
+      "sha256": "7e6ddb9316acc00f2296c82ff4d99977870ee34b2f0ddcae9444d714db9364ed"
+    }
+  ]
+}

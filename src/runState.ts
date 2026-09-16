@@ -10,6 +10,12 @@ export function runStateLabel(state: string): string {
   return i18n.exists(key) ? i18n.t(key) : state;
 }
 
+/** Managed Runtime 准备阶段的界面展示名；未知阶段原样显示。 */
+export function runPhaseLabel(phase: string): string {
+  const key = `phase.${phase}`;
+  return i18n.exists(key) ? i18n.t(key) : phase;
+}
+
 const phase = ["preparing", "syncing", "starting", "running", "stopping"];
 export function newestStatus(current: RunStatus | undefined, incoming: RunStatus): RunStatus {
   if (current && (!isActiveRun(current) || phase.indexOf(current.state) > phase.indexOf(incoming.state) && isActiveRun(incoming))) return current;
@@ -21,10 +27,12 @@ export interface RunDraft {
   entry: string;
   argsText: string;
   command: string;
+  /** Managed Python Runtime（uv-only）；仅 python 脚本生效 */
+  managed: boolean;
   consoleMode: "pty" | "pipe";
   timeoutSecs: number;
 }
 
 export const DEFAULT_RUN_DRAFT: RunDraft = {
-  mode: "script", entry: "", argsText: "", command: "", consoleMode: "pty", timeoutSecs: 0,
+  mode: "script", entry: "", argsText: "", command: "", managed: false, consoleMode: "pty", timeoutSecs: 0,
 };

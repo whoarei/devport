@@ -37,6 +37,8 @@ export interface RunRequest {
   args?: string[];
   env?: Record<string, string>;
   command?: string | null;
+  /** Managed Python Runtime（uv-only 项目模型）；仅 python 脚本可用 */
+  managed_python?: boolean;
   console_mode?: ConsoleMode;
   cols?: number;
   rows?: number;
@@ -56,6 +58,13 @@ export interface RunStatus {
   output_bytes?: number;
   /** 输出超过单 run 日志上限被截断 */
   output_truncated?: boolean;
+  /** Managed Runtime 准备阶段（validating_project 等）；无准备时缺省 */
+  phase?: string;
+  /** 运行可追溯信息：环境 / uv / Python / lock */
+  environment_id?: string;
+  uv_version?: string;
+  python_version?: string;
+  lock_sha256?: string;
 }
 
 export interface TerminalStatus {
@@ -71,7 +80,79 @@ export interface TerminalRead { status: TerminalStatus; data: string }
 export type RunEvent =
   | { type: "output"; run_id: string; stream: string; data: string }
   | { type: "status"; status: RunStatus }
-  | { type: "resync"; statuses: RunStatus[] };
+  | { type: "resync"; statuses: RunStatus[] }
+  | {
+      type: "runtime_progress";
+      run_id: string;
+      phase: string;
+      message: string;
+      downloaded_bytes: number;
+      total_bytes: number | null;
+    };
+
+// ---------- Managed Python Runtime（uv-only） ----------
+
+export interface PythonProject {
+  name: string;
+  requires_python: string;
+  python_version: string;
+  lock_sha256: string;
+  entry: string;
+  mode: "script" | "module";
+  python_path: string[];
+  groups: string[];
+  extras: string[];
+  package_source_identity: string;
+}
+
+export interface ManagedRuntimeInfo {
+  uv_version: string;
+  platform: string;
+  uv_path: string;
+  present: boolean;
+}
+
+export interface EnvironmentManifest {
+  schema: number;
+  environment_id: string;
+  uv_version: string;
+  python_request: string;
+  python_executable: string;
+  python_version: string;
+  python_build: string;
+  platform: string;
+  libc: string | null;
+  lock_sha256: string;
+  groups: string[];
+  extras: string[];
+  created_at: string;
+  last_used_at: string;
+}
+
+export interface ProjectEnvironmentInfo {
+  id: string;
+  path: string;
+  ready: boolean;
+  leased: boolean;
+  manifest: EnvironmentManifest | null;
+}
+
+export interface NetworkConfig {
+  mode: "direct" | "mirror" | "offline";
+  python_install_mirror?: string | null;
+  index_url?: string | null;
+}
+
+/** 重建完成后的可直接启动环境 */
+export interface PreparedEnvironment {
+  environment_id: string;
+  env_path: string;
+  python_path: string;
+  uv_version: string;
+  python_version: string;
+  lock_sha256: string;
+  cache_hit: boolean;
+}
 
 export interface WorkspaceEntry {
   name: string;
@@ -157,6 +238,19 @@ export const api = {
     invoke<void>("export_run_output", { runId, path }),
   clearRunHistory: () => invoke<void>("clear_run_history"),
   drainRunEvents: () => invoke<RunEvent[]>("drain_run_events"),
+
+  inspectPythonProject: (workspaceDir: string) =>
+    invoke<PythonProject>("inspect_python_project", { workspaceDir }),
+  listManagedRuntimes: (deviceId: string) =>
+    invoke<ManagedRuntimeInfo>("list_managed_runtimes", { deviceId }),
+  listProjectEnvironments: (deviceId: string) =>
+    invoke<ProjectEnvironmentInfo[]>("list_project_environments", { deviceId }),
+  rebuildProjectEnvironment: (deviceId: string, workspaceDir: string, network?: NetworkConfig) =>
+    invoke<PreparedEnvironment>("rebuild_project_environment", { deviceId, workspaceDir, network: network ?? null }),
+  deleteProjectEnvironment: (deviceId: string, environmentId: string) =>
+    invoke<void>("delete_project_environment", { deviceId, environmentId }),
+  cleanRuntimeCache: (deviceId: string) =>
+    invoke<number>("clean_runtime_cache", { deviceId }),
 
   checkAppUpdate: () => invoke<AppUpdateInfo | null>("check_app_update"),
   installAppUpdate: (expectedVersion: string) => invoke<void>("install_app_update", { expectedVersion }),

@@ -164,7 +164,7 @@ downloadArtifact
 
 ---
 
-## 3.4 环境是执行任务的一等公民（目标设计，未实现）
+## 3.4 环境是执行任务的一等公民（目标设计，Python 已实现）
 
 长期目标是让脚本不必默认依赖目标系统的全局：
 
@@ -174,7 +174,7 @@ downloadArtifact
 /usr/lib/python...
 ```
 
-长期目标是让每个 Workspace / Script Task 可以绑定自己的运行环境。当前版本直接使用执行目标中可用的系统解释器或用户自定义命令，尚无 Runtime / Environment 模型。
+长期目标是让每个 Workspace / Script Task 可以绑定自己的运行环境。Python 的 Runtime / Environment 模型已实现：uv-only Managed Python Runtime（固定 uv + 固定 CPython patch + `uv.lock` 内容寻址环境，SSH / WSL / Local 支持，Serial 明确不支持），设计与实施记录见 `docs/00027_20260916_uv-managed-python-runtime.md` 与 `docs/00028_20260916_uv-runtime-implementation-progress.md`。Node 与容器环境仍未实现；未启用托管模式时仍直接使用执行目标中可用的系统解释器或用户自定义命令。
 
 例如：
 
@@ -1077,6 +1077,8 @@ trait RemoteExecutor {
 # 25. Runtime / Environment Management（后续目标，当前未实现）
 
 这是长期规划的重要能力。当前代码中没有 Runtime、Environment、Dependency、EnvironmentManager 或 RuntimeManager；Python 和 Shell 入口直接使用执行目标可用的系统解释器，Command 模式由用户显式指定命令。
+
+Python Managed Runtime 的后续实现已确定采用 uv-only 模型，不提供系统 Python/venv fallback；完整设计见 [00027 uv-only Managed Python Runtime](00027_20260916_uv-managed-python-runtime.md)。本节后续内容保留最初的通用 Runtime 设想，如与 00027 冲突，以 00027 的 Python 专项决策为准。
 
 目标：
 

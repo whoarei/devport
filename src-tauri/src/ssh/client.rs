@@ -115,7 +115,7 @@ impl client::Handler for ClientHandler {
 
 /// 已认证的 SSH 连接
 pub struct SshConnection {
-    pub handle: Handle<ClientHandler>,
+    pub handle: Arc<Handle<ClientHandler>>,
 }
 
 impl SshConnection {
@@ -145,7 +145,9 @@ impl SshConnection {
         )
         .await
         .map_err(|_| RunnerError::Ssh("authentication timed out".into()))??;
-        Ok(Self { handle })
+        Ok(Self {
+            handle: Arc::new(handle),
+        })
     }
 
     async fn authenticate(

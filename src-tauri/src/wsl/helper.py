@@ -12,6 +12,7 @@ import platform
 import pwd
 import select
 import signal
+import stat
 import struct
 import subprocess
 import sys
@@ -19,6 +20,7 @@ import termios
 import time
 
 LIMIT = 128 * 1024
+EXEC_INPUT_LIMIT = 64 * 1024 * 1024
 
 
 def emit(kind, **values):
@@ -69,6 +71,16 @@ def main():
     total = 0
     file_size = 0
     entries = 0
+    # Managed Runtime 结构化 exec 状态（00027）：与 run 流程互斥
+    exec_proc = None
+    exec_argv = None
+    exec_env = None
+    exec_cwd = None
+    exec_input = None
+    exec_pending = bytearray()
+    exec_stdin = None
+    exec_fds = set()
+    exec_reported = False
 
     def kill_group(sig):
         if process is not None:
@@ -94,6 +106,11 @@ def main():
                 os.killpg(process.pid, sig)
             except ProcessLookupError:
                 pass
+        if exec_proc is not None:
+            try:
+                os.killpg(exec_proc.pid, sig)
+            except ProcessLookupError:
+                pass
 
     def stop(reason):
         nonlocal stopped, stop_at, stage
@@ -115,6 +132,16 @@ def main():
         emit("ready", version=1, info="%s; Python %s; user %s" % (platform.platform(), platform.python_version(), os.getuid()))
         while True:
             now = time.monotonic()
+            if exec_proc is not None and not exec_reported:
+                code = exec_proc.poll()
+                alive_fds = exec_fds & set(outputs)
+                if code is not None and not alive_fds:
+                    emit("exec_exit", code=code if code >= 0 else 128 - code)
+                    exec_reported = True
+                    exec_proc = None
+                    exec_fds = set()
+                    exec_stdin = None
+                    stdin_fd = None
             if process is not None:
                 code = process.poll()
                 if code is not None and not group_cleaned:
@@ -134,8 +161,13 @@ def main():
                     if stage > 3:
                         raise RuntimeError("WSL process did not confirm termination")
 
-            readable, writable, _ = select.select(
-                [0] + list(outputs), [stdin_fd] if pending and stdin_fd is not None else [], [], 0.05)
+            read_fds = [0] + list(outputs)
+            write_fds = []
+            if pending and stdin_fd is not None:
+                write_fds.append(stdin_fd)
+            if exec_pending and exec_stdin is not None:
+                write_fds.append(exec_stdin)
+            readable, writable, _ = select.select(read_fds, write_fds, [], 0.05)
             # Process controls first, even during continuous output.
             if 0 in readable:
                 chunk = os.read(0, 65536)
@@ -152,10 +184,53 @@ def main():
                     if kind == "shutdown":
                         return
                     if kind == "stop":
-                        if process is None:
+                        if process is None and exec_proc is None:
                             emit("exit", code=None, stopped="user")
                             return
                         stop("user")
+                    elif kind == "exec_begin" and exec_proc is None and process is None:
+                        argv = message.get("argv")
+                        if (not isinstance(argv, list) or not argv
+                                or not all(isinstance(a, str) and a and "\0" not in a for a in argv)):
+                            raise ValueError("invalid exec argv")
+                        env = message.get("env") or {}
+                        if not isinstance(env, dict) or not all(
+                                isinstance(k, str) and isinstance(v, str) and "\0" not in k for k, v in env.items()):
+                            raise ValueError("invalid exec env")
+                        cwd = message.get("cwd")
+                        if cwd is not None and (not isinstance(cwd, str) or not cwd.startswith("/")):
+                            raise ValueError("invalid exec cwd")
+                        exec_argv = argv
+                        exec_env = {str(k): str(v) for k, v in env.items()}
+                        exec_cwd = cwd
+                        exec_input = bytearray()
+                        emit("ack")
+                    elif kind == "exec_input" and exec_proc is None and exec_input is not None:
+                        data = base64.b64decode(message["data"], validate=True)
+                        if len(exec_input) + len(data) > EXEC_INPUT_LIMIT:
+                            raise ValueError("exec input exceeds 64 MiB")
+                        exec_input.extend(data)
+                        emit("ack")
+                    elif kind == "exec_run" and exec_proc is None and exec_input is not None:
+                        child_env = dict(os.environ)
+                        child_env.update(exec_env)
+                        stdin_pipe = subprocess.PIPE if exec_input else subprocess.DEVNULL
+                        exec_proc = subprocess.Popen(
+                            exec_argv, cwd=exec_cwd, env=child_env,
+                            stdin=stdin_pipe, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            start_new_session=True)
+                        exec_pending.extend(exec_input)
+                        exec_input = None
+                        exec_fds = {exec_proc.stdout.fileno(), exec_proc.stderr.fileno()}
+                        outputs[exec_proc.stdout.fileno()] = "stdout"
+                        outputs[exec_proc.stderr.fileno()] = "stderr"
+                        if exec_pending:
+                            exec_stdin = exec_proc.stdin.fileno()
+                            stdin_fd = exec_stdin
+                            os.set_blocking(exec_stdin, False)
+                        for fd in exec_fds:
+                            os.set_blocking(fd, False)
+                        emit("ack")
                     elif kind == "init" and not initialized:
                         request = message
                         if request.get("terminal") and (request.get("remote") is not None or request.get("mode") != "pty"):
@@ -264,15 +339,33 @@ def main():
                     raise ValueError("protocol frame exceeds limit")
 
             for fd in writable:
-                if not pending:
+                if not pending and not exec_pending:
                     break
                 try:
+                    if exec_stdin is not None and fd == exec_stdin:
+                        del exec_pending[:os.write(fd, exec_pending[:65536])]
+                        if not exec_pending and exec_proc is not None and exec_proc.stdin is not None:
+                            # EOF：让 `cat` 类命令退出
+                            try:
+                                exec_proc.stdin.close()
+                            except OSError:
+                                pass
+                            exec_stdin = None
+                            if stdin_fd == fd:
+                                stdin_fd = None
+                        continue
                     del pending[:os.write(fd, pending[:65536])]
                 except BlockingIOError:
                     pass
                 except OSError as error:
                     if error.errno not in (errno.EPIPE, errno.EIO):
                         raise
+                    if fd == exec_stdin:
+                        exec_pending.clear()
+                        exec_stdin = None
+                        if stdin_fd == fd:
+                            stdin_fd = None
+                        continue
                     pending.clear()
                     stdin_fd = None
                     if stdin_owned is not None:
@@ -297,6 +390,15 @@ def main():
         emit("error", message=str(error))
         raise SystemExit(1)
     finally:
+        if exec_proc is not None:
+            try:
+                os.killpg(exec_proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                exec_proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
         if process is not None:
             kill_group(signal.SIGKILL)
             try:

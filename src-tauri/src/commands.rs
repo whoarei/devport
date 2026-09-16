@@ -9,6 +9,8 @@ pub struct AppState {
     pub device_store: DeviceStore,
     pub config_dir: PathBuf,
     pub event_rx: parking_lot::Mutex<tokio::sync::broadcast::Receiver<crate::runner::RunEvent>>,
+    /// 活跃 Run 持有的 Environment lease（00027 §16）；删除/GC 不得触碰
+    pub leases: std::sync::Arc<crate::runtime::manager::LeaseSet>,
 }
 
 #[tauri::command]
@@ -270,6 +272,124 @@ pub fn export_run_output(
 #[tauri::command]
 pub fn clear_run_history(state: tauri::State<'_, AppState>) -> Result<()> {
     state.run_manager.clear_history()
+}
+
+// ---------- Managed Python Runtime（00027 §17）----------
+
+/// 校验并返回 uv 项目契约（pyproject.toml / uv.lock / .python-version）
+#[tauri::command]
+pub fn inspect_python_project(
+    workspace_dir: String,
+) -> Result<crate::runtime::project::PythonProject> {
+    if workspace_dir.trim().is_empty() {
+        return Err(crate::error::RunnerError::InvalidInput(
+            "workspace_dir must not be empty".into(),
+        ));
+    }
+    crate::runtime::project::inspect(std::path::Path::new(&workspace_dir))
+}
+
+/// 目标设备的 Managed Runtime 摘要；连接失败时返回 present=false 的占位（best-effort）
+#[tauri::command]
+pub async fn list_managed_runtimes(
+    state: tauri::State<'_, AppState>,
+    device_id: String,
+) -> Result<crate::runtime::ManagedRuntimeInfo> {
+    let device = state.device_store.get(&device_id)?;
+    device.validate()?;
+    let catalog = crate::runtime::catalog::RuntimeCatalog::embedded()?;
+    if device.transport == crate::device::TransportKind::Serial {
+        return Err(crate::error::RunnerError::managed(
+            crate::runtime::code::NOT_SUPPORTED,
+            "Serial Shell V1 cannot deploy a binary managed runtime",
+        ));
+    }
+    match crate::runtime::manage::open_host(&device, &state.config_dir).await {
+        Ok(host) => crate::runtime::prepare::runtime_info(host, catalog).await,
+        Err(e) => {
+            tracing::warn!("list_managed_runtimes: host unavailable: {e}");
+            Ok(crate::runtime::ManagedRuntimeInfo {
+                uv_version: catalog.uv_version.clone(),
+                platform: "unavailable".into(),
+                uv_path: String::new(),
+                present: false,
+            })
+        }
+    }
+}
+
+/// 目标设备上的全部项目环境；连接失败时返回空列表（best-effort）
+#[tauri::command]
+pub async fn list_project_environments(
+    state: tauri::State<'_, AppState>,
+    device_id: String,
+) -> Result<Vec<crate::runtime::ProjectEnvironmentInfo>> {
+    let device = state.device_store.get(&device_id)?;
+    device.validate()?;
+    if device.transport == crate::device::TransportKind::Serial {
+        return Err(crate::error::RunnerError::managed(
+            crate::runtime::code::NOT_SUPPORTED,
+            "Serial Shell V1 cannot deploy a binary managed runtime",
+        ));
+    }
+    match crate::runtime::manage::open_host(&device, &state.config_dir).await {
+        Ok(host) => crate::runtime::manager::list_environments(host, &state.leases).await,
+        Err(e) => {
+            tracing::warn!("list_project_environments: host unavailable: {e}");
+            Ok(Vec::new())
+        }
+    }
+}
+
+/// 重建项目环境：删除现有环境后重新执行完整准备流水线
+#[tauri::command]
+pub async fn rebuild_project_environment(
+    state: tauri::State<'_, AppState>,
+    device_id: String,
+    workspace_dir: String,
+    network: Option<crate::runtime::prepare::NetworkConfig>,
+) -> Result<crate::runtime::PreparedEnvironment> {
+    let device = state.device_store.get(&device_id)?;
+    crate::runtime::manage::rebuild_on_device(
+        &device,
+        &state.config_dir,
+        &workspace_dir,
+        &state.leases,
+        &network.unwrap_or_default(),
+    )
+    .await
+}
+
+/// 删除指定项目环境（持 lease 的环境拒绝删除）
+#[tauri::command]
+pub async fn delete_project_environment(
+    state: tauri::State<'_, AppState>,
+    device_id: String,
+    environment_id: String,
+) -> Result<()> {
+    let device = state.device_store.get(&device_id)?;
+    device.validate()?;
+    let host = crate::runtime::manage::open_host(&device, &state.config_dir).await?;
+    crate::runtime::manager::delete_environment(host, &state.leases, &environment_id).await
+}
+
+/// 清理 Runtime 缓存：quarantine、未完成环境、uv 依赖缓存；返回移除的条目数
+#[tauri::command]
+pub async fn clean_runtime_cache(
+    state: tauri::State<'_, AppState>,
+    device_id: String,
+) -> Result<u64> {
+    let device = state.device_store.get(&device_id)?;
+    device.validate()?;
+    let host = crate::runtime::manage::open_host(&device, &state.config_dir).await?;
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    crate::runtime::manager::clean_cache(
+        host,
+        &state.leases,
+        crate::runtime::catalog::RuntimeCatalog::embedded()?,
+        &cancel,
+    )
+    .await
 }
 
 // ---------- 独立终端（不经过运行/工作区状态） ----------

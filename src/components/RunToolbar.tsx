@@ -5,7 +5,7 @@ import { useShallow } from "zustand/react/shallow";
 import { api, inferKind, RunRequest, ScriptKind } from "../api";
 import { useAppStore } from "../store";
 import { anyDirty } from "../editorDocument";
-import { isActiveRun, runStateLabel } from "../runState";
+import { isActiveRun, runPhaseLabel, runStateLabel } from "../runState";
 import { collectScripts } from "../workspaceTree";
 import { deviceLabel } from "./DeviceDialog";
 import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
@@ -26,7 +26,7 @@ export function RunToolbar() {
     workspaceDir: s.workspaceDir, workspaceTree: s.workspaceTree, activeFile: s.activeFile,
     activeRunId: s.activeRunId, runs: s.runs })));
 
-  const { mode, entry, argsText, command, consoleMode, timeoutSecs } = useAppStore((s) => s.runDraft);
+  const { mode, entry, argsText, command, managed, consoleMode, timeoutSecs } = useAppStore((s) => s.runDraft);
   const setDraft = useAppStore((s) => s.setRunDraft);
   const [busy, setBusy] = useState(false);
   const dirty = useAppStore(anyDirty);
@@ -38,9 +38,11 @@ export function RunToolbar() {
   const running =
     activeRun &&
     ["preparing", "syncing", "starting", "running", "stopping"].includes(activeRun.state);
+  const progress = useAppStore((s) => (activeRunId ? s.runProgress[activeRunId] : undefined));
 
 
   const effectiveEntry = entry || activeFile || "";
+  const isPythonEntry = effectiveEntry.toLowerCase().endsWith(".py");
 
   const run = async () => {
     if (!selectedDeviceId) {
@@ -77,6 +79,7 @@ export function RunToolbar() {
           kind,
           entry: effectiveEntry,
           args,
+          managed_python: kind === "python" && managed && !isSerial,
           console_mode: effectiveConsoleMode,
           timeout_secs: timeoutSecs,
         };
@@ -156,6 +159,21 @@ export function RunToolbar() {
         />
       )}
 
+      {mode === "script" && isPythonEntry && (
+        <label
+          className={`managed-toggle${isSerial ? " disabled" : ""}`}
+          title={isSerial ? t("run.managedSerialTitle") : t("run.managedTitle")}
+        >
+          <input
+            type="checkbox"
+            checked={managed && !isSerial}
+            disabled={isSerial}
+            onChange={(e) => setDraft({ managed: e.target.checked })}
+          />
+          {t("run.managedLabel")}
+        </label>
+      )}
+
       <select
         value={effectiveConsoleMode}
         disabled={isSerial}
@@ -188,6 +206,8 @@ export function RunToolbar() {
       {activeRun && (
         <span className={`run-state state-${activeRun.state}`}>
           {runStateLabel(activeRun.state)}
+          {activeRun.phase && ` · ${runPhaseLabel(activeRun.phase)}`}
+          {progress && ` · ${progress}`}
           {activeRun.exit_code != null && ` (${activeRun.exit_code})`}
           {activeRun.error && ` — ${activeRun.error}`}
         </span>

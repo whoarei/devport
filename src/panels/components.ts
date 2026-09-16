@@ -16,6 +16,7 @@ export const PANEL_COMPONENTS: Record<PanelId, LazyExoticComponent<ComponentType
   workspace: lazy(() => import("../components/WorkspacePanel").then((m) => ({ default: m.WorkspacePanel }))),
   commands: lazy(() => import("../components/CommandsPanel").then((m) => ({ default: m.CommandsPanel }))),
   history: lazy(() => import("../components/HistoryPanel").then((m) => ({ default: m.HistoryPanel }))),
+  runtime: lazy(() => import("../components/RuntimePanel").then((m) => ({ default: m.RuntimePanel }))),
   editor: lazy(() => import("../components/Editor").then((m) => ({ default: m.Editor }))),
   console: lazy(() => import("../components/ConsolePanel").then((m) => ({ default: m.ConsolePanel }))),
 };

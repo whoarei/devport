@@ -6,7 +6,7 @@
 
 ## 当前实现快照（2026-09-16，0.8.0）
 
-阶段 1 章节是 2026-09-08 的历史快照，其中的目录、事件传递方式、编辑器和待办不再代表当前状态。本节依据当前源码、测试及 00004—00026 实施文档汇总；具体限制仍以对应专题文档和代码为准。
+阶段 1 章节是 2026-09-08 的历史快照，其中的目录、事件传递方式、编辑器和待办不再代表当前状态。本节依据当前源码、测试及 00004—00028 实施文档汇总；具体限制仍以对应专题文档和代码为准。
 
 ### 核心能力
 
@@ -14,6 +14,7 @@
 |---|---|---|
 | 执行目标 | **已实现** SSH、Serial Shell V1、WSL、Local Shell | Serial 假定设备已进入 Linux shell；WSL 需要发行版内 Python 3.8+；Local 原地运行 |
 | 脚本类型 | **已实现** Python、Shell、自定义命令 | 没有 Node / Binary 专用 `ScriptKind`；可由命令模式显式调用 |
+| Python 托管运行时 | **已实现** uv-only Managed Runtime：固定 uv 0.12.13 + 固定 CPython patch + `uv.lock` 内容寻址环境，SSH / WSL / Local 全链路，含 phase 进度、取消、lease/GC、管理面板 | Serial 明确不支持；运行入口固定 direct 网络模式（mirror/offline 已有 Rust 边界）；真实硬件/公网集成为发布前验证项，见 [00027](00027_20260916_uv-managed-python-runtime.md) / [00028](00028_20260916_uv-runtime-implementation-progress.md) |
 | 控制台 | **已实现** xterm.js、stdin、Stop、超时 | SSH / WSL / Local 支持 pipe、PTY、resize；Serial 为合并输出的 PTY-like 模式且不能运行中 resize |
 | 工作区同步 | **已实现** SSH SFTP、Serial 文本上传、WSL 二进制快照、Local 原地执行 | 每次运行全量处理；没有 hash / 增量同步；远端运行目录不自动回收 |
 | 工作区文件管理 | **已实现** 递归目录树、读写、新建、重命名、删除和路径边界校验 | 仅编辑 UTF-8 普通文件，单文件上限 1 MiB；运行同步敏感阶段阻止变更 |
@@ -43,13 +44,13 @@ commands.rs → RunManager → process.rs 共同状态与控制契约
 
 | 优先领域 | 未实现能力 | 现有替代或影响 |
 |---|---|---|
-| 环境管理 | Python venv、Node project environment、Managed Runtime、Runtime / Environment cache、Container mode | 当前依赖目标系统解释器或用户命令；无法保证不同设备的运行时一致性 |
+| 环境管理 | Node project environment、Container mode | Python 的 uv-only Managed Runtime 已实现（[00027](00027_20260916_uv-managed-python-runtime.md) / [00028](00028_20260916_uv-runtime-implementation-progress.md)）；未启用托管模式时仍依赖目标系统解释器或用户命令；Node 与容器无方案 |
 | Artifact | 按 glob 收集、远端产物枚举/下载、Artifact 元数据 | 只能导出 Remote Runner 已记录的控制台输出；Local 产物因原地运行会直接留在工作区 |
 | 同步与清理 | 增量同步、hash 缓存、SSH / Serial / WSL 运行目录自动清理 | 每次全量处理，远端目录可能累积；没有 CleanupManager |
 | 执行模型 | Node / Binary 专用入口、`none` / `auto` console mode、项目级 `.devrunner/project.yaml` | 需使用 Command 模式并逐次填写参数 |
 | 自动化 | Expect、Task Template、批量运行 | 预置命令只能启动单个 Command run，不是任务编排系统 |
 | 设备协议 | Serial Device Agent、ADB / USB / WebSocket executor | Serial 仍受登录 shell、文本上传和 marker 协议边界限制 |
-| 能力发现 | DeviceRuntimeProfile、动态 Capability Model | 当前只有按 transport 固定的 `pipe` / `resize` 两个能力位 |
+| 能力发现 | 动态 Capability Model | Managed Runtime 已实现 DeviceRuntimeProfile 探测（OS/arch/libc/空间/可写可执行）；运行控制台仍只有按 transport 固定的 `pipe` / `resize` 两个能力位 |
 | 安全 | 系统凭据库、SSH 证书认证、首次 host-key 指纹确认 UI | SSH 密码仍明文保存在 `devices.json`；支持 agent、普通私钥和密码，host key 当前为自动 TOFU |
 | 生命周期 | 跨应用重启接管活动运行、远端孤儿进程发现 | 重启后只能看到已落盘终态历史，不能重新连接旧 ProcessSession |
 
@@ -231,7 +232,7 @@ rr-cli stop-test      # sleep 60 中途 stop        → canceled，exit=143，�
 - [ ] 2026-09-08 曾记录“首次连接偶发一次 run 不结束”，没有形成可复现用例或对应修复；现有自动化覆盖 TOFU 损坏/过期快照、SSH 拒绝与异常关闭，但不能据此宣称该历史现象已定位。
 - [x] Serial Shell transport V1 已实现（端口枚举、8N1、marker 协议、文本工作区上传、stdin、停止与超时）；详见 00004。
 - [x] WSL 直接执行、本机 Shell、独立终端、工作区文件管理、运行日志导出、更新、托盘/自启动、单实例、i18n、预置命令和模块化布局已实现；详见 00007—00026。
-- [ ] Serial Agent、Node/Binary 专用入口、Python venv / Managed Runtime、Expect、增量同步仍未实现；完整清单见本文顶部“已确认仍未实现”。
+- [ ] Serial Agent、Node/Binary 专用入口、uv-only Managed Python Runtime、Expect、增量同步仍未实现；完整清单见本文顶部“已确认仍未实现”。
 
 ### 运行方式
 

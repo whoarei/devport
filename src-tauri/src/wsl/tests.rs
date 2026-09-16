@@ -340,6 +340,7 @@ async fn run(
             Vec::new(),
             controls,
             on_event,
+            None,
         ),
     )
     .await
@@ -480,6 +481,7 @@ async fn upload_is_literal_and_rejects_existing_or_redirected_destinations() {
                 output.extend(data);
             }
         },
+        None,
     )
     .await
     .unwrap();
@@ -490,11 +492,17 @@ async fn upload_is_literal_and_rejects_existing_or_redirected_destinations() {
     );
     assert!(String::from_utf8_lossy(&output).contains("True"));
     // Reusing an existing run directory is forbidden.
-    assert!(
-        execute_with_command(python(HELPER), &req, &remote, Vec::new(), &mut rx, |_| {})
-            .await
-            .is_err()
-    );
+    assert!(execute_with_command(
+        python(HELPER),
+        &req,
+        &remote,
+        Vec::new(),
+        &mut rx,
+        |_| {},
+        None
+    )
+    .await
+    .is_err());
     let anchor = format!("{remote}-anchor");
     let setup = format!("import os; os.mkdir({anchor:?}); os.mkdir({anchor:?} + '/target'); os.symlink('target', {anchor:?} + '/link')");
     assert!(python(&setup).status().await.unwrap().success());
@@ -504,7 +512,8 @@ async fn upload_is_literal_and_rejects_existing_or_redirected_destinations() {
         &format!("{anchor}/link/run"),
         Vec::new(),
         &mut rx,
-        |_| {}
+        |_| {},
+        None,
     )
     .await
     .is_err());
@@ -529,6 +538,7 @@ async fn eof_without_completion_is_failure_and_prelaunch_stop_executes_nothing()
         Vec::new(),
         &mut rx,
         |_| {},
+        None,
     )
     .await;
     assert!(result.is_err());

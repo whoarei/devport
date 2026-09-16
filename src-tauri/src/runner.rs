@@ -3,6 +3,12 @@ use crate::error::{Result, RunnerError};
 use crate::process::{
     Capabilities, ConsoleMode, Outcome, OutputStream, RunState, SessionControl, SessionEvent,
 };
+use crate::runtime::catalog::RuntimeCatalog;
+use crate::runtime::host::RuntimeHost;
+use crate::runtime::manager::LeaseSet;
+use crate::runtime::prepare::{self, NetworkConfig, PrepareEvents};
+use crate::runtime::project::{EntryMode, PythonProject};
+use crate::runtime::{code, PreparedEnvironment, RuntimePhase, RuntimeReady};
 use crate::ssh::client::SshConnection;
 use crate::ssh::filesync;
 use crate::ssh::session::{self, SpawnSpec};
@@ -11,11 +17,12 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ScriptKind {
     Python,
@@ -37,6 +44,18 @@ pub struct RunRequest {
     pub env: HashMap<String, String>,
     /// command 类型的原始命令
     pub command: Option<String>,
+    /// Managed Python Runtime（00027）：uv-only 项目模型，禁止系统 Python
+    #[serde(default)]
+    pub managed_python: bool,
+    /// 准备阶段回填：环境内解释器路径（直接启动，不用 `uv run`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_env_python: Option<String>,
+    /// 准备阶段回填：加入 PYTHONPATH 的工作区内相对目录
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub managed_pythonpath: Vec<String>,
+    /// 准备阶段回填：module 模式启动（entry 为模块名）
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub managed_module: bool,
     #[serde(default = "default_console_mode")]
     pub console_mode: ConsoleMode,
     #[serde(default = "default_cols")]
@@ -46,6 +65,10 @@ pub struct RunRequest {
     /// 超时（秒），0 = 不限
     #[serde(default)]
     pub timeout_secs: u64,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 fn default_console_mode() -> ConsoleMode {
@@ -74,6 +97,18 @@ pub struct RunStatus {
     /// 输出超过 RUN_LOG_LIMIT 被截断时为 true
     #[serde(default)]
     pub output_truncated: bool,
+    /// Managed Runtime 准备阶段（00027 §14）；无准备时为 None
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    /// 运行可追溯信息（00027 §11）：环境 / uv / Python / lock
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uv_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_sha256: Option<String>,
 }
 
 impl RunStatus {
@@ -89,6 +124,11 @@ impl RunStatus {
             ended_at: None,
             output_bytes: 0,
             output_truncated: false,
+            phase: None,
+            environment_id: None,
+            uv_version: None,
+            python_version: None,
+            lock_sha256: None,
         }
     }
 }
@@ -109,6 +149,14 @@ pub enum RunEvent {
     Resync {
         statuses: Vec<RunStatus>,
     },
+    /// Managed Runtime 准备进度（00027 §14）；落后时字节级进度可丢弃
+    RuntimeProgress {
+        run_id: String,
+        phase: String,
+        message: String,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +170,8 @@ struct RunHandle {
     capabilities: Capabilities,
     control: mpsc::UnboundedSender<SessionControl>,
     stop_tx: mpsc::UnboundedSender<StopKind>,
+    /// Managed Runtime 准备取消标志：stop() 置位，prepare exec 循环周期检查
+    runtime_cancel: Arc<AtomicBool>,
     status: RunStatus,
     /// 已写入 run_logs/<run_id>.log 的字节数
     log_bytes: u64,
@@ -138,6 +188,30 @@ pub struct RunManager {
     history_path: PathBuf,
     logs_dir: PathBuf,
     event_tx: broadcast::Sender<RunEvent>,
+    /// 活跃 Run 持有的 Environment lease（00027 §16），与 AppState 共享
+    leases: Arc<LeaseSet>,
+}
+
+/// Run 存续期间持有 Environment lease；drop 时释放（含失败/取消路径）
+struct EnvLeaseGuard {
+    leases: Arc<LeaseSet>,
+    id: String,
+}
+
+impl EnvLeaseGuard {
+    fn new(leases: Arc<LeaseSet>, id: &str) -> Self {
+        leases.lease(id);
+        Self {
+            leases,
+            id: id.to_string(),
+        }
+    }
+}
+
+impl Drop for EnvLeaseGuard {
+    fn drop(&mut self) {
+        self.leases.release(&self.id);
+    }
 }
 
 const HISTORY_LIMIT: usize = 200;
@@ -208,7 +282,13 @@ impl RunManager {
             history_path,
             logs_dir,
             event_tx,
+            leases: Arc::new(LeaseSet::default()),
         }
+    }
+
+    /// 与 AppState 共享同一个 LeaseSet（管理命令的删除/GC 据此保护活跃环境）
+    pub fn attach_leases(&mut self, leases: Arc<LeaseSet>) {
+        self.leases = leases;
     }
 
     pub fn subscribe_events(&self) -> broadcast::Receiver<RunEvent> {
@@ -378,6 +458,7 @@ impl RunManager {
         h.stop_tx
             .send(StopKind::User)
             .map_err(|_| RunnerError::RunNotFound(run_id.to_string()))?;
+        h.runtime_cancel.store(true, Ordering::Relaxed);
         h.status.state = RunState::Stopping;
         let _ = self.event_tx.send(RunEvent::Status {
             status: h.status.clone(),
@@ -404,6 +485,120 @@ impl RunManager {
                 status: h.status.clone(),
             });
         }
+    }
+
+    // ---------- Managed Runtime 准备（00027 §13/§14） ----------
+
+    fn runtime_cancel(&self, run_id: &str) -> Arc<AtomicBool> {
+        self.handles
+            .lock()
+            .get(run_id)
+            .map(|h| h.runtime_cancel.clone())
+            .unwrap_or_default()
+    }
+
+    fn set_phase(&self, run_id: &str, phase: RuntimePhase) {
+        let mut map = self.handles.lock();
+        if let Some(h) = map.get_mut(run_id) {
+            h.status.phase = Some(phase.as_str().to_string());
+            let _ = self.event_tx.send(RunEvent::Status {
+                status: h.status.clone(),
+            });
+        }
+    }
+
+    /// 运行可追溯信息：环境 / uv / Python / lock（00027 §11）
+    fn set_managed_info(&self, run_id: &str, env: &PreparedEnvironment) {
+        let mut map = self.handles.lock();
+        if let Some(h) = map.get_mut(run_id) {
+            h.status.environment_id = Some(env.environment_id.clone());
+            h.status.uv_version = Some(env.uv_version.clone());
+            h.status.python_version = Some(env.python_version.clone());
+            h.status.lock_sha256 = Some(env.lock_sha256.clone());
+            let _ = self.event_tx.send(RunEvent::Status {
+                status: h.status.clone(),
+            });
+        }
+    }
+
+    /// phase 进 RunStatus；进度进 runtime_progress 事件；过程输出进同一 Run 日志
+    fn prepare_events(&self, run_id: &str) -> PrepareEvents {
+        let this = self.clone();
+        let rid = run_id.to_string();
+        let on_phase = move |phase: RuntimePhase| this.set_phase(&rid, phase);
+        let this = self.clone();
+        let rid = run_id.to_string();
+        let on_progress = move |message: &str, done: u64, total: Option<u64>| {
+            let _ = this.event_tx.send(RunEvent::RuntimeProgress {
+                run_id: rid.clone(),
+                phase: String::new(),
+                message: message.to_string(),
+                downloaded_bytes: done,
+                total_bytes: total,
+            });
+        };
+        let this = self.clone();
+        let rid = run_id.to_string();
+        let on_output =
+            move |stream: OutputStream, data: &[u8]| this.emit_output(&rid, stream, data);
+        PrepareEvents {
+            on_phase: Box::new(on_phase),
+            on_progress: Box::new(on_progress),
+            on_output: Box::new(on_output),
+        }
+    }
+
+    /// 阶段 1：probe + 部署/验证 uv + 安装/验证 Managed Python（项目无关部分）
+    async fn managed_prepare_runtime(
+        &self,
+        run_id: &str,
+        host: Arc<dyn RuntimeHost + Send + Sync>,
+        python_version: &str,
+        config_dir: &std::path::Path,
+    ) -> Result<RuntimeReady> {
+        let cancel = self.runtime_cancel(run_id);
+        let catalog = RuntimeCatalog::embedded()?;
+        let network = NetworkConfig::default();
+        let mut events = self.prepare_events(run_id);
+        prepare::prepare_runtime(
+            host,
+            catalog,
+            python_version,
+            config_dir,
+            &network,
+            &cancel,
+            &mut events,
+        )
+        .await
+    }
+
+    /// 阶段 2：环境锁 + uv sync --locked + 验证；成功后记录追溯字段
+    async fn managed_prepare_environment(
+        &self,
+        run_id: &str,
+        host: Arc<dyn RuntimeHost + Send + Sync>,
+        ready: &RuntimeReady,
+        project: &PythonProject,
+        workspace_dir: &str,
+    ) -> Result<PreparedEnvironment> {
+        let cancel = self.runtime_cancel(run_id);
+        let catalog = RuntimeCatalog::embedded()?;
+        let network = NetworkConfig::default();
+        let mut events = self.prepare_events(run_id);
+        let env = prepare::prepare_environment(
+            host,
+            ready,
+            project,
+            workspace_dir,
+            catalog,
+            &network,
+            run_id,
+            &cancel,
+            &mut events,
+        )
+        .await?;
+        self.set_managed_info(run_id, &env);
+        Ok(env)
     }
 
     fn finish(&self, run_id: &str, state: RunState, exit_code: Option<u32>, error: Option<String>) {
@@ -450,6 +645,13 @@ impl RunManager {
         config_dir: PathBuf,
     ) -> Result<String> {
         device.validate()?;
+        // Serial Shell V1 无法部署二进制 Runtime：在任何端口操作前明确拒绝（00027 §4）
+        if req.managed_python && device.transport == TransportKind::Serial {
+            return Err(RunnerError::managed(
+                code::NOT_SUPPORTED,
+                "Serial Shell V1 cannot deploy a binary managed runtime",
+            ));
+        }
         validate_request(&mut req)?;
         let capabilities = device.transport.capabilities();
         if req.console_mode == ConsoleMode::Pipe && !capabilities.pipe {
@@ -485,6 +687,7 @@ impl RunManager {
                 capabilities,
                 control: placeholder,
                 stop_tx,
+                runtime_cancel: Arc::new(AtomicBool::new(false)),
                 status: status.clone(),
                 log_bytes: 0,
                 log_truncated: false,
@@ -513,7 +716,7 @@ impl RunManager {
         stop_rx: mpsc::UnboundedReceiver<StopKind>,
     ) {
         match self
-            .execute_inner(&run_id, &req, &device, &config_dir, stop_rx)
+            .execute_inner(&run_id, req, &device, &config_dir, stop_rx)
             .await
         {
             Ok(outcome) => match outcome {
@@ -529,7 +732,13 @@ impl RunManager {
                 ),
             },
             Err(e) => {
-                self.finish(&run_id, RunState::Failed, None, Some(e.to_string()));
+                // Managed Runtime 准备被取消（stop 置位 runtime_cancel）映射为 Canceled 终态
+                if matches!(&e, RunnerError::ManagedRuntime { code: c, .. } if *c == code::CANCELED)
+                {
+                    self.finish(&run_id, RunState::Canceled, None, None);
+                } else {
+                    self.finish(&run_id, RunState::Failed, None, Some(e.to_string()));
+                }
             }
         }
     }
@@ -537,19 +746,23 @@ impl RunManager {
     async fn execute_inner(
         &self,
         run_id: &str,
-        req: &RunRequest,
+        mut req: RunRequest,
         device: &DeviceProfile,
         config_dir: &std::path::Path,
         mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
     ) -> Result<RunOutcome> {
         if device.transport == TransportKind::Wsl {
-            return self.execute_wsl(run_id, req, device, stop_rx).await;
+            return self
+                .execute_wsl(run_id, req, device, config_dir, stop_rx)
+                .await;
         }
         if device.transport == TransportKind::Serial {
-            return self.execute_serial(run_id, req, device, stop_rx).await;
+            return self.execute_serial(run_id, &req, device, stop_rx).await;
         }
         if device.transport == TransportKind::Local {
-            return self.execute_local(run_id, req, device, stop_rx).await;
+            return self
+                .execute_local(run_id, req, device, config_dir, stop_rx)
+                .await;
         }
         // 1. 建立 SSH 连接
         let conn = tokio::select! {
@@ -558,7 +771,32 @@ impl RunManager {
             conn = SshConnection::connect(device, config_dir) => conn?,
         };
 
-        // 2. 同步 workspace（如有）
+        // 2. Managed Runtime（项目无关部分）：probe + 部署/验证 uv + 安装/验证 Python
+        let mut managed: Option<(
+            PythonProject,
+            Arc<dyn RuntimeHost + Send + Sync>,
+            RuntimeReady,
+        )> = None;
+        if req.managed_python {
+            let workspace = req.workspace_dir.clone().ok_or_else(|| {
+                RunnerError::InvalidInput("managed python requires a workspace".into())
+            })?;
+            let project = crate::runtime::project::inspect(std::path::Path::new(&workspace))?;
+            let host: Arc<dyn RuntimeHost + Send + Sync> =
+                Arc::new(crate::runtime::hosts::ssh::SshHost::from_arc(
+                    conn.handle.clone(),
+                    crate::runtime::manage::remote_root(),
+                ));
+            let ready = self
+                .managed_prepare_runtime(run_id, host.clone(), &project.python_version, config_dir)
+                .await?;
+            managed = Some((project, host, ready));
+        }
+        if stop_rx.try_recv().is_ok() {
+            return Ok(RunOutcome::Canceled { code: None });
+        }
+
+        // 3. 同步 workspace（如有）
         let remote_dir = format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id);
         if let Some(local_dir) = &req.workspace_dir {
             self.set_state(run_id, RunState::Syncing);
@@ -577,9 +815,25 @@ impl RunManager {
             return Ok(RunOutcome::Canceled { code: None });
         }
 
-        // 3. 构造启动命令（含远程 PID 捕获包装）
+        // 4. Managed Runtime：workspace 可见后执行 locked environment sync，回填启动参数
+        let mut _env_lease = None;
+        if let Some((project, host, ready)) = managed {
+            let env = self
+                .managed_prepare_environment(run_id, host, &ready, &project, &remote_dir)
+                .await?;
+            req.managed_env_python = Some(env.python_path.clone());
+            req.managed_pythonpath = project.python_path.clone();
+            req.managed_module = project.mode == EntryMode::Module;
+            req.entry = Some(project.entry.clone());
+            _env_lease = Some(EnvLeaseGuard::new(self.leases.clone(), &env.environment_id));
+        }
+        if stop_rx.try_recv().is_ok() {
+            return Ok(RunOutcome::Canceled { code: None });
+        }
+
+        // 5. 构造启动命令（含远程 PID 捕获包装）
         let marker_prefix = format!("{PID_MARKER_PREFIX}{run_id}_");
-        let command = build_command(req, &remote_dir, &marker_prefix);
+        let command = build_command(&req, &remote_dir, &marker_prefix);
 
         // pipe 模式下包装层使用 setsid，远程 PID 即独立进程组 ID，可整组 kill
         let group_kill = req.console_mode == ConsoleMode::Pipe;
@@ -744,15 +998,49 @@ impl RunManager {
     async fn execute_wsl(
         &self,
         run_id: &str,
-        req: &RunRequest,
+        mut req: RunRequest,
         device: &DeviceProfile,
+        config_dir: &std::path::Path,
         mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
     ) -> Result<RunOutcome> {
         use crate::wsl::{self, Event};
         if stop_rx.try_recv().is_ok() {
             return Ok(RunOutcome::Canceled { code: None });
         }
-        let files = if let Some(dir) = req.workspace_dir.clone() {
+        let remote = format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id);
+        let mut _env_lease = None;
+        let files = if req.managed_python {
+            // Managed Runtime：独立 helper 会话上传 workspace 并完成准备（00027 §13）；
+            // 运行会话（bridge A）随后零文件上传、直接 cd 到已就绪目录
+            let workspace = req.workspace_dir.clone().ok_or_else(|| {
+                RunnerError::InvalidInput("managed python requires a workspace".into())
+            })?;
+            let project = crate::runtime::project::inspect(std::path::Path::new(&workspace))?;
+            let host: Arc<dyn RuntimeHost + Send + Sync> = Arc::new(
+                crate::runtime::hosts::wsl::WslHost::open(
+                    device.wsl.clone().unwrap(),
+                    &crate::runtime::manage::remote_root(),
+                )
+                .await?,
+            );
+            self.set_state(run_id, RunState::Syncing);
+            crate::runtime::manage::upload_wsl_workspace(&host, &workspace, &remote).await?;
+            if stop_rx.try_recv().is_ok() {
+                return Ok(RunOutcome::Canceled { code: None });
+            }
+            let ready = self
+                .managed_prepare_runtime(run_id, host.clone(), &project.python_version, config_dir)
+                .await?;
+            let env = self
+                .managed_prepare_environment(run_id, host, &ready, &project, &remote)
+                .await?;
+            req.managed_env_python = Some(env.python_path.clone());
+            req.managed_pythonpath = project.python_path.clone();
+            req.managed_module = project.mode == EntryMode::Module;
+            req.entry = Some(project.entry.clone());
+            _env_lease = Some(EnvLeaseGuard::new(self.leases.clone(), &env.environment_id));
+            Vec::new()
+        } else if let Some(dir) = req.workspace_dir.clone() {
             tokio::task::spawn_blocking(move || wsl::filesync::collect(std::path::Path::new(&dir)))
                 .await
                 .map_err(|e| RunnerError::TaskFailed(e.to_string()))??
@@ -766,10 +1054,9 @@ impl RunManager {
         if let Some(handle) = self.handles.lock().get_mut(run_id) {
             handle.control = control.clone();
         }
-        let remote = format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id);
         let execution = wsl::execute(
             device.wsl.as_ref().unwrap(),
-            req,
+            &req,
             &remote,
             files,
             &mut controls,
@@ -835,11 +1122,38 @@ impl RunManager {
     async fn execute_local(
         &self,
         run_id: &str,
-        req: &RunRequest,
+        mut req: RunRequest,
         device: &DeviceProfile,
+        config_dir: &std::path::Path,
         mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
     ) -> Result<RunOutcome> {
         use crate::local::{self, Event};
+        if stop_rx.try_recv().is_ok() {
+            return Ok(RunOutcome::Canceled { code: None });
+        }
+        // Managed Runtime：本机应用数据目录管理 Runtime/Environment，原工作区直接 sync
+        let mut _env_lease = None;
+        if req.managed_python {
+            let workspace = req.workspace_dir.clone().ok_or_else(|| {
+                RunnerError::InvalidInput("managed python requires a workspace".into())
+            })?;
+            let project = crate::runtime::project::inspect(std::path::Path::new(&workspace))?;
+            let host: Arc<dyn RuntimeHost + Send + Sync> =
+                Arc::new(crate::runtime::hosts::local::LocalHost::new(
+                    crate::runtime::manage::local_root(config_dir),
+                )?);
+            let ready = self
+                .managed_prepare_runtime(run_id, host.clone(), &project.python_version, config_dir)
+                .await?;
+            let env = self
+                .managed_prepare_environment(run_id, host, &ready, &project, &workspace)
+                .await?;
+            req.managed_env_python = Some(env.python_path.clone());
+            req.managed_pythonpath = project.python_path.clone();
+            req.managed_module = project.mode == EntryMode::Module;
+            req.entry = Some(project.entry.clone());
+            _env_lease = Some(EnvLeaseGuard::new(self.leases.clone(), &env.environment_id));
+        }
         if stop_rx.try_recv().is_ok() {
             return Ok(RunOutcome::Canceled { code: None });
         }
@@ -849,7 +1163,7 @@ impl RunManager {
         }
         let execution = local::execute(
             device.local.as_ref().unwrap(),
-            req,
+            &req,
             &mut controls,
             |event| match event {
                 Event::State(state) => self.set_state(run_id, state),
@@ -1019,6 +1333,9 @@ fn validate_request(req: &mut RunRequest) -> Result<()> {
     if workspace.as_ref().is_some_and(|p| !p.is_dir()) {
         return Err(invalid("workspace must be a directory"));
     }
+    if req.managed_python && req.kind != ScriptKind::Python {
+        return Err(invalid("managed python requires a python script workload"));
+    }
     match req.kind {
         ScriptKind::Command => {
             if !req
@@ -1027,6 +1344,13 @@ fn validate_request(req: &mut RunRequest) -> Result<()> {
                 .is_some_and(|c| !c.trim().is_empty() && !c.contains('\0'))
             {
                 return Err(invalid("command must not be empty or contain NUL"));
+            }
+        }
+        _ if req.managed_python => {
+            // Managed 项目入口由项目契约（[tool.remote-runner]）决定，可以是模块名；
+            // entry/python-path 的文件级校验由 ProjectInspector 在准备阶段完成
+            if workspace.is_none() {
+                return Err(invalid("script requires a workspace"));
             }
         }
         _ => {
@@ -1085,6 +1409,19 @@ pub(crate) fn build_script(req: &RunRequest, remote_dir: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ");
 
+    // Managed Runtime：python-path 由后端验证（项目契约），展开为 workspace 内绝对路径
+    let pythonpath_prefix = if req.managed_pythonpath.is_empty() {
+        String::new()
+    } else {
+        let joined = req
+            .managed_pythonpath
+            .iter()
+            .map(|p| format!("{}/{p}", remote_dir.trim_end_matches('/')))
+            .collect::<Vec<_>>()
+            .join(":");
+        format!("export PYTHONPATH={};", sh_quote(&joined))
+    };
+
     let body = match req.kind {
         ScriptKind::Python => {
             let entry = req.entry.as_deref().unwrap_or("main.py");
@@ -1094,12 +1431,31 @@ pub(crate) fn build_script(req: &RunRequest, remote_dir: &str) -> String {
                 .map(|a| sh_quote(a))
                 .collect::<Vec<_>>()
                 .join(" ");
-            // exec 使 sh 直接替换为目标进程，PID 即 python 进程
-            format!(
-                "exec python3 -u {} {}",
-                sh_quote(&format!("./{entry}")),
-                args
-            )
+            if let Some(env_python) = &req.managed_env_python {
+                // Managed Runtime：直接启动环境内 Python，不使用 uv run / 系统 Python
+                if req.managed_module {
+                    format!(
+                        "exec {} -u -m {} {}",
+                        sh_quote(env_python),
+                        sh_quote(entry),
+                        args
+                    )
+                } else {
+                    format!(
+                        "exec {} -u {} {}",
+                        sh_quote(env_python),
+                        sh_quote(&format!("./{entry}")),
+                        args
+                    )
+                }
+            } else {
+                // exec 使 sh 直接替换为目标进程，PID 即 python 进程
+                format!(
+                    "exec python3 -u {} {}",
+                    sh_quote(&format!("./{entry}")),
+                    args
+                )
+            }
         }
         ScriptKind::Shell => {
             let entry = req.entry.as_deref().unwrap_or("main.sh");
@@ -1116,11 +1472,11 @@ pub(crate) fn build_script(req: &RunRequest, remote_dir: &str) -> String {
 
     if req.workspace_dir.is_some() {
         format!(
-            "cd {} || exit $?; {env_prefix} {body}",
+            "cd {} || exit $?; {env_prefix} {pythonpath_prefix} {body}",
             sh_quote(remote_dir)
         )
     } else {
-        format!("{env_prefix} {body}")
+        format!("{env_prefix} {pythonpath_prefix} {body}")
     }
 }
 
@@ -1255,6 +1611,7 @@ mod tests {
                 capabilities: TransportKind::Ssh.capabilities(),
                 control,
                 stop_tx,
+                runtime_cancel: Arc::new(AtomicBool::new(false)),
                 status: RunStatus::new("run".into(), "test".into(), "bounded".into()),
                 log_bytes: 0,
                 log_truncated: false,
@@ -1411,6 +1768,7 @@ mod tests {
                 capabilities: TransportKind::Ssh.capabilities(),
                 control,
                 stop_tx,
+                runtime_cancel: Arc::new(AtomicBool::new(false)),
                 status: RunStatus::new("run".into(), "device".into(), "test".into()),
                 log_bytes: 0,
                 log_truncated: false,
@@ -1441,6 +1799,7 @@ mod tests {
             capabilities: TransportKind::Ssh.capabilities(),
             control,
             stop_tx,
+            runtime_cancel: Arc::new(AtomicBool::new(false)),
             status: RunStatus::new(run_id.into(), "device".into(), "test".into()),
             log_bytes: 0,
             log_truncated: false,
@@ -1627,5 +1986,117 @@ mod tests {
         let manager2 = RunManager::new(&root, tx2);
         assert!(manager2.history().is_empty());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // ---------- Managed Runtime（00027） ----------
+
+    fn managed_request() -> RunRequest {
+        let mut req = request();
+        req.kind = ScriptKind::Python;
+        req.workspace_dir = Some("/tmp/ws".into());
+        req.entry = Some("main.py".into());
+        req.managed_python = true;
+        req
+    }
+
+    #[test]
+    fn build_script_managed_script_mode_uses_env_python_and_pythonpath() {
+        let mut req = managed_request();
+        req.managed_env_python =
+            Some("/home/u/.remote-runner/runtime-v1/envs/abc/bin/python".into());
+        req.managed_pythonpath = vec!["src".into(), "lib/util".into()];
+        req.args = vec!["--flag".into(), "a b".into()];
+        let script = build_script(&req, "/tmp/devrunner/workspaces/run1");
+        assert!(
+            script.contains(
+                "exec '/home/u/.remote-runner/runtime-v1/envs/abc/bin/python' -u './main.py'"
+            ),
+            "{script}"
+        );
+        assert!(!script.contains("python3"), "{script}");
+        assert!(
+            script.contains("export PYTHONPATH='/tmp/devrunner/workspaces/run1/src:/tmp/devrunner/workspaces/run1/lib/util';"),
+            "{script}"
+        );
+        assert!(script.contains("'--flag' 'a b'"), "{script}");
+    }
+
+    #[test]
+    fn build_script_managed_module_mode_uses_dash_m() {
+        let mut req = managed_request();
+        req.managed_env_python = Some("/env/bin/python".into());
+        req.managed_module = true;
+        req.entry = Some("pkg.main".into());
+        let script = build_script(&req, "/tmp/ws-remote");
+        assert!(
+            script.contains("exec '/env/bin/python' -u -m 'pkg.main'"),
+            "{script}"
+        );
+        assert!(!script.contains("PYTHONPATH"), "{script}");
+    }
+
+    #[test]
+    fn managed_python_requires_python_kind() {
+        let mut req = request(); // kind = command
+        req.managed_python = true;
+        let err = validate_request(&mut req).unwrap_err();
+        assert!(err.to_string().contains("python script workload"), "{err}");
+    }
+
+    #[test]
+    fn serial_managed_python_is_rejected_before_port_access() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _rx) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        let device: DeviceProfile = serde_json::from_value(serde_json::json!({
+            "id": "s1", "name": "uart", "transport": "serial",
+            "serial": { "port": "COM99", "baud_rate": 115200 }
+        }))
+        .unwrap();
+        let mut req = request();
+        req.managed_python = true;
+        let err = manager.start(req, device, root.clone()).unwrap_err();
+        assert!(err.to_string().contains(code::NOT_SUPPORTED), "{err}");
+        assert!(manager.list_running().is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stop_sets_runtime_cancel_flag() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _rx) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        // stop() 需要 stop_tx 接收端存活才能送达
+        let (control, _cr) = mpsc::unbounded_channel();
+        let (stop_tx, _sr) = mpsc::unbounded_channel();
+        manager.handles.lock().insert(
+            "run".into(),
+            RunHandle {
+                _serial_lease: None,
+                capabilities: TransportKind::Ssh.capabilities(),
+                control,
+                stop_tx,
+                runtime_cancel: Arc::new(AtomicBool::new(false)),
+                status: RunStatus::new("run".into(), "device".into(), "test".into()),
+                log_bytes: 0,
+                log_truncated: false,
+                log_failed: false,
+            },
+        );
+        let flag = manager.runtime_cancel("run");
+        assert!(!flag.load(Ordering::Relaxed));
+        manager.stop("run").unwrap();
+        assert!(flag.load(Ordering::Relaxed));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn env_lease_guard_releases_on_drop() {
+        let leases = Arc::new(LeaseSet::default());
+        {
+            let _guard = EnvLeaseGuard::new(leases.clone(), "env-1");
+            assert!(leases.is_leased("env-1"));
+        }
+        assert!(!leases.is_leased("env-1"));
     }
 }

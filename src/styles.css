@@ -921,3 +921,78 @@ button:disabled {
   overflow: auto;
   white-space: pre-wrap;
 }
+
+/* ---------- runtime panel ---------- */
+.runtime-panel {
+  flex: 1;
+  min-height: 0;
+  border-top: 1px solid #2a2b30;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.runtime-actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px;
+}
+
+.runtime-device {
+  padding: 0 12px 4px;
+}
+
+.runtime-error {
+  color: #e08080;
+  font-size: 11px;
+  padding: 2px 12px 6px;
+  word-break: break-all;
+}
+
+.runtime-section {
+  padding: 4px 0 8px;
+}
+
+.runtime-heading {
+  font-size: 11px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 12px;
+}
+
+.runtime-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  font-size: 12px;
+  color: #ccc;
+}
+
+.runtime-panel .history-list li {
+  cursor: default;
+}
+
+.runtime-panel .history-list li button {
+  align-self: flex-start;
+}
+
+.history-meta.managed {
+  color: #6a8caf;
+}
+
+.managed-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #ccc;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.managed-toggle.disabled {
+  color: #666;
+  cursor: not-allowed;
+}

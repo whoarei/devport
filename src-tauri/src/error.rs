@@ -37,6 +37,19 @@ pub enum RunnerError {
 
     #[error("update error: {0}")]
     Update(String),
+
+    /// Managed Python Runtime 错误：code 为稳定错误代码（00027 §18）
+    #[error("{code}: {message}")]
+    ManagedRuntime { code: &'static str, message: String },
+}
+
+impl RunnerError {
+    pub fn managed(code: &'static str, message: impl Into<String>) -> Self {
+        RunnerError::ManagedRuntime {
+            code,
+            message: message.into(),
+        }
+    }
 }
 
 impl From<russh::Error> for RunnerError {

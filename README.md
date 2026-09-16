@@ -16,8 +16,9 @@ Remote Runner 是基于 Tauri 的桌面脚本运行工具，通过统一界面�
 | 运行历史、原始输出持久化与导出 | 已实现 |
 | SSH / WSL / Local 独立终端 | 已实现 |
 | 托盘、自启动、单实例与应用内更新 | 已实现 |
+| Python uv 托管运行时（Managed Runtime） | 已实现 |
 | 串口设备代理协议 | 待实现 |
-| Node.js、Python 虚拟环境、托管运行时 | 待实现 |
+| Node.js 托管运行时 | 待实现 |
 | 远端运行产物收集/下载、增量同步、远端工作区清理 | 待实现 |
 
 完整能力边界与未实现清单见 [实施进度](docs/00002_20260908_implementation-progress.md)。
@@ -25,6 +26,7 @@ Remote Runner 是基于 Tauri 的桌面脚本运行工具，通过统一界面�
 ## 功能特性
 
 - 支持运行 Python 脚本、Shell 脚本及自定义命令。
+- Python 项目可选用 uv 托管运行时（Managed Runtime）：在 SSH / WSL / 本机目标上自动部署固定版本的 uv 与 CPython，按 `uv.lock` 创建内容寻址的依赖环境，目标无需预装 Python 或 uv；相同项目第二次运行直接命中缓存。串口设备暂不支持。
 - CodeMirror 6 支持 Python / Shell / text 高亮、多标签编辑、受限安全写回、版本冲突检测和未保存保护；工作区支持递归目录树及文件/目录增删改。
 - SSH 支持密钥、认证代理或密码认证，以及主机密钥校验、SFTP 上传、交互输入、终端尺寸调整、分级停止和历史记录持久化。
 - 串口支持 Windows COM 和 Unix tty 端口，可配置波特率，使用 8N1、无流控设置；通过每次命令独有的随机标记判断执行完成，支持文本工作区上传、交互输入、Ctrl+C 停止和超时报告。
@@ -61,6 +63,8 @@ npm run tauri dev
 1. 在设备栏中添加 SSH、串口、WSL 或本机 Shell 设备。
 2. 选择本地工作区，并选择 Python/Shell 入口脚本或切换到命令模式。
 3. 点击运行按钮（界面中的 **Run**），在控制台查看输出并输入交互内容。
+
+Python 项目（含 `pyproject.toml`、`.python-version`、`uv.lock` 和 `[tool.remote-runner]` 配置）可在运行工具栏打开「uv 托管」开关：首次运行会在目标上部署固定版本的 uv 与 CPython 并按 `uv.lock` 同步依赖环境（运行区显示准备阶段与进度），之后相同项目直接复用已就绪环境。视图菜单中的 Runtime 面板可查看、重建、删除项目环境并清理缓存。设计与限制见 [uv-only Managed Python Runtime](docs/00027_20260916_uv-managed-python-runtime.md)。
 
 串口设备需要配置端口和波特率，固定使用 8 个数据位、无校验、1 个停止位、无流控。串口控制台合并显示输出，终端尺寸在命令启动时设置，不支持运行中调整。
 
@@ -203,3 +207,5 @@ Windows 安装版用户可以通过应用内更新升级；portable、debug、�
 - [本机 Shell 直连设计](docs/00023_20260913_local-shell.md)
 - [本机 Shell 直连实现细节](docs/00024_20260913_local-shell-implementation.md)
 - [前端总体设计](docs/00025_20260915_frontend-design.md)
+- [uv-only Managed Python Runtime](docs/00027_20260916_uv-managed-python-runtime.md)
+- [Managed Runtime 实施进度](docs/00028_20260916_uv-runtime-implementation-progress.md)

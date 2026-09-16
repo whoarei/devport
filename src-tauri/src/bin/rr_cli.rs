@@ -91,6 +91,10 @@ async fn main() {
                 args: vec![],
                 env: HashMap::new(),
                 command: None,
+                managed_python: false,
+                managed_env_python: None,
+                managed_pythonpath: vec![],
+                managed_module: false,
                 console_mode: ConsoleMode::Pty,
                 cols: 120,
                 rows: 40,
@@ -105,6 +109,10 @@ async fn main() {
                 args: vec![],
                 env: HashMap::new(),
                 command: Some("echo begin; sleep 60; echo SHOULD_NOT_PRINT".to_string()),
+                managed_python: false,
+                managed_env_python: None,
+                managed_pythonpath: vec![],
+                managed_module: false,
                 console_mode: ConsoleMode::Pipe,
                 cols: 120,
                 rows: 40,
@@ -135,6 +143,9 @@ async fn main() {
         while let Some(ev) = next_event(&mut event_rx, &manager, &run_id).await {
             match ev {
                 RunEvent::Resync { .. } => unreachable!("CLI recovers directly"),
+                RunEvent::RuntimeProgress { message, .. } => {
+                    eprintln!("[rr-cli] prepare: {message}");
+                }
                 RunEvent::Output { data, .. } => {
                     print!("{}", String::from_utf8_lossy(&base64_decode(&data)));
                 }
@@ -235,6 +246,10 @@ async fn main() {
                 args: run_args,
                 env: HashMap::new(),
                 command,
+                managed_python: false,
+                managed_env_python: None,
+                managed_pythonpath: vec![],
+                managed_module: false,
                 console_mode: ConsoleMode::Pipe,
                 cols: 120,
                 rows: 40,
@@ -250,6 +265,9 @@ async fn main() {
     while let Some(ev) = next_event(&mut event_rx, &manager, &run_id).await {
         match ev {
             RunEvent::Resync { .. } => unreachable!("CLI recovers directly"),
+            RunEvent::RuntimeProgress { message, .. } => {
+                eprintln!("[rr-cli] prepare: {message}");
+            }
             RunEvent::Output { stream, data, .. } => {
                 let bytes = base64_decode(&data);
                 let text = String::from_utf8_lossy(&bytes);

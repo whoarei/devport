@@ -25,7 +25,7 @@ pub use crate::process::{ExecutionEvent as Event, Outcome, StopReason};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-enum Message {
+pub(crate) enum Message {
     Ready {
         version: u32,
         info: String,
@@ -35,6 +35,10 @@ enum Message {
     Output {
         stream: String,
         data: String,
+    },
+    /// Managed Runtime 结构化 exec 完成（00027）
+    ExecExit {
+        code: Option<u32>,
     },
     Exit {
         code: Option<u32>,
@@ -66,7 +70,7 @@ fn wsl_command() -> Result<Command> {
     }
 }
 
-fn helper_command(config: &WslConfig) -> Result<Command> {
+pub(crate) fn helper_command(config: &WslConfig) -> Result<Command> {
     config.validate()?;
     let mut command = wsl_command()?;
     command.arg("--distribution").arg(&config.distribution);
@@ -116,7 +120,7 @@ pub async fn list_distributions() -> Result<Vec<String>> {
         .collect())
 }
 
-struct Bridge {
+pub(crate) struct Bridge {
     child: Child,
     stdin: ChildStdin,
     stdout: ChildStdout,
@@ -133,7 +137,7 @@ impl Drop for Bridge {
 }
 
 impl Bridge {
-    async fn launch(mut command: Command) -> Result<Self> {
+    pub(crate) async fn launch(mut command: Command) -> Result<Self> {
         let mut child = command
             .kill_on_drop(true)
             .stdin(Stdio::piped())
@@ -180,7 +184,7 @@ impl Bridge {
         Ok(bridge)
     }
 
-    async fn send(&mut self, value: Value) -> Result<()> {
+    pub(crate) async fn send(&mut self, value: Value) -> Result<()> {
         let mut bytes = serde_json::to_vec(&value).map_err(|e| failure(e.to_string()))?;
         if bytes.len() > FRAME_LIMIT {
             return Err(failure("WSL request exceeds 128 KiB"));
@@ -192,7 +196,7 @@ impl Bridge {
         Ok(())
     }
 
-    async fn next(&mut self) -> Result<Message> {
+    pub(crate) async fn next(&mut self) -> Result<Message> {
         loop {
             if let Some(end) = self.buffer.iter().position(|&b| b == b'\n') {
                 let line: Vec<_> = self.buffer.drain(..=end).collect();
@@ -225,7 +229,7 @@ impl Bridge {
         }
     }
 
-    async fn request(&mut self, value: Value) -> Result<()> {
+    pub(crate) async fn request(&mut self, value: Value) -> Result<()> {
         self.send(value).await?;
         match tokio::time::timeout(IO_TIMEOUT, self.next())
             .await
@@ -258,6 +262,55 @@ pub async fn test_device(config: &WslConfig) -> Result<String> {
     Ok(info)
 }
 
+/// Managed Runtime 结构化 exec（00027）：argv + env + cwd + 分块 stdin，
+/// 输出以 Output 消息流回，结束于 exec_exit。cancel 由调用方关闭 bridge 实现
+/// （helper EOF → finally 杀整个 exec 进程组）。
+pub(crate) async fn exec_managed(
+    bridge: &mut Bridge,
+    argv: &[String],
+    env: &[(String, String)],
+    cwd: Option<&str>,
+    input: &[u8],
+) -> Result<crate::runtime::host::ExecResult> {
+    use base64::Engine;
+    let env_json: serde_json::Map<String, Value> = env
+        .iter()
+        .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+        .collect();
+    bridge
+        .request(json!({"type":"exec_begin","argv":argv,"env":env_json,"cwd":cwd}))
+        .await?;
+    for chunk in input.chunks(48 * 1024) {
+        bridge
+            .request(json!({"type":"exec_input","data":STANDARD.encode(chunk)}))
+            .await?;
+    }
+    bridge.request(json!({"type":"exec_run"})).await?;
+    let mut result = crate::runtime::host::ExecResult::default();
+    loop {
+        match tokio::time::timeout(IO_TIMEOUT, bridge.next())
+            .await
+            .map_err(|_| failure("WSL exec timed out"))??
+        {
+            Message::Output { stream, data } => {
+                let data = STANDARD
+                    .decode(data)
+                    .map_err(|_| failure("invalid output bytes"))?;
+                match stream.as_str() {
+                    "stdout" => result.stdout.extend_from_slice(&data),
+                    "stderr" => result.stderr.extend_from_slice(&data),
+                    _ => return Err(failure("invalid output stream")),
+                }
+            }
+            Message::ExecExit { code } => {
+                result.code = code.map(|c| c as i32);
+                return Ok(result);
+            }
+            _ => return Err(failure("unexpected WSL exec response")),
+        }
+    }
+}
+
 pub async fn execute(
     config: &WslConfig,
     req: &RunRequest,
@@ -266,16 +319,29 @@ pub async fn execute(
     controls: &mut mpsc::UnboundedReceiver<SessionControl>,
     emit: impl FnMut(Event),
 ) -> Result<Outcome> {
-    execute_with_command(helper_command(config)?, req, remote, files, controls, emit).await
+    execute_with_command(
+        helper_command(config)?,
+        req,
+        remote,
+        files,
+        controls,
+        emit,
+        None,
+    )
+    .await
 }
 
-async fn execute_with_command(
+/// workspace 上传完成后、启动进程前的 Managed Runtime 准备钩子（00027 §13）
+pub type PrepareHook = Box<dyn FnOnce(&str) -> std::result::Result<(), RunnerError> + Send>;
+
+pub async fn execute_with_command(
     command: Command,
     req: &RunRequest,
     remote: &str,
     files: Vec<filesync::Entry>,
     controls: &mut mpsc::UnboundedReceiver<SessionControl>,
     mut emit: impl FnMut(Event),
+    prepare_hook: Option<PrepareHook>,
 ) -> Result<Outcome> {
     let canceled = || Outcome {
         code: None,
@@ -335,6 +401,10 @@ async fn execute_with_command(
         }
     }
     emit(Event::State(RunState::Starting));
+    // Managed Runtime：workspace 已在目标可见，执行 locked environment sync 等准备
+    if let Some(hook) = prepare_hook {
+        hook(remote)?;
+    }
     bridge.send(json!({"type":"start"})).await?;
     let mut deadline = Some(tokio::time::Instant::now() + IO_TIMEOUT);
     let mut stopping = false;

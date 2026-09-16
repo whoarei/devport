@@ -37,6 +37,8 @@ interface AppState {
   runs: Record<string, RunStatus>;
   /** 每个 run 的输出缓冲（base64 拼接前的原始字节已转成 string 存储代价大，直接存字节数组） */
   outputBuffers: Record<string, OutputBuffer>;
+  /** Managed Runtime 准备的最新进度消息（runtime_progress 事件；终态清除） */
+  runProgress: Record<string, string>;
   activeRunId: string | null;
   consoleSize: { cols: number; rows: number };
   /** console 需要重绘的信号 */
@@ -158,6 +160,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   runs: {},
   outputBuffers: {},
+  runProgress: {},
   activeRunId: null,
   consoleSize: { cols: 80, rows: 24 },
   consoleSeq: 0,
@@ -505,13 +508,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       let runs = s.runs;
       let history = s.history;
       let outputBuffers = { ...s.outputBuffers };
+      let runProgress = s.runProgress;
       for (const ev of events) {
         if (ev.type === "output") {
           const bytes = Uint8Array.from(atob(ev.data), (c) => c.charCodeAt(0));
           outputBuffers[ev.run_id] = appendOutput(outputBuffers[ev.run_id], bytes);
+        } else if (ev.type === "runtime_progress") {
+          // 字节级进度可丢弃，只保留每个 run 的最新一条消息
+          runProgress = { ...runProgress, [ev.run_id]: ev.message };
         } else if (ev.type === "resync") {
           runs = Object.fromEntries(ev.statuses.map((r) => [r.run_id, r]));
           history = ev.statuses.filter((r) => !isActiveRun(r)).slice(0, 200);
+          runProgress = {};
           // Do not concatenate bytes across a missing interval (including UTF-8/ANSI).
           for (const id of new Set([...Object.keys(outputBuffers), ...Object.keys(runs)])) {
             const buffer = outputBuffers[id] ?? { chunks: [], bytes: 0, start: 0 };
@@ -520,14 +528,20 @@ export const useAppStore = create<AppState>((set, get) => ({
         } else {
           const status = newestStatus(runs[ev.status.run_id], ev.status);
           runs = { ...runs, [status.run_id]: status };
-          if (!isActiveRun(status)) history = [status, ...history.filter((h) => h.run_id !== status.run_id)].slice(0, 200);
+          if (!isActiveRun(status)) {
+            history = [status, ...history.filter((h) => h.run_id !== status.run_id)].slice(0, 200);
+            if (runProgress[status.run_id] != null) {
+              runProgress = { ...runProgress };
+              delete runProgress[status.run_id];
+            }
+          }
         }
       }
       // Output can precede its first status in tests or after a late attachment.
       // Keep those buffers until reconciliation, but still enforce the total budget.
       const pending = Object.keys(outputBuffers).filter((id) => !runs[id]);
       const retained = pruneRuns({ runs, history, outputBuffers, activeRunId: s.activeRunId }, pending);
-      return { ...retained, history, consoleSeq: s.consoleSeq + 1 };
+      return { ...retained, history, runProgress, consoleSeq: s.consoleSeq + 1 };
     });
   },
 
