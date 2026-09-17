@@ -110,6 +110,34 @@ test("workspace terminals open with the workspace cwd and reconnect replays it",
   assert.equal(useTerminalStore.getState().tabs[0].status?.session_id, "ws2");
 });
 
+test("workspace terminal IPC payload carries the workspace source, not an undefined key", async (t) => {
+  const s = reset(t);
+  const calls: Array<{ command: string; args: Record<string, unknown> }> = [];
+  const original = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      __TAURI_INTERNALS__: {
+        invoke: async (command: string, args: Record<string, unknown>) => { calls.push({ command, args }); return status("ws1"); },
+      },
+    },
+  });
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, "window", original);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+  await s.open("board", "板子", { workspace: deviceWorkspace("board", "/srv/app"), subdir: "sub/inner" });
+  assert.deepEqual(calls.map((call) => call.command), ["open_workspace_terminal"]);
+  // workspace 必须是对象：值缺失会被 JSON 丢掉这个键，后端只能回 “missing required key workspace”
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0].args)), {
+    deviceId: "board",
+    workspace: { type: "device", device_id: "board", path: "/srv/app" },
+    subdir: "sub/inner",
+    cols: 80,
+    rows: 24,
+  });
+});
+
 test("failed close preserves the tab; simultaneous opens reserve the session limit", async (t) => {
   const s = reset(t);
   t.mock.method(api, "openTerminal", async (id) => status(id));
