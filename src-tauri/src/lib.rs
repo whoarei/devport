@@ -97,6 +97,7 @@ pub fn run() {
             commands::create_workspace_entry,
             commands::rename_workspace_entry,
             commands::delete_workspace_entry,
+            commands::generate_workspace_config,
             commands::run_script,
             commands::stop_run,
             commands::send_run_input,

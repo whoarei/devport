@@ -221,6 +221,8 @@ export const api = {
     invoke<void>("rename_workspace_entry", { dir, oldName, newName }),
   deleteWorkspaceEntry: (dir: string, name: string) =>
     invoke<void>("delete_workspace_entry", { dir, name }),
+  generateWorkspaceConfig: (dir: string) =>
+    invoke<void>("generate_workspace_config", { dir }),
 
   runScript: (request: RunRequest) => invoke<string>("run_script", { request }),
   stopRun: (runId: string) => invoke<void>("stop_run", { runId }),

@@ -196,6 +196,10 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
       entries.push({ label: t("workspace.newFile"), onSelect: () => void startCreate(path, "create-file") });
       entries.push({ label: t("workspace.newDir"), onSelect: () => void startCreate(path, "create-dir") });
     }
+    // 缺少配置时提供模板生成入口；已有 pyproject.toml 时不显示，避免误覆盖
+    if (!entry && !(workspaceTree[WORKSPACE_ROOT]?.entries ?? []).some((e) => e.name === "pyproject.toml")) {
+      entries.push({ label: t("workspace.generateConfig"), onSelect: () => void useAppStore.getState().generateWorkspaceConfig() });
+    }
     // 空白区附带工作区管理项：打开 / 关闭 / 最近（切换工作区与打开走同一条确认路径）
     if (!entry) entries.push("separator", ...workspaceSwitchMenuEntries(t, recentWorkspaces));
     if (entry) {

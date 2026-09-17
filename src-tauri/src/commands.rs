@@ -183,6 +183,31 @@ pub fn delete_workspace_entry(
     crate::workspace::delete(&dir, &name)
 }
 
+/// 生成工作区配置模板（pyproject.toml 的 [tool.remote-runner] 契约）；
+/// 已存在 pyproject.toml 时拒绝，不覆盖
+#[tauri::command]
+pub fn generate_workspace_config(
+    state: tauri::State<'_, AppState>,
+    dir: String,
+) -> WorkspaceResult<()> {
+    let _guard = crate::workspace::FILE_OPERATIONS.lock();
+    if let Some(busy) = blocked_by_run(&state) {
+        return Err(busy);
+    }
+    if dir.trim().is_empty() {
+        return Err(crate::workspace::FileError::new(
+            "path",
+            "工作区目录不能为空",
+        ));
+    }
+    let name = crate::runtime::project::template_project_name(std::path::Path::new(&dir));
+    crate::workspace::create_with_content(
+        &dir,
+        "pyproject.toml",
+        &crate::runtime::project::config_template(&name),
+    )
+}
+
 // ---------- 运行控制 ----------
 
 #[tauri::command]

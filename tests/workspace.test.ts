@@ -205,6 +205,33 @@ test("create refreshes the parent directory and surfaces backend errors", async 
   assert.equal(useAppStore.getState().workspaceError, null);
 });
 
+test("generateWorkspaceConfig creates the template, refreshes the root, and opens the file", async (t) => {
+  const previous = useAppStore.getState();
+  t.after(() => useAppStore.setState(previous, true));
+  useAppStore.setState(treeState());
+  const called: string[] = [];
+  t.mock.method(api, "generateWorkspaceConfig", async (dir: string) => { called.push(dir); });
+  t.mock.method(api, "listWorkspaceDir", async (_dir: string, subdir: string) =>
+    subdir === WORKSPACE_ROOT ? [{ name: "pyproject.toml", is_dir: false }] : []);
+  t.mock.method(api, "readWorkspaceFile", async (_dir: string, name: string) => {
+    assert.equal(name, "pyproject.toml");
+    return { content: "[project]\n", revision: "v1", eol: "lf" as const, bom: false };
+  });
+
+  assert.equal(await useAppStore.getState().generateWorkspaceConfig(), true);
+  assert.deepEqual(called, ["/work"]);
+  const state = useAppStore.getState();
+  assert.deepEqual(state.workspaceTree[WORKSPACE_ROOT].entries.map((e) => e.name), ["pyproject.toml"]);
+  assert.equal(state.activeFile, "pyproject.toml");
+  assert.equal(state.workspaceMutating, false);
+
+  // 后端拒绝（配置已存在）时显示错误且不打开文件
+  t.mock.method(api, "generateWorkspaceConfig", async () => { throw { code: "exists", message: "同名文件或目录已存在" }; });
+  assert.equal(await useAppStore.getState().generateWorkspaceConfig(), false);
+  assert.equal(useAppStore.getState().workspaceError, "同名文件或目录已存在");
+  assert.equal(useAppStore.getState().workspaceMutating, false);
+});
+
 test("workspace changes are refused while a run is preparing, syncing, or stopping", async (t) => {
   const previous = useAppStore.getState();
   t.after(() => useAppStore.setState(previous, true));

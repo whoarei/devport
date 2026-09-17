@@ -94,6 +94,7 @@ export const en: Messages = {
     refresh: "Refresh",
     newFile: "New File",
     newDir: "New Folder",
+    generateConfig: "Generate Workspace Config",
     open: "Open",
     rename: "Rename",
     delete: "Delete",

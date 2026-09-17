@@ -61,6 +61,8 @@ interface AppState {
   loadWorkspaceDir: (dir: WorkspacePath) => Promise<void>;
   toggleWorkspaceDir: (dir: WorkspacePath) => Promise<void>;
   createWorkspaceEntry: (dir: WorkspacePath, name: string, kind: WorkspaceEntryKind) => Promise<boolean>;
+  /** 在工作区根生成 pyproject.toml 配置模板（已存在时后端拒绝），成功后打开 */
+  generateWorkspaceConfig: () => Promise<boolean>;
   renameWorkspaceEntry: (path: WorkspacePath, newName: string) => Promise<boolean>;
   deleteWorkspaceEntry: (path: WorkspacePath) => Promise<boolean>;
   dismissWorkspaceError: () => void;
@@ -257,6 +259,27 @@ export const useAppStore = create<AppState>((set, get) => ({
       set((s) => ({ workspaceTree: withNode(s.workspaceTree, dir, (node) =>
         ({ entries: node?.entries ?? [], expanded: true, loaded: node?.loaded ?? false })) }));
       await get().loadWorkspaceDir(dir);
+      return true;
+    } catch (error) {
+      if (sequence === workspaceSequence) set({ workspaceError: errorMessage(error) });
+      return false;
+    } finally {
+      set({ workspaceMutating: false });
+    }
+  },
+
+  generateWorkspaceConfig: async () => {
+    const state = get();
+    const blocked = workspaceChangeBlocker(state);
+    if (blocked) { set({ workspaceError: blocked }); return false; }
+    const root = state.workspaceDir!;
+    const sequence = workspaceSequence;
+    set({ workspaceMutating: true, workspaceError: null });
+    try {
+      await api.generateWorkspaceConfig(root);
+      if (sequence !== workspaceSequence) return false;
+      await get().loadWorkspaceDir(WORKSPACE_ROOT);
+      await get().openWorkspaceFile("pyproject.toml");
       return true;
     } catch (error) {
       if (sequence === workspaceSequence) set({ workspaceError: errorMessage(error) });

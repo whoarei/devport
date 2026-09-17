@@ -334,8 +334,17 @@ const NAME_LIMIT: usize = 255;
 fn invalid_name() -> FileError {
     FileError::new(
         "name",
-        "名称无效：不能为空，不能包含 \\ / : * ? \" < > | 或控制字符，不能以 . 开头、以空格或 . 结尾，长度不超过 255",
+        "名称无效：不能为空，不能包含 \\ / : * ? \" < > | 或控制字符，不能以 . 开头（契约文件 .python-version 除外）、以空格或 . 结尾，长度不超过 255",
     )
+}
+
+/// 点开头的条目默认隐藏且不可寻址；只有项目契约显式要求的文件例外
+/// （Managed Python 需要可编辑的 .python-version，见 00027 §5）。
+/// 不要加入 .git / .env 等：它们不应出现在树的操作范围里。
+const ALLOWED_HIDDEN_FILES: [&str; 1] = [".python-version"];
+
+fn allowed_hidden(part: &str) -> bool {
+    ALLOWED_HIDDEN_FILES.contains(&part)
 }
 
 /// Windows device names are rejected on every platform so a workspace keeps
@@ -352,15 +361,20 @@ fn reserved_device(name: &str) -> bool {
 }
 
 /// Split a workspace-relative path into validated components. Hidden entries
-/// (`.` prefix) are rejected: the tree never lists them, so they cannot be
-/// addressed from the UI and must not be created either.
+/// (`.` prefix) are rejected except ALLOWED_HIDDEN_FILES: the tree never lists
+/// other dot entries, so they cannot be addressed from the UI and must not be
+/// created either.
 fn components(relative: &str) -> Result<Vec<&str>> {
     if relative.is_empty() {
         return Err(invalid_name());
     }
     let mut parts = Vec::new();
     for part in relative.split('/') {
-        if part.is_empty() || part == "." || part == ".." || part.starts_with('.') {
+        if part.is_empty()
+            || part == "."
+            || part == ".."
+            || (part.starts_with('.') && !allowed_hidden(part))
+        {
             return Err(invalid_name());
         }
         if part.contains(['\\', ':', '*', '?', '"', '<', '>', '|', '\0'])
@@ -443,6 +457,42 @@ pub fn create(dir: &str, relative: &str, kind: EntryKind) -> Result<()> {
     Ok(())
 }
 
+/// Create a file with initial content in one step（生成工作区配置模板等）。
+/// 与 `write` 一样只接受无 NUL 的 LF 文本；已存在同名条目时拒绝。
+/// Caller holds FILE_OPERATIONS and checks that no desktop run is syncing.
+pub fn create_with_content(dir: &str, relative: &str, content: &str) -> Result<()> {
+    if content.contains(['\0', '\r']) {
+        return Err(FileError::new(
+            "encoding",
+            "文件内容必须是无 NUL 的 LF 文本",
+        ));
+    }
+    if content.len() > FILE_LIMIT {
+        return Err(too_large());
+    }
+    let parts = components(relative)?;
+    let root = canonical_root(dir)?;
+    let (name, parents) = parts.split_last().ok_or_else(invalid_name)?;
+    let path = resolve_dir(&root, parents)?.join(name);
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    if let Err(error) = file
+        .write_all(content.as_bytes())
+        .and_then(|()| file.sync_all())
+    {
+        let _ = fs::remove_file(&path);
+        return Err(error.into());
+    }
+    drop(file);
+    if redirected(&fs::symlink_metadata(&path)?) {
+        let _ = fs::remove_file(&path);
+        return Err(invalid_path());
+    }
+    Ok(())
+}
+
 /// Rename a file or directory. Existing targets are never overwritten; a
 /// case-only rename of the same entry is allowed.
 /// Caller holds FILE_OPERATIONS and checks that no desktop run is syncing.
@@ -491,8 +541,9 @@ pub fn delete(dir: &str, relative: &str) -> Result<()> {
     Ok(())
 }
 
-/// List one directory level for the workspace tree. Hidden entries, links, and
-/// junctions are skipped so the tree only offers entries the app can operate on.
+/// List one directory level for the workspace tree. Hidden entries (except
+/// ALLOWED_HIDDEN_FILES), links, and junctions are skipped so the tree only
+/// offers entries the app can operate on.
 pub fn list_dir(dir: &str, subdir: &str) -> Result<Vec<Entry>> {
     let root = canonical_root(dir)?;
     let parts = if subdir.is_empty() {
@@ -507,7 +558,7 @@ pub fn list_dir(dir: &str, subdir: &str) -> Result<Vec<Entry>> {
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
-        if name.starts_with('.') {
+        if name.starts_with('.') && !allowed_hidden(&name) {
             continue;
         }
         // An entry may vanish between readdir and stat; skip instead of failing.
@@ -699,6 +750,40 @@ mod tests {
     }
 
     #[test]
+    fn create_with_content_writes_template_and_rejects_existing_or_bad_text() {
+        let f = Fixture::new(b"ok");
+        create_with_content(f.dir(), "pyproject.toml", "[project]\nname = \"x\"\n").unwrap();
+        assert_eq!(
+            fs::read(f.0.join("pyproject.toml")).unwrap(),
+            b"[project]\nname = \"x\"\n"
+        );
+        assert_eq!(
+            create_with_content(f.dir(), "pyproject.toml", "other")
+                .unwrap_err()
+                .code,
+            "exists"
+        );
+        // 已存在的内容不被覆盖
+        assert_eq!(
+            fs::read(f.0.join("pyproject.toml")).unwrap(),
+            b"[project]\nname = \"x\"\n"
+        );
+        assert_eq!(
+            create_with_content(f.dir(), "bad.toml", "a\rb")
+                .unwrap_err()
+                .code,
+            "encoding"
+        );
+        assert!(!f.0.join("bad.toml").exists());
+        assert_eq!(
+            create_with_content(f.dir(), "sub/cfg.toml", "x")
+                .unwrap_err()
+                .code,
+            "not_found"
+        );
+    }
+
+    #[test]
     fn creates_files_and_directories_and_lists_one_level() {
         let f = Fixture::new(b"ok");
         create(f.dir(), "notes.txt", EntryKind::File).unwrap();
@@ -853,6 +938,43 @@ mod tests {
         );
         assert!(f.0.join(".gitignore").is_file());
         assert!(f.0.join(".git").is_dir());
+    }
+
+    #[test]
+    fn python_version_is_listed_and_fully_manageable() {
+        let f = Fixture::new(b"ok");
+        // 契约文件可新建、列出、读写、重命名、删除；其它点开头条目仍被拒绝
+        create(f.dir(), ".python-version", EntryKind::File).unwrap();
+        assert_eq!(
+            names(list_dir(f.dir(), "").unwrap()),
+            [
+                (".python-version".to_string(), false),
+                ("main.py".to_string(), false)
+            ]
+        );
+        let request = SaveRequest {
+            dir: f.dir().into(),
+            name: ".python-version".into(),
+            content: "3.12.9\n".into(),
+            expected_revision: read(f.dir(), ".python-version").unwrap().revision,
+            eol: Eol::Lf,
+            bom: false,
+        };
+        write(request).unwrap();
+        assert_eq!(
+            read(f.dir(), ".python-version").unwrap().content,
+            "3.12.9\n"
+        );
+        rename(f.dir(), ".python-version", "python-version.bak").unwrap();
+        rename(f.dir(), "python-version.bak", ".python-version").unwrap();
+        delete(f.dir(), ".python-version").unwrap();
+        assert!(!f.0.join(".python-version").exists());
+        assert_eq!(
+            create(f.dir(), ".hidden", EntryKind::File)
+                .unwrap_err()
+                .code,
+            "name"
+        );
     }
 
     #[cfg(unix)]

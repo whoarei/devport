@@ -513,6 +513,59 @@ pub fn spec(project: &PythonProject, uv_version: &str) -> crate::runtime::Manage
     }
 }
 
+/// 由工作区目录名派生 pyproject 项目名：小写字母 / 数字 / `.` `_` `-`，
+/// 首尾必须是字母或数字；无法派生时退回占位名
+pub fn template_project_name(dir: &Path) -> String {
+    let base = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let mapped: String = base
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else if matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = mapped.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+    if trimmed.is_empty() {
+        "my-project".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// 「生成工作区配置」写入的 pyproject.toml 模板（00027 §5 项目契约）。
+/// 模板本身不构成完整项目：uv.lock 与 .python-version 需要用户补齐。
+pub fn config_template(project_name: &str) -> String {
+    format!(
+        r#"# Remote Runner 工作区配置（Managed Python，uv 项目契约）
+# 完整运行还需要两个文件（本模板不生成）：
+#   .python-version  精确 CPython patch 版本，如 3.12.9，须满足 requires-python
+#   uv.lock          在本目录执行 `uv lock` 生成
+
+[project]
+name = "{project_name}"
+requires-python = "==3.12.*"
+dependencies = []
+
+[tool.remote-runner]
+# 入口：mode = "script" 时为工作区内脚本路径；
+#       mode = "module" 时为点分模块名（如 mypkg.main，模块目录含 __main__.py 时写包名）
+entry = "main.py"
+mode = "script"
+# 额外加入 PYTHONPATH 的工作区内目录（src 布局用 ["src"]）
+python-path = []
+# 只能引用 [dependency-groups] / [project.optional-dependencies] 中已声明的名称；
+# 空数组表示只安装 [project].dependencies
+dependency-groups = []
+extras = []
+"#
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -579,6 +632,30 @@ python-path = ["src"]
         assert_eq!(p.python_path, vec!["src"]);
         assert!(p.lock_sha256.len() == 64);
         assert!(p.package_source_identity.len() == 64);
+    }
+
+    #[test]
+    fn config_template_is_valid_toml_with_remote_runner_table() {
+        let text = config_template("audio-test");
+        let parsed: toml::Table = text.parse().unwrap();
+        assert_eq!(parsed["project"]["name"].as_str().unwrap(), "audio-test");
+        let rr = &parsed["tool"]["remote-runner"];
+        assert_eq!(rr["entry"].as_str().unwrap(), "main.py");
+        assert_eq!(rr["mode"].as_str().unwrap(), "script");
+        assert!(rr["python-path"].as_array().unwrap().is_empty());
+        // LF 文本，无 CR / NUL（workspace 编辑约束）
+        assert!(!text.contains(['\r', '\0']));
+    }
+
+    #[test]
+    fn template_project_name_sanitizes_directory_name() {
+        assert_eq!(
+            template_project_name(Path::new("/ws/Audio_Test")),
+            "audio_test"
+        );
+        assert_eq!(template_project_name(Path::new("/ws/my proj!")), "my-proj");
+        assert_eq!(template_project_name(Path::new("/ws/...")), "my-project");
+        assert_eq!(template_project_name(Path::new("/")), "my-project");
     }
 
     #[test]
