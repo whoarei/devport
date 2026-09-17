@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -130,4 +131,32 @@ test("remote workspace dialog renders the host picker and the no-device hint", (
   assert.match(html, /设备上的目录/);
   assert.match(html, /board · ssh/);
   assert.match(html, /disabled=""[^>]*>打开</);
+});
+
+/** 取出样式表中某个选择器的规则体（第一个匹配的规则块） */
+function cssRule(stylesheet: string, selector: string): string {
+  const index = stylesheet.indexOf(`${selector} {`);
+  assert.ok(index >= 0, `${selector} has no rule in styles.css`);
+  return stylesheet.slice(index, stylesheet.indexOf("}", index));
+}
+
+test("the directory browser in the dialog is actually scrollable", () => {
+  // 目录项可能成百上千：列表必须有高度上限和自己的滚动条，
+  // 否则会被对话框裁掉且无法选择（这类问题只能在浏览器里看出来，
+  // 所以这里用样式断言兜底）。
+  // 测试以仓库根目录为工作目录运行（esbuild 打包后没有 import.meta.url）
+  const stylesheet = readFileSync("src/styles.css", "utf8");
+  const list = cssRule(stylesheet, ".remote-browser-list");
+  assert.match(list, /max-height:\s*\d/, "list needs a bounded height");
+  assert.match(list, /overflow(-y)?:\s*(auto|scroll)/, "list needs its own scrollbar");
+
+  // 内容仍然高于视口时，对话框自身也要能滚动
+  const modal = cssRule(stylesheet, ".modal");
+  assert.match(modal, /max-height:/, "modal needs a height cap");
+  assert.match(modal, /overflow:\s*(auto|scroll)/, "modal must scroll instead of clipping");
+
+  // 长目录名不撑破布局
+  const item = cssRule(stylesheet, ".remote-browser-list button");
+  assert.match(item, /text-overflow:\s*ellipsis/);
+  assert.match(item, /overflow:\s*hidden/);
 });
