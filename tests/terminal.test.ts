@@ -74,6 +74,28 @@ test("reconnect retires the old session before opening another; stale events can
   assert.equal(useTerminalStore.getState().tabs.length, 0);
 });
 
+test("workspace terminals open with the workspace cwd and reconnect replays it", async (t) => {
+  const s = reset(t);
+  const calls: Array<{ id: string; dir: string; subdir: string }> = [];
+  // 以 exited 状态打开：reconnect 对活跃会话是 no-op，只有非活跃会话才会重开
+  t.mock.method(api, "openWorkspaceTerminal", async (id: string, dir: string, subdir: string) => {
+    calls.push({ id, dir, subdir });
+    return status(`ws${calls.length}`, "exited");
+  });
+  t.mock.method(api, "openTerminal", async () => { throw new Error("must use the workspace entry"); });
+  t.mock.method(api, "closeTerminal", async () => {});
+  await s.open("local", "本机", { dir: "/work", subdir: "sub/inner" });
+  const tab = useTerminalStore.getState().tabs[0];
+  assert.equal(tab.status?.session_id, "ws1");
+  assert.deepEqual(tab.workspace, { dir: "/work", subdir: "sub/inner" });
+  await s.reconnect(tab.id);
+  assert.deepEqual(calls, [
+    { id: "local", dir: "/work", subdir: "sub/inner" },
+    { id: "local", dir: "/work", subdir: "sub/inner" },
+  ]);
+  assert.equal(useTerminalStore.getState().tabs[0].status?.session_id, "ws2");
+});
+
 test("failed close preserves the tab; simultaneous opens reserve the session limit", async (t) => {
   const s = reset(t);
   t.mock.method(api, "openTerminal", async (id) => status(id));

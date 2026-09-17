@@ -2,12 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
-import type { WorkspaceEntry } from "../api";
+import { errorMessage, type DeviceProfile, type WorkspaceEntry } from "../api";
 import { useAppStore } from "../store";
+import { useTerminalStore } from "../terminalStore";
+import { revealConsolePanel } from "../consoleTabs";
 import { openWorkspace } from "../workspacePicker";
 import { joinPath, WORKSPACE_ROOT, WorkspacePath, WorkspaceTree } from "../workspaceTree";
 import { ConfirmDialog, ConfirmRequest } from "./ConfirmDialog";
 import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
+import { deviceLabel } from "./DeviceDialog";
 import { PanelTitle } from "./PanelTitle";
 
 type Editing =
@@ -39,10 +42,29 @@ export function workspacePickerMenuEntries(t: (key: string) => string, recentWor
 export function workspaceSwitchMenuEntries(t: (key: string) => string, recentWorkspaces: string[]): MenuEntry[] {
   return [
     { label: t("menu.openWorkspace"), onSelect: () => void openWorkspace() },
-    { label: t("menu.closeWorkspace"), onSelect: () => void useAppStore.getState().setWorkspaceDir(null) },
+    { label: t("menu.closeWorkspace"), onSelect: () => useAppStore.getState().setWorkspaceDir(null) },
     "separator",
     ...recentWorkspaceEntries(t, recentWorkspaces),
   ];
+}
+
+/**
+ * 「在终端中打开」子菜单：仅本机（Local）设备能把工作区目录作为终端工作目录；
+ * SSH/WSL 的远端工作区是逐运行新建的，没有稳定目录可落，故不列出。
+ */
+export function workspaceTerminalMenuEntries(
+  t: (key: string) => string,
+  devices: DeviceProfile[],
+  full: boolean,
+  onOpen: (device: DeviceProfile) => void,
+): MenuEntry[] {
+  if (full) return [{ label: t("terminal.maxTabs"), disabled: true }];
+  const localDevices = devices.filter((device) => device.transport === "local");
+  if (localDevices.length === 0) return [{ label: t("workspace.noLocalDevices"), disabled: true }];
+  return localDevices.map((device) => ({
+    label: `${deviceLabel(device)}${device.is_default ? t("device.defaultSuffix") : ""}`,
+    onSelect: () => onOpen(device),
+  }));
 }
 
 interface TreeProps {
@@ -164,12 +186,15 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     openFile,
     disabled,
     recentWorkspaces,
+    devices,
   } = useAppStore(useShallow((s) => ({
     workspaceDir: s.workspaceDir, workspaceTree: s.workspaceTree, workspaceError: s.workspaceError,
     openFile: s.activeFile,
     disabled: s.saving || s.starting || s.guarding || s.workspaceMutating,
     recentWorkspaces: s.recentWorkspaces,
+    devices: s.devices,
   })));
+  const tabsFull = useTerminalStore((s) => s.tabs.length >= 8);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
@@ -185,6 +210,15 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     setEditing({ mode, dir });
   };
 
+  /** 在工作区（子）目录中打开本机设备终端：先展开控制面板区；失败复用工作区错误条展示 */
+  const openInTerminal = (device: DeviceProfile, subdir: WorkspacePath) => {
+    if (!workspaceDir) return;
+    revealConsolePanel();
+    void useTerminalStore.getState()
+      .open(device.id, device.name, { dir: workspaceDir, subdir })
+      .catch((error) => useAppStore.setState({ workspaceError: errorMessage(error) }));
+  };
+
   const openMenu = (event: MouseEvent, dir: WorkspacePath, entry: WorkspaceEntry | null) => {
     event.preventDefault();
     event.stopPropagation();
@@ -195,6 +229,11 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     if (!entry || entry.is_dir) {
       entries.push({ label: t("workspace.newFile"), onSelect: () => void startCreate(path, "create-file") });
       entries.push({ label: t("workspace.newDir"), onSelect: () => void startCreate(path, "create-dir") });
+      // 目录与空白区（工作区根）可落在本机终端：子菜单列出本机设备，subdir 与树路径同构
+      entries.push({
+        label: t("workspace.openInTerminal"),
+        children: workspaceTerminalMenuEntries(t, devices, tabsFull, (device) => openInTerminal(device, path)),
+      });
     }
     // 缺少配置时提供模板生成入口；已有 pyproject.toml 时不显示，避免误覆盖
     if (!entry && !(workspaceTree[WORKSPACE_ROOT]?.entries ?? []).some((e) => e.name === "pyproject.toml")) {

@@ -194,6 +194,8 @@ export function errorMessage(error: unknown): string {
 
 export const api = {
   openTerminal: (deviceId: string, cols = 80, rows = 24) => invoke<TerminalStatus>("open_terminal", { deviceId, cols, rows }),
+  openWorkspaceTerminal: (deviceId: string, dir: string, subdir: string, cols = 80, rows = 24) =>
+    invoke<TerminalStatus>("open_workspace_terminal", { deviceId, dir, subdir, cols, rows }),
   readTerminal: (sessionId: string) => invoke<TerminalRead>("read_terminal", { sessionId }),
   sendTerminalInput: (sessionId: string, data: string) => invoke<void>("send_terminal_input", { sessionId, data }),
   resizeTerminal: (sessionId: string, cols: number, rows: number) => invoke<void>("resize_terminal", { sessionId, cols, rows }),

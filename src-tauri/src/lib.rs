@@ -116,6 +116,7 @@ pub fn run() {
             commands::delete_project_environment,
             commands::clean_runtime_cache,
             commands::open_terminal,
+            commands::open_workspace_terminal,
             commands::read_terminal,
             commands::send_terminal_input,
             commands::resize_terminal,

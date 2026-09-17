@@ -2,9 +2,10 @@
 use super::session::{ChildEvent, Session, SessionSpec};
 use super::shells;
 use crate::device::LocalConfig;
-use crate::error::Result;
+use crate::error::{Result, RunnerError};
 use crate::process::ConsoleMode;
 use crate::terminal::{canceled, Control, Event as TerminalEvent};
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 
@@ -18,8 +19,21 @@ fn interactive_args(shell: &shells::Shell) -> Vec<String> {
     }
 }
 
+/// 终端工作目录：调用方给定（工作区终端）时必须仍是目录，否则回退默认目录
+fn working_directory(cwd: Option<PathBuf>) -> Result<Option<PathBuf>> {
+    match cwd {
+        Some(dir) if dir.is_dir() => Ok(Some(dir)),
+        Some(dir) => Err(RunnerError::Local(format!(
+            "终端工作目录不存在：{}",
+            dir.display()
+        ))),
+        None => Ok(super::default_working_directory()),
+    }
+}
+
 pub async fn execute(
     config: &LocalConfig,
+    cwd: Option<PathBuf>,
     cols: u32,
     rows: u32,
     controls: &mut mpsc::Receiver<Control>,
@@ -31,7 +45,7 @@ pub async fn execute(
     let spec = SessionSpec {
         program: shell.path.clone(),
         args: interactive_args(&shell),
-        cwd: super::default_working_directory(),
+        cwd: working_directory(cwd)?,
         env: Vec::new(),
         mode: ConsoleMode::Pty,
         cols,
@@ -72,4 +86,20 @@ pub async fn execute(
         }
     }
     Ok(exit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn working_directory_accepts_existing_dir_and_rejects_missing() {
+        let dir = std::env::temp_dir();
+        assert_eq!(working_directory(Some(dir.clone())).unwrap(), Some(dir));
+        let missing = std::env::temp_dir().join("rr-definitely-missing-terminal-cwd");
+        assert!(working_directory(Some(missing)).is_err());
+        // 未指定时回退默认目录；得到的路径必须是目录（极端环境允许 None）
+        let fallback = working_directory(None).unwrap();
+        assert!(fallback.as_ref().map(|p| p.is_dir()).unwrap_or(true));
+    }
 }

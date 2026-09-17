@@ -7,7 +7,7 @@
 - `shells.rs`：shell 注册表与探测。注册表条目 = `{ id, label, flavor, login, candidates }`；`Flavor` 决定 argv 构造（`Posix` / `PowerShell` / `Cmd`），`login` 只对 msys2/gitbash 为 true（`-l` 加载 /etc/profile 获得完整 PATH）。探测 = 按候选路径顺序找第一个存在的文件；Windows 候选含 PATH 查找 + 常见安装目录，Unix 为 `/bin/...` + PATH。`resolve()` 支持 `local.path` 自定义可执行文件覆盖（必须是已存在文件的绝对路径）。**Windows 的 PATH 查找不会去命中 `System32\bash.exe`**（注册表根本没有 Windows 版 bash 条目，msys2/gitbash 只用固定路径，天然规避 WSL 启动器）。
 - `session.rs`：子进程会话层。PTY 走 `portable-pty`（Windows ConPTY / Unix openpty+forkpty），pipe 走 `std::process` + `CREATE_NO_WINDOW`（Unix 另加 `pre_exec(setsid)`）。IO 全部用阻塞线程 + 有界 `tokio::sync::mpsc` 队列回报 `ChildEvent::{Output, ReaderDone}`，高吞吐输出会在读取线程施加背压；stdin 经独立 writer 线程 + `std::sync::mpsc` 写入。退出检测不用 wait 线程，由执行循环每 50 ms `try_wait()` 轮询 —— 这样 `Child` 所有权不出会话，kill 与 wait 不需要跨线程共享。`Drop` 兜底：会话丢失时若子进程仍在运行则强制终止，不留孤儿。
 - `mod.rs`：`invocation()`（按风味构造 argv）、`execute()`（运行主循环）、`test_device()`（版本探测）。
-- `terminal.rs`：独立终端标签，复用同一 Session，启动交互式登录 shell（posix `-li`/`-i`，pwsh `-NoProfile`，cmd 无参数）。
+- `terminal.rs`：独立终端标签，复用同一 Session，启动交互式登录 shell（posix `-li`/`-i`，pwsh `-NoProfile`，cmd 无参数）。`execute()` 接受可选 cwd：未给定时回退 `default_working_directory()`；给定（工作区终端）但已不存在时打开失败，不静默落回默认目录。
 
 ## 执行循环与停止升级
 
@@ -39,7 +39,7 @@
 
 ## 工作区与环境
 
-原地运行：有工作区时 `cwd = RunRequest.workspace_dir`（`validate_request` 已 canonicalize 并校验入口 containment）；无工作区命令与独立终端以本机用户目录为 cwd，并在无法解析用户目录时回退应用当前目录。环境变量通过进程环境块注入（`CommandBuilder::env` / `Command::envs`），不生成 `export` 前缀，无 shell 注入面。Python/Shell 类型直接 spawn 解释器/脚本，参数不经 shell 解释；Python 解释器在 PATH 中解析（Windows `python` → `python3`，Unix 反之）。msys2/gitbash 的 Shell 入口路径转成 `/e/...` posix 形式（`to_msys_path`），避免 `-l` profile 改变 cwd 时相对路径失效。
+原地运行：有工作区时 `cwd = RunRequest.workspace_dir`（`validate_request` 已 canonicalize 并校验入口 containment）；无工作区命令与独立终端以本机用户目录为 cwd，并在无法解析用户目录时回退应用当前目录。工作区终端例外：`open_workspace_terminal` 命令经 `workspace::terminal_dir` 把 subdir 解析为 canonical 目录（与 `list_dir` 同一套校验），仅 Local 设备可用，其他 transport 传 cwd 一律拒绝。环境变量通过进程环境块注入（`CommandBuilder::env` / `Command::envs`），不生成 `export` 前缀，无 shell 注入面。Python/Shell 类型直接 spawn 解释器/脚本，参数不经 shell 解释；Python 解释器在 PATH 中解析（Windows `python` → `python3`，Unix 反之）。msys2/gitbash 的 Shell 入口路径转成 `/e/...` posix 形式（`to_msys_path`），避免 `-l` profile 改变 cwd 时相对路径失效。
 
 ## 测试
 

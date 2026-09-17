@@ -80,17 +80,23 @@ pub async fn canceled(cancel: &mut watch::Receiver<bool>) {
 }
 
 impl TerminalManager {
+    /// 打开独立终端。`cwd` 仅对 Local transport 有意义（工作区终端），
+    /// 其他 transport 传 Some 一律拒绝，避免静默落到错误目录。
     pub fn open(
         &self,
         device: DeviceProfile,
         config: PathBuf,
         cols: u32,
         rows: u32,
+        cwd: Option<PathBuf>,
     ) -> Result<Status> {
         device.validate()?;
         validate_size(cols, rows)?;
         if device.transport == TransportKind::Serial {
             return Err(invalid("串口暂不支持独立终端，请使用运行控制台"));
+        }
+        if cwd.is_some() && device.transport != TransportKind::Local {
+            return Err(invalid("仅本机设备支持在工作区目录中打开终端"));
         }
         let (control, mut controls) = mpsc::channel(32);
         let (cancel, mut cancellation) = watch::channel(false);
@@ -150,6 +156,7 @@ impl TerminalManager {
                 TransportKind::Local => {
                     crate::local::terminal::execute(
                         device.local.as_ref().unwrap(),
+                        cwd,
                         cols,
                         rows,
                         &mut controls,
@@ -330,7 +337,7 @@ mod tests {
     fn validates_boundaries_and_never_accepts_serial_or_over_capacity() {
         let manager = TerminalManager::default();
         let device: DeviceProfile = serde_json::from_value(serde_json::json!({"id":"s", "name":"serial", "transport":"serial", "serial":{"port":"COM1"}})).unwrap();
-        assert!(manager.open(device, PathBuf::new(), 80, 24).is_err());
+        assert!(manager.open(device, PathBuf::new(), 80, 24, None).is_err());
         for (cols, rows) in [(0, 24), (80, 0), (4097, 24), (80, u32::MAX)] {
             assert!(validate_size(cols, rows).is_err());
         }
@@ -341,10 +348,29 @@ mod tests {
         )
         .unwrap();
         assert!(manager
-            .open(device, PathBuf::new(), 80, 24)
+            .open(device, PathBuf::new(), 80, 24, None)
             .unwrap_err()
             .to_string()
             .contains('8'));
+    }
+
+    #[test]
+    fn workspace_cwd_is_only_accepted_for_local_devices() {
+        let manager = TerminalManager::default();
+        let cwd = std::env::temp_dir();
+        let ssh: DeviceProfile = serde_json::from_value(
+            serde_json::json!({"id":"s", "name":"ssh", "host":"localhost", "username":"test"}),
+        )
+        .unwrap();
+        assert!(manager
+            .open(ssh, PathBuf::new(), 80, 24, Some(cwd.clone()))
+            .unwrap_err()
+            .to_string()
+            .contains("本机设备"));
+        let serial: DeviceProfile = serde_json::from_value(serde_json::json!({"id":"s", "name":"serial", "transport":"serial", "serial":{"port":"COM1"}})).unwrap();
+        assert!(manager
+            .open(serial, PathBuf::new(), 80, 24, Some(cwd))
+            .is_err());
     }
 
     #[test]

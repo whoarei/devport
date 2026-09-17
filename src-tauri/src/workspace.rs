@@ -577,6 +577,19 @@ pub fn list_dir(dir: &str, subdir: &str) -> Result<Vec<Entry>> {
     Ok(entries)
 }
 
+/// Resolve a workspace directory as the working directory of a local terminal.
+/// Validation matches listing: canonical root, no redirected components, every
+/// part must be a real directory. Empty subdir means the workspace root.
+pub fn terminal_dir(dir: &str, subdir: &str) -> Result<PathBuf> {
+    let root = canonical_root(dir)?;
+    let parts = if subdir.is_empty() {
+        Vec::new()
+    } else {
+        components(subdir)?
+    };
+    resolve_dir(&root, &parts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -817,6 +830,40 @@ mod tests {
             create(f.dir(), "missing/inner.py", EntryKind::File)
                 .unwrap_err()
                 .code,
+            "not_found"
+        );
+    }
+
+    #[test]
+    fn terminal_dir_resolves_root_and_subdir_but_rejects_files_and_escapes() {
+        let f = Fixture::new(b"ok");
+        create(f.dir(), "sub", EntryKind::Dir).unwrap();
+        create(f.dir(), "sub/inner", EntryKind::Dir).unwrap();
+        let canonical = fs::canonicalize(&f.0).unwrap();
+        assert_eq!(terminal_dir(f.dir(), "").unwrap(), canonical);
+        assert_eq!(terminal_dir(f.dir(), "sub").unwrap(), canonical.join("sub"));
+        assert_eq!(
+            terminal_dir(f.dir(), "sub/inner").unwrap(),
+            canonical.join("sub").join("inner")
+        );
+        // 与 list_dir 同一套校验：越界/非法名 → name；指向文件或缺失 → not_found/path
+        for subdir in ["..", "../evil", "a/../b", ".hidden", "a\\b"] {
+            assert_eq!(
+                terminal_dir(f.dir(), subdir).unwrap_err().code,
+                "name",
+                "{subdir:?}"
+            );
+        }
+        assert_eq!(
+            terminal_dir(f.dir(), "missing").unwrap_err().code,
+            "not_found"
+        );
+        assert_eq!(
+            terminal_dir(f.dir(), "main.py").unwrap_err().code,
+            "not_found"
+        );
+        assert_eq!(
+            terminal_dir(f.dir(), "sub/missing").unwrap_err().code,
             "not_found"
         );
     }

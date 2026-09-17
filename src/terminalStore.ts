@@ -10,6 +10,8 @@ export interface TerminalTab {
   id: string;
   deviceId: string;
   deviceName: string;
+  /** 工作区终端：打开时的工作区目录参数，重连时原样复放 */
+  workspace?: { dir: string; subdir: string };
   status?: TerminalStatus;
   busy: boolean;
   error?: string;
@@ -37,12 +39,19 @@ interface TerminalStore {
   select: (id: string) => void;
   /** MRU 会话中的预览选择：只切换活动标签，松开 Ctrl 后再由 select 提交。 */
   previewSelect: (id: string) => void;
-  open: (deviceId: string, deviceName: string) => Promise<void>;
+  open: (deviceId: string, deviceName: string, workspace?: { dir: string; subdir: string }) => Promise<void>;
   reconnect: (id: string) => Promise<void>;
   close: (id: string) => Promise<void>;
   closeAll: () => Promise<void>;
   update: (id: string, sessionId: string, status: TerminalStatus) => void;
   report: (id: string, sessionId: string, error: unknown) => void;
+}
+
+/** 按标签参数选择后端入口：工作区终端带 cwd，普通终端用设备默认目录 */
+function openSession(deviceId: string, workspace?: { dir: string; subdir: string }) {
+  return workspace
+    ? api.openWorkspaceTerminal(deviceId, workspace.dir, workspace.subdir)
+    : api.openTerminal(deviceId);
 }
 
 export const useTerminalStore = create<TerminalStore>((set, get) => {
@@ -56,13 +65,13 @@ export const useTerminalStore = create<TerminalStore>((set, get) => {
     previewSelect: (id) => {
       if (id === "run" || get().tabs.some((t) => t.id === id)) set({ activeTab: id });
     },
-    open: (deviceId, deviceName) => {
+    open: (deviceId, deviceName, workspace) => {
       if (get().shuttingDown) return Promise.reject(new Error(i18n.t("terminal.closingAll")));
       if (get().tabs.length >= 8) return Promise.reject(new Error(i18n.t("terminal.maxTabs")));
       const id = crypto.randomUUID();
-      set((s) => ({ tabs: [...s.tabs, { id, deviceId, deviceName, busy: true }], activeTab: id, mru: touchMru(s.mru, id) }));
+      set((s) => ({ tabs: [...s.tabs, { id, deviceId, deviceName, workspace, busy: true }], activeTab: id, mru: touchMru(s.mru, id) }));
       return track((async () => {
-        try { patch(id, { status: await api.openTerminal(deviceId), busy: false }); }
+        try { patch(id, { status: await openSession(deviceId, workspace), busy: false }); }
         catch (error) { patch(id, { busy: false, error: errorMessage(error) }); }
       })());
     },
@@ -74,7 +83,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => {
         try {
           if (tab.status) await api.closeTerminal(tab.status.session_id);
           patch(id, { status: undefined });
-          patch(id, { status: await api.openTerminal(tab.deviceId), busy: false });
+          patch(id, { status: await openSession(tab.deviceId, tab.workspace), busy: false });
         } catch (error) { patch(id, { busy: false, error: errorMessage(error) }); }
       })());
     },

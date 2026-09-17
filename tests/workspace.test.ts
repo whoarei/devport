@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { api, RunStatus } from "../src/api";
+import { api, RunStatus, type DeviceProfile } from "../src/api";
 import { useAppStore } from "../src/store";
 import i18n from "../src/i18n";
 
@@ -10,7 +10,7 @@ import i18n from "../src/i18n";
 test.before(async () => { await i18n.changeLanguage("zh"); });
 import { EditorTab, inferLanguage } from "../src/editorDocument";
 import { DEFAULT_RUN_DRAFT } from "../src/runState";
-import { WorkspacePanel, workspacePickerMenuEntries, workspaceSwitchMenuEntries } from "../src/components/WorkspacePanel";
+import { WorkspacePanel, workspacePickerMenuEntries, workspaceSwitchMenuEntries, workspaceTerminalMenuEntries } from "../src/components/WorkspacePanel";
 import {
   collectScripts, dropSubtree, isWithin, joinPath, nameOf, parentOf, rekeySubtree, WORKSPACE_ROOT,
 } from "../src/workspaceTree";
@@ -115,6 +115,36 @@ test("open workspace blank-area menu adds close, open and recent entries for swi
   const empty = workspaceSwitchMenuEntries((key) => i18n.t(key), []);
   assert.deepEqual(empty.map((entry) => entry === "separator" ? "|" : entry.label),
     ["打开工作区…", "关闭工作区", "|", "（无最近记录）"]);
+});
+
+test("workspace terminal submenu lists only local devices with fallbacks for full or none", () => {
+  const localDevice = (id: string, is_default = false): DeviceProfile => ({
+    id, name: id, is_default, transport: "local", local: { shell: "bash" },
+    host: "", port: 0, username: "", auth: { type: "key", key_path: null }, workspace_root: "",
+  });
+  const t = (key: string) => i18n.t(key);
+
+  // 标签已满：唯一的置灰占位项
+  const full = workspaceTerminalMenuEntries(t, [localDevice("l1")], true, () => {});
+  assert.ok(full[0] !== "separator" && full[0].disabled && full[0].label === i18n.t("terminal.maxTabs"));
+
+  // 没有本机设备：置灰占位；SSH/WSL 不出现在子菜单里
+  const none = workspaceTerminalMenuEntries(t, [{ ...localDevice("s1"), transport: "ssh", local: null }], false, () => {});
+  assert.ok(none[0] !== "separator" && none[0].disabled && none[0].label === i18n.t("workspace.noLocalDevices"));
+
+  // 正常：只列本机设备，默认设备带后缀，选择回调带出设备
+  const opened: string[] = [];
+  const entries = workspaceTerminalMenuEntries(t, [
+    { ...localDevice("s1"), transport: "ssh", local: null },
+    localDevice("l1", true),
+    localDevice("l2"),
+  ], false, (device) => opened.push(device.id));
+  assert.deepEqual(entries.map((entry) => entry !== "separator" && entry.label),
+    ["l1 (Local · bash) · 默认", "l2 (Local · bash)"]);
+  const first = entries[0];
+  assert.ok(first !== "separator" && first.onSelect);
+  first.onSelect!();
+  assert.deepEqual(opened, ["l1"]);
 });
 
 test("opening a workspace loads the root and expanding a directory loads it once", async (t) => {

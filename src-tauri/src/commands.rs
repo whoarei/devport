@@ -432,7 +432,34 @@ pub fn open_terminal(
         state.config_dir.clone(),
         cols,
         rows,
+        None,
     )
+}
+
+/// 在工作区目录中打开本机设备的终端标签。subdir 与工作区树同构（"" 为根目录）；
+/// 路径与设备类别的校验全部在此边界完成。
+#[tauri::command]
+pub fn open_workspace_terminal(
+    state: tauri::State<'_, AppState>,
+    updates: tauri::State<'_, crate::update::UpdateState>,
+    device_id: String,
+    dir: String,
+    subdir: String,
+    cols: u32,
+    rows: u32,
+) -> Result<crate::terminal::Status> {
+    let _gate = updates.allow_run()?;
+    let device = state.device_store.get(&device_id)?;
+    if device.transport != crate::device::TransportKind::Local {
+        return Err(crate::error::RunnerError::InvalidInput(
+            "仅本机设备支持在工作区目录中打开终端".into(),
+        ));
+    }
+    let cwd = crate::workspace::terminal_dir(&dir, &subdir)
+        .map_err(|e| crate::error::RunnerError::InvalidInput(e.message))?;
+    state
+        .terminal_manager
+        .open(device, state.config_dir.clone(), cols, rows, Some(cwd))
 }
 
 #[tauri::command]

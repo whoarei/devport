@@ -97,6 +97,8 @@ export const zh = {
     newDir: "新建文件夹",
     generateConfig: "生成工作区配置",
     open: "打开",
+    openInTerminal: "在终端中打开",
+    noLocalDevices: "没有本机设备（先在「设备」中添加本机设备）",
     rename: "重命名",
     delete: "删除",
     deleteDirTitle: "删除文件夹？",

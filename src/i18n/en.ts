@@ -96,6 +96,8 @@ export const en: Messages = {
     newDir: "New Folder",
     generateConfig: "Generate Workspace Config",
     open: "Open",
+    openInTerminal: "Open in Terminal",
+    noLocalDevices: "No local devices (add a local device under Devices first)",
     rename: "Rename",
     delete: "Delete",
     deleteDirTitle: "Delete folder?",

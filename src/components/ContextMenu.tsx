@@ -1,7 +1,14 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export type MenuEntry =
-  | { label: string; danger?: boolean; disabled?: boolean; onSelect: () => void }
+  | {
+      label: string;
+      danger?: boolean;
+      disabled?: boolean;
+      /** 悬停展开的子菜单（与 MenuBar 同一套样式）；设置后自身不再触发 onSelect */
+      children?: MenuEntry[];
+      onSelect?: () => void;
+    }
   | "separator";
 
 export interface MenuState {
@@ -13,6 +20,55 @@ export interface MenuState {
 /** 保存弹出锚点；实际边界在菜单渲染后测量，条目数参数兼容现有调用。 */
 export function contextMenuPosition(clientX: number, clientY: number, _entryCount: number) {
   return { x: clientX, y: clientY };
+}
+
+function MenuItem({ entry, disabled, close }: {
+  entry: Exclude<MenuEntry, "separator">;
+  disabled?: boolean;
+  close: () => void;
+}) {
+  const [subOpen, setSubOpen] = useState(false);
+  if (entry.children) {
+    return (
+      <div
+        className="menu-submenu"
+        onMouseEnter={() => setSubOpen(true)}
+        onMouseLeave={() => setSubOpen(false)}
+      >
+        <button
+          type="button"
+          role="menuitem"
+          aria-haspopup="menu"
+          aria-expanded={subOpen}
+          className="menu-item"
+          disabled={disabled || entry.disabled}
+        >
+          <span className="menu-check" aria-hidden="true" />
+          <span className="menu-label">{entry.label}</span>
+          <span className="menu-arrow" aria-hidden="true">▸</span>
+        </button>
+        {subOpen && (
+          <div className="menu-dropdown menu-subdropdown" role="menu">
+            {entry.children.map((child, index) => child === "separator"
+              ? <div key={index} className="menu-separator" role="separator" />
+              : <MenuItem key={index} entry={child} disabled={disabled} close={close} />)}
+          </div>
+        )}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      className={`menu-item${entry.danger ? " menu-item-danger" : ""}`}
+      disabled={disabled || entry.disabled}
+      onClick={() => { close(); entry.onSelect?.(); }}
+    >
+      <span className="menu-check" aria-hidden="true" />
+      <span className="menu-label">{entry.label}</span>
+    </button>
+  );
 }
 
 export function ContextMenu({ menu, disabled, onClose }: {
@@ -59,17 +115,7 @@ export function ContextMenu({ menu, disabled, onClose }: {
     <div className="menu-dropdown context-menu" role="menu" ref={container} style={{ left: menu.x, top: menu.y }}>
       {menu.entries.map((entry, index) => entry === "separator"
         ? <div key={index} className="menu-separator" role="separator" />
-        : <button
-          key={index}
-          type="button"
-          role="menuitem"
-          className={`menu-item${entry.danger ? " menu-item-danger" : ""}`}
-          disabled={disabled || entry.disabled}
-          onClick={() => { onClose(); entry.onSelect(); }}
-        >
-          <span className="menu-check" aria-hidden="true" />
-          <span className="menu-label">{entry.label}</span>
-        </button>)}
+        : <MenuItem key={index} entry={entry} disabled={disabled} close={onClose} />)}
     </div>
   );
 }

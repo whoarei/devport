@@ -10,7 +10,8 @@ interface MruCycleSession {
 
 let mruSession: MruCycleSession | undefined;
 
-function revealConsolePanel(): void {
+/** 打开终端或切换标签后，确保控制面板区可见且未折叠。 */
+export function revealConsolePanel(): void {
   const { layout, setLayout } = useAppStore.getState();
   if (!layout.panelVisible.console || layout.panelCollapsed.console) {
     setLayout({ ...panelVisibilityPatch(layout, "console", true), ...panelCollapsePatch(layout, "console", false) });

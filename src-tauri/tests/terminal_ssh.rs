@@ -169,7 +169,7 @@ async fn shell_handshake_binary_input_ctrl_c_resize_and_delayed_exit() {
     let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
     let manager = TerminalManager::default();
     let id = manager
-        .open(device, root.clone(), 80, 24)
+        .open(device, root.clone(), 80, 24, None)
         .unwrap()
         .session_id;
     let mut output = until(&manager, &id, State::Connected).await;
@@ -206,7 +206,7 @@ async fn rejected_terminal_requests_and_unconfirmed_disconnect_fail() {
         let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         let manager = TerminalManager::default();
         let id = manager
-            .open(device, root.clone(), 80, 24)
+            .open(device, root.clone(), 80, 24, None)
             .unwrap()
             .session_id;
         until(&manager, &id, State::Failed).await;
@@ -223,7 +223,7 @@ async fn close_during_shell_handshake_does_not_wait_for_acknowledgement() {
     let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
     let manager = TerminalManager::default();
     let id = manager
-        .open(device, root.clone(), 80, 24)
+        .open(device, root.clone(), 80, 24, None)
         .unwrap()
         .session_id;
     tokio::time::timeout(Duration::from_secs(5), sizes.recv())
