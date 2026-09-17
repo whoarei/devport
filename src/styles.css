@@ -110,6 +110,13 @@ body,
   left: calc(100% - 2px);
 }
 
+/* 右键菜单的子菜单：.context-menu 带 overflow-y: auto，会裁剪 absolute 子菜单，
+   因此右键菜单里的子菜单改 fixed 定位（坐标由 MenuItem 按视口计算）并压过父菜单 */
+.context-submenu {
+  position: fixed;
+  z-index: 70;
+}
+
 .menu-item {
   display: flex;
   align-items: center;

@@ -40,6 +40,16 @@ test("terminal quick-add targets the default device and keeps a separate device 
   assert.match(component, /aria-label=\{t\("console\.chooseTerminalDevice"\)\}/);
 });
 
+test("context submenus escape the scrollable context menu via fixed positioning", () => {
+  // .context-menu 的 overflow-y: auto 会把 absolute 子菜单裁掉（工作区「在终端中打开」），
+  // 子菜单必须改 fixed 定位并压过父菜单层级
+  const component = readFileSync(resolve("src/components/ContextMenu.tsx"), "utf8");
+  const styles = readFileSync(resolve("src/styles.css"), "utf8");
+  assert.match(styles, /\.context-menu\s*\{[^}]*overflow-y: auto/);
+  assert.match(styles, /\.context-submenu\s*\{[^}]*position: fixed/);
+  assert.match(component, /menu-subdropdown context-submenu/);
+});
+
 test("terminals are independent from runs and do not save or upload the workspace", async (t) => {
   const s = reset(t);
   const runState = useAppStore.getState();

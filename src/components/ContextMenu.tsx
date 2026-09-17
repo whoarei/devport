@@ -28,11 +28,30 @@ function MenuItem({ entry, disabled, close }: {
   close: () => void;
 }) {
   const [subOpen, setSubOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const sub = useRef<HTMLDivElement>(null);
+  const itemDisabled = disabled || entry.disabled;
+  // .context-menu 带 overflow-y: auto（长菜单可滚动），会裁剪 absolute 定位的子菜单，
+  // 所以子菜单改用 fixed 按视口坐标展开，并在右缘 / 下缘越界时翻转
+  useLayoutEffect(() => {
+    if (!subOpen) return;
+    const anchor = wrap.current?.getBoundingClientRect();
+    const element = sub.current;
+    if (!anchor || !element) return;
+    const rect = element.getBoundingClientRect();
+    let left = anchor.right - 2;
+    if (left + rect.width > window.innerWidth - 8) left = Math.max(8, anchor.left - rect.width + 2);
+    let top = anchor.top - 5;
+    if (top + rect.height > window.innerHeight - 8) top = Math.max(8, window.innerHeight - 8 - rect.height);
+    element.style.left = `${left}px`;
+    element.style.top = `${top}px`;
+  }, [subOpen]);
   if (entry.children) {
     return (
       <div
         className="menu-submenu"
-        onMouseEnter={() => setSubOpen(true)}
+        ref={wrap}
+        onMouseEnter={() => { if (!itemDisabled) setSubOpen(true); }}
         onMouseLeave={() => setSubOpen(false)}
       >
         <button
@@ -41,14 +60,14 @@ function MenuItem({ entry, disabled, close }: {
           aria-haspopup="menu"
           aria-expanded={subOpen}
           className="menu-item"
-          disabled={disabled || entry.disabled}
+          disabled={itemDisabled}
         >
           <span className="menu-check" aria-hidden="true" />
           <span className="menu-label">{entry.label}</span>
           <span className="menu-arrow" aria-hidden="true">▸</span>
         </button>
         {subOpen && (
-          <div className="menu-dropdown menu-subdropdown" role="menu">
+          <div className="menu-dropdown menu-subdropdown context-submenu" role="menu" ref={sub}>
             {entry.children.map((child, index) => child === "separator"
               ? <div key={index} className="menu-separator" role="separator" />
               : <MenuItem key={index} entry={child} disabled={disabled} close={close} />)}
@@ -62,7 +81,7 @@ function MenuItem({ entry, disabled, close }: {
       type="button"
       role="menuitem"
       className={`menu-item${entry.danger ? " menu-item-danger" : ""}`}
-      disabled={disabled || entry.disabled}
+      disabled={itemDisabled}
       onClick={() => { close(); entry.onSelect?.(); }}
     >
       <span className="menu-check" aria-hidden="true" />
