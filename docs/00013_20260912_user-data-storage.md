@@ -9,8 +9,8 @@
 | 类别 | 位置 | 说明 |
 | --- | --- | --- |
 | 应用配置目录 | Tauri `app_config_dir`（Windows：`%APPDATA%\com.devrunner.remote-runner`） | 设备列表、运行历史、SSH 主机密钥信任库 |
-| 浏览器 localStorage | WebView 内 | 界面布局、最近打开的工作区目录 |
-| 用户自选工作区目录 | 本地磁盘任意位置（目录选择对话框） | 脚本文件本体，应用不复制、不索引 |
+| 浏览器 localStorage | WebView 内 | 界面布局、最近打开的工作区（本机目录或设备目录，见 00029） |
+| 用户自选工作区目录 | 本地磁盘任意位置（目录选择对话框），或某台 SSH/WSL 设备上的目录（00029） | 脚本文件本体，应用不复制、不索引 |
 | 运行时内存状态 | 进程内存（Zustand store / Rust 状态） | 运行草稿、输出缓冲、终端会话等，不持久化 |
 
 配置目录在应用启动时解析并创建（`src-tauri/src/lib.rs`），解析失败时回退到 `dirs::config_dir()/remote-runner`。`rr-cli` 同样使用该目录。
@@ -76,21 +76,30 @@ WebView 的 localStorage 使用带版本后缀的键保存界面偏好：
 | 键 | 内容 | 上限 |
 | --- | --- | --- |
 | `remote-runner.layout.v1` | 界面布局：工作区/历史/控制台三个面板的显隐与折叠、编辑区折叠、侧栏宽度（200–480 px）与左右位置、侧栏上下分割比（0.2–0.8）、控制台高度（120–720 px） | 单对象 |
-| `remote-runner.recent-workspaces.v1` | 最近打开的工作区目录路径（字符串数组，去重） | 10 条 |
+| `remote-runner.recent-workspaces.v2` | 最近打开的工作区（`WorkspaceRef` 对象数组：`{type:"local",dir}` 或 `{type:"device",device_id,path}`，去重、保留首次出现顺序） | 10 条 |
+| `remote-runner.recent-workspaces.v1` | v2 之前的旧键（裸路径字符串数组）；读取时迁移到 v2 并删除本键 | 迁移后不再写入 |
 | `remote-runner.ui-zoom.v1` | 整个 WebView 的界面缩放百分比；允许 70%–200% 的预设档位 | 单个数值 |
 
 这些偏好都有防御性读取：坏数据、缺字段、越界值会回落到默认值；写入失败不会中断应用。localStorage 属于 WebView 数据目录，与应用配置目录不是同一位置，清除 WebView 数据不影响设备配置与运行历史。
 
 ## 用户工作区目录
 
-脚本文件本体存储在用户通过目录选择对话框选定的任意本地目录中，应用**不在配置目录里保存副本**。约束在 `src-tauri/src/workspace.rs`：
+脚本文件本体存储在用户选定的目录中：本机任意目录（目录选择对话框），或某台 SSH/WSL 设备上的目录（「打开设备工作区…」，见 `docs/00029_20260917_remote-workspace.md`）。应用**不在配置目录里保存副本**。
+
+本机工作区的约束在 `src-tauri/src/workspace.rs`：
 
 - 仅 UTF-8 文本、单文件上限 1 MiB；记录 `revision`（内容 SHA-256 摘要）、`eol`（lf/crlf）、`bom` 用于乐观并发保存；
 - 拒绝符号链接/重解析点路径（含工作区根的祖先目录），只允许普通文件与目录；
 - 所有写操作持有进程级 `FILE_OPERATIONS` 互斥锁；任意运行处于准备/同步/停止阶段时，工作区修改被整体拒绝（`blocked_by_run`），保证传输层扫描的目录不会同时被改动；
 - 写入采用临时文件替换方式，冲突（sharing violation）时保留原文件并清理临时文件。
 
-运行时整个工作区按传输方式上传到远端 `{workspace_root}/{run_id}`（如 `/tmp/devrunner/workspaces/<uuid>`）。**远端目录在运行结束后不清理**，保留在设备上，由设备默认 `workspace_root` 集中存放。
+设备工作区的约束在 `src-tauri/src/remote_workspace/`：SSH 经 SFTP（工作区根 canonicalize 一次，根以下逐级 LSTAT 拒绝链接），WSL 经 helper 的 `fs_*` 文件服务（dirfd + `O_NOFOLLOW` 约束在工作区根内）；两者同样有 1 MiB 编辑器上限、写入前 revision 校验与原子替换。
+
+运行时的文件放置分三种情况：
+
+- 运行目标为工作区所在设备 → **原地运行**，不复制任何文件，产物留在工作区；
+- 运行目标为其他设备（含本机）→ 先把源工作区下载到本机暂存目录 `%TEMP%\remote-runner-stage-<run_id>`，再按传输方式上传到远端 `{workspace_root}/{run_id}`（如 `/tmp/devrunner/workspaces/<uuid>`）；**暂存目录在运行结束（无论成败）时清理**；
+- 远端 `{workspace_root}/{run_id}` **在运行结束后不清理**，保留在设备上，由设备默认 `workspace_root` 集中存放。
 
 ## 不持久化的运行时状态
 
@@ -111,4 +120,4 @@ WebView 的 localStorage 使用带版本后缀的键保存界面偏好：
 
 - 删除配置目录（`%APPDATA%\com.devrunner.remote-runner`）即清除设备、历史与主机密钥信任；
 - 清除 WebView 数据即重置布局与最近工作区；
-- 远端 `/tmp/devrunner/workspaces/` 下的历次运行目录需手动清理。
+- 远端 `/tmp/devrunner/workspaces/` 下的历次运行目录需手动清理（跨设备运行的本地暂存目录会自动清理）。

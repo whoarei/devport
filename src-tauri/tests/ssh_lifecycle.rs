@@ -147,7 +147,7 @@ async fn run_case(behavior: Behavior, timeout: u64) -> (RunStatus, Vec<u8>) {
         "timeout_secs": timeout
     }))
     .unwrap();
-    let id = manager.start(request, device, root.clone()).unwrap();
+    let id = manager.start(request, device, root.clone(), None).unwrap();
     let result = tokio::time::timeout(Duration::from_secs(15), async {
         let mut output = Vec::new();
         loop {

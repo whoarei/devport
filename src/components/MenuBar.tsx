@@ -6,7 +6,7 @@ import { isAutostartEnabled, setAutostartEnabled } from "../autostart";
 import { requestQuit } from "../appLifecycle";
 import { dirtyTab } from "../editorDocument";
 import { loadLanguagePreference, setLanguage, type LanguagePreference } from "../i18n/language";
-import { useAppStore } from "../store";
+import { useAppStore, workspaceLabel } from "../store";
 import { useTerminalStore } from "../terminalStore";
 import { panelVisibilityPatch } from "../layoutState";
 import { panelsInDock } from "../panels/registry";
@@ -100,7 +100,7 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
   const setLayout = useAppStore((state) => state.setLayout);
   const resetLayout = useAppStore((state) => state.resetLayout);
   const recentWorkspaces = useAppStore((state) => state.recentWorkspaces);
-  const workspaceDir = useAppStore((state) => state.workspaceDir);
+  const workspace = useAppStore((state) => state.workspace);
   const devices = useAppStore((state) => state.devices);
   const dirty = useAppStore((state) => {
     const tab = state.openTabs.find((t) => t.name === state.activeFile);
@@ -147,18 +147,22 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
       label: t("menu.file"),
       entries: [
         { label: t("menu.openWorkspace"), onSelect: () => void openWorkspace() },
+        { label: t("menu.openRemoteWorkspace"), onSelect: () => useAppStore.getState().openRemoteWorkspaceDialog() },
         {
           label: t("menu.recentWorkspaces"),
           disabled: recentWorkspaces.length === 0,
           children: recentWorkspaces.length > 0
-            ? recentWorkspaces.map((dir) => ({ label: dir, onSelect: () => void openWorkspace(dir) }))
+            ? recentWorkspaces.map((item) => ({
+                label: workspaceLabel(item, devices) ?? "",
+                onSelect: () => void openWorkspace(item),
+              }))
             : [{ label: t("menu.noRecent"), disabled: true }],
         },
-        // 关闭工作区与打开走同一条 setWorkspaceDir 路径（含未保存确认），仅传 null
+        // 关闭工作区与打开走同一条 setWorkspace 路径（含未保存确认），仅传 null
         {
           label: t("menu.closeWorkspace"),
-          disabled: !workspaceDir || fileBusy,
-          onSelect: () => void useAppStore.getState().setWorkspaceDir(null),
+          disabled: !workspace || fileBusy,
+          onSelect: () => void useAppStore.getState().setWorkspace(null),
         },
         { type: "separator" },
         { label: t("menu.addDevice"), onSelect: () => useAppStore.getState().openDeviceDialog({ ...emptyDevice(), is_default: devices.length === 0 }) },

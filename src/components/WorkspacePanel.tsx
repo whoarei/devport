@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
-import { errorMessage, type DeviceProfile, type WorkspaceEntry } from "../api";
-import { useAppStore } from "../store";
+import { errorMessage, type DeviceProfile, type WorkspaceEntry, type WorkspaceRef } from "../api";
+import { useAppStore, workspaceLabel } from "../store";
 import { useTerminalStore } from "../terminalStore";
 import { revealConsolePanel } from "../consoleTabs";
 import { openWorkspace } from "../workspacePicker";
@@ -24,44 +24,64 @@ interface PendingDelete {
 }
 
 /** 最近的工作区菜单项（扁平列出，与「文件」菜单同源）；无记录时为置灰占位 */
-function recentWorkspaceEntries(t: (key: string) => string, recentWorkspaces: string[]): MenuEntry[] {
+function recentWorkspaceEntries(
+  t: (key: string) => string,
+  recentWorkspaces: WorkspaceRef[],
+  devices: DeviceProfile[],
+): MenuEntry[] {
   if (recentWorkspaces.length === 0) return [{ label: t("menu.noRecent"), disabled: true, onSelect: () => {} }];
-  return recentWorkspaces.map((dir) => ({ label: dir, onSelect: () => void openWorkspace(dir) }));
+  return recentWorkspaces.map((workspace) => ({
+    label: workspaceLabel(workspace, devices) ?? "",
+    onSelect: () => void openWorkspace(workspace),
+  }));
 }
 
-/** 未打开工作区时的右键菜单：打开工作区 + 最近的工作区 */
-export function workspacePickerMenuEntries(t: (key: string) => string, recentWorkspaces: string[]): MenuEntry[] {
+/** 未打开工作区时的右键菜单：打开工作区 + 打开设备工作区 + 最近的工作区 */
+export function workspacePickerMenuEntries(
+  t: (key: string) => string,
+  recentWorkspaces: WorkspaceRef[],
+  devices: DeviceProfile[] = [],
+): MenuEntry[] {
   return [
     { label: t("menu.openWorkspace"), onSelect: () => void openWorkspace() },
+    { label: t("menu.openRemoteWorkspace"), onSelect: () => useAppStore.getState().openRemoteWorkspaceDialog() },
     "separator",
-    ...recentWorkspaceEntries(t, recentWorkspaces),
+    ...recentWorkspaceEntries(t, recentWorkspaces, devices),
   ];
 }
 
-/** 已打开工作区时空白区右键的工作区管理项：打开 / 关闭 / 最近（用于切换） */
-export function workspaceSwitchMenuEntries(t: (key: string) => string, recentWorkspaces: string[]): MenuEntry[] {
+/** 已打开工作区时空白区右键的工作区管理项：打开 / 打开设备 / 关闭 / 最近（用于切换） */
+export function workspaceSwitchMenuEntries(
+  t: (key: string) => string,
+  recentWorkspaces: WorkspaceRef[],
+  devices: DeviceProfile[] = [],
+): MenuEntry[] {
   return [
     { label: t("menu.openWorkspace"), onSelect: () => void openWorkspace() },
-    { label: t("menu.closeWorkspace"), onSelect: () => useAppStore.getState().setWorkspaceDir(null) },
+    { label: t("menu.openRemoteWorkspace"), onSelect: () => useAppStore.getState().openRemoteWorkspaceDialog() },
+    { label: t("menu.closeWorkspace"), onSelect: () => useAppStore.getState().setWorkspace(null) },
     "separator",
-    ...recentWorkspaceEntries(t, recentWorkspaces),
+    ...recentWorkspaceEntries(t, recentWorkspaces, devices),
   ];
 }
 
 /**
- * 「在终端中打开」子菜单：仅本机（Local）设备能把工作区目录作为终端工作目录；
- * SSH/WSL 的远端工作区是逐运行新建的，没有稳定目录可落，故不列出。
+ * 「在终端中打开」子菜单：本机工作区可落到任意本机（Local）设备；
+ * 设备工作区只能落回托管它的那台设备（SSH/WSL 终端启动后 cd 到工作区目录）。
  */
 export function workspaceTerminalMenuEntries(
   t: (key: string) => string,
   devices: DeviceProfile[],
+  workspace: WorkspaceRef,
   full: boolean,
   onOpen: (device: DeviceProfile) => void,
 ): MenuEntry[] {
   if (full) return [{ label: t("terminal.maxTabs"), disabled: true }];
-  const localDevices = devices.filter((device) => device.transport === "local");
-  if (localDevices.length === 0) return [{ label: t("workspace.noLocalDevices"), disabled: true }];
-  return localDevices.map((device) => ({
+  const hosts = workspace.type === "local"
+    ? devices.filter((device) => device.transport === "local")
+    : devices.filter((device) => device.id === (workspace as { device_id: string }).device_id);
+  if (hosts.length === 0) return [{ label: t("workspace.noLocalDevices"), disabled: true }];
+  return hosts.map((device) => ({
     label: `${deviceLabel(device)}${device.is_default ? t("device.defaultSuffix") : ""}`,
     onSelect: () => onOpen(device),
   }));
@@ -180,7 +200,7 @@ function TreeLevel(props: TreeProps) {
 export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boolean; onToggleCollapse: () => void }) {
   const { t } = useTranslation();
   const {
-    workspaceDir,
+    workspace,
     workspaceTree,
     workspaceError,
     openFile,
@@ -188,7 +208,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     recentWorkspaces,
     devices,
   } = useAppStore(useShallow((s) => ({
-    workspaceDir: s.workspaceDir, workspaceTree: s.workspaceTree, workspaceError: s.workspaceError,
+    workspace: s.workspace, workspaceTree: s.workspaceTree, workspaceError: s.workspaceError,
     openFile: s.activeFile,
     disabled: s.saving || s.starting || s.guarding || s.workspaceMutating,
     recentWorkspaces: s.recentWorkspaces,
@@ -198,9 +218,10 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const label = workspaceLabel(workspace, devices);
 
   // 折叠面板或切换工作区时收起菜单与行内输入，避免操作落到错误的目录
-  useEffect(() => { setMenu(null); setEditing(null); }, [collapsed, workspaceDir]);
+  useEffect(() => { setMenu(null); setEditing(null); }, [collapsed, workspace]);
 
   const startCreate = async (dir: WorkspacePath, mode: "create-file" | "create-dir") => {
     const node = useAppStore.getState().workspaceTree[dir];
@@ -210,29 +231,29 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     setEditing({ mode, dir });
   };
 
-  /** 在工作区（子）目录中打开本机设备终端：先展开控制面板区；失败复用工作区错误条展示 */
+  /** 在工作区（子）目录中打开设备终端：先展开控制面板区；失败复用工作区错误条展示 */
   const openInTerminal = (device: DeviceProfile, subdir: WorkspacePath) => {
-    if (!workspaceDir) return;
+    if (!workspace) return;
     revealConsolePanel();
     void useTerminalStore.getState()
-      .open(device.id, device.name, { dir: workspaceDir, subdir })
+      .open(device.id, device.name, { workspace, subdir })
       .catch((error) => useAppStore.setState({ workspaceError: errorMessage(error) }));
   };
 
   const openMenu = (event: MouseEvent, dir: WorkspacePath, entry: WorkspaceEntry | null) => {
     event.preventDefault();
     event.stopPropagation();
-    if (!workspaceDir) return;    const path = entry ? joinPath(dir, entry.name) : dir;
+    if (!workspace) return;    const path = entry ? joinPath(dir, entry.name) : dir;
     const entries: MenuEntry[] = [];
     if (!entry) entries.push({ label: t("workspace.refresh"), onSelect: () => void useAppStore.getState().loadWorkspaceDir(dir) });
     // 新建入口只出现在目录与空白区；文件条目上只有打开/重命名/删除
     if (!entry || entry.is_dir) {
       entries.push({ label: t("workspace.newFile"), onSelect: () => void startCreate(path, "create-file") });
       entries.push({ label: t("workspace.newDir"), onSelect: () => void startCreate(path, "create-dir") });
-      // 目录与空白区（工作区根）可落在本机终端：子菜单列出本机设备，subdir 与树路径同构
+      // 目录与空白区（工作区根）可落在设备终端：本机工作区列出本机设备，设备工作区列出宿主设备
       entries.push({
         label: t("workspace.openInTerminal"),
-        children: workspaceTerminalMenuEntries(t, devices, tabsFull, (device) => openInTerminal(device, path)),
+        children: workspaceTerminalMenuEntries(t, devices, workspace, tabsFull, (device) => openInTerminal(device, path)),
       });
     }
     // 缺少配置时提供模板生成入口；已有 pyproject.toml 时不显示，避免误覆盖
@@ -240,7 +261,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
       entries.push({ label: t("workspace.generateConfig"), onSelect: () => void useAppStore.getState().generateWorkspaceConfig() });
     }
     // 空白区附带工作区管理项：打开 / 关闭 / 最近（切换工作区与打开走同一条确认路径）
-    if (!entry) entries.push("separator", ...workspaceSwitchMenuEntries(t, recentWorkspaces));
+    if (!entry) entries.push("separator", ...workspaceSwitchMenuEntries(t, recentWorkspaces, devices));
     if (entry) {
       entries.push("separator");
       if (!entry.is_dir) entries.push({ label: t("workspace.open"), onSelect: () => void useAppStore.getState().openWorkspaceFile(path) });
@@ -257,7 +278,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
   const openPickerMenu = (event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    const entries = workspacePickerMenuEntries(t, recentWorkspaces);
+    const entries = workspacePickerMenuEntries(t, recentWorkspaces, devices);
     setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
   };
 
@@ -279,17 +300,17 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
   return (
     <div
       className="workspace-panel"
-      onContextMenu={collapsed ? undefined : (event) => workspaceDir ? openMenu(event, WORKSPACE_ROOT, null) : openPickerMenu(event)}
+      onContextMenu={collapsed ? undefined : (event) => workspace ? openMenu(event, WORKSPACE_ROOT, null) : openPickerMenu(event)}
     >
       <PanelTitle title={t("workspace.title")} collapsed={collapsed} onToggle={onToggleCollapse} />
       {!collapsed && (
         <>
-          {workspaceDir && <div className="workspace-dir">{workspaceDir}</div>}
+          {label && <div className="workspace-dir">{label}</div>}
           {workspaceError && <div className="workspace-error" role="alert">
             <span>{workspaceError}</span>
             <button onClick={() => useAppStore.getState().dismissWorkspaceError()}>{t("workspace.close")}</button>
           </div>}
-          {workspaceDir ? (
+          {workspace ? (
             <div className="file-tree">
               <TreeLevel
                 dir={WORKSPACE_ROOT}

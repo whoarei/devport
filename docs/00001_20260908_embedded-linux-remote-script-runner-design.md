@@ -531,7 +531,7 @@ ExecutionContext 是一次执行过程中各模块共享的信息容器。
 
 # 13. WorkspaceManager
 
-负责把本地 Workspace 映射到执行目标。SSH、Serial 和 WSL 每次运行都使用独立目录；Local Shell 直接在本地工作区原地运行，不复制文件。
+负责把选定 Workspace 映射到执行目标。SSH、Serial 和 WSL 每次运行都使用独立目录；Local Shell 直接在本地工作区原地运行，不复制文件；工作区位于设备上且运行目标就是该设备时同样原地运行。
 
 本地：
 
@@ -559,7 +559,12 @@ flowchart LR
     B --> C["Remote Workspace<br/>/tmp/devrunner/workspaces/7f1a93"]
 ```
 
-运行界面只要求用户选择本地工作区。SSH/Serial/WSL 的目标工作区路径是内部细节；Local Shell 的产物直接落在本地工作区。
+运行界面要求用户选择一个工作区：本机目录，或某台 SSH/WSL 设备上的目录（`WorkspaceRef`，见 `docs/00029_20260917_remote-workspace.md`）。SSH/Serial/WSL 的目标工作区路径是内部细节；Local Shell 的产物直接落在本地工作区。
+
+当工作区位于设备上时：
+
+- 运行目标就是该设备 → **原地运行**（不复制文件，产物留在工作区）：SSH 直接使用该目录，WSL 由 helper 打开已存在目录；
+- 运行目标是另一台设备 → 先把源工作区下载到本机暂存目录 `%TEMP%\remote-runner-stage-<run_id>`，再按目标 transport 走下方 FileSync 的常规路径，运行结束清理暂存目录。
 
 ---
 
@@ -586,6 +591,8 @@ hash
 ```
 
 当前仍是每次运行收集并全量传输，没有增量同步。SSH/WSL 支持有界二进制快照，Serial Shell V1 仅支持有界 UTF-8 文本；Local Shell 不同步。
+
+工作区位于设备上时同步方向由「工作区 → 运行目标」决定：先在编辑 / 暂存会话内把源工作区读到本机暂存目录，再按目标 transport 上传；限额沿用上传策略（单文件 64 MiB、总量 256 MiB、4096 条目、跳过 `.git` 等与符号链接）。
 
 同步内容：
 

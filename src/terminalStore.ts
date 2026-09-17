@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, errorMessage, type TerminalStatus } from "./api";
+import { api, errorMessage, type TerminalStatus, type WorkspaceRef } from "./api";
 import i18n from "./i18n";
 import { loadTabCycleOrder, saveTabCycleOrder, type TabCycleOrder } from "./tabCycle";
 
@@ -10,8 +10,8 @@ export interface TerminalTab {
   id: string;
   deviceId: string;
   deviceName: string;
-  /** 工作区终端：打开时的工作区目录参数，重连时原样复放 */
-  workspace?: { dir: string; subdir: string };
+  /** 工作区终端：打开时的工作区来源参数，重连时原样复放 */
+  workspace?: { workspace: WorkspaceRef; subdir: string };
   status?: TerminalStatus;
   busy: boolean;
   error?: string;
@@ -39,7 +39,7 @@ interface TerminalStore {
   select: (id: string) => void;
   /** MRU 会话中的预览选择：只切换活动标签，松开 Ctrl 后再由 select 提交。 */
   previewSelect: (id: string) => void;
-  open: (deviceId: string, deviceName: string, workspace?: { dir: string; subdir: string }) => Promise<void>;
+  open: (deviceId: string, deviceName: string, workspace?: { workspace: WorkspaceRef; subdir: string }) => Promise<void>;
   reconnect: (id: string) => Promise<void>;
   close: (id: string) => Promise<void>;
   closeAll: () => Promise<void>;
@@ -48,9 +48,9 @@ interface TerminalStore {
 }
 
 /** 按标签参数选择后端入口：工作区终端带 cwd，普通终端用设备默认目录 */
-function openSession(deviceId: string, workspace?: { dir: string; subdir: string }) {
+function openSession(deviceId: string, workspace?: { workspace: WorkspaceRef; subdir: string }) {
   return workspace
-    ? api.openWorkspaceTerminal(deviceId, workspace.dir, workspace.subdir)
+    ? api.openWorkspaceTerminal(deviceId, workspace.workspace, workspace.subdir)
     : api.openTerminal(deviceId);
 }
 

@@ -10,20 +10,28 @@ import { collectScripts } from "../workspaceTree";
 import { deviceLabel } from "./DeviceDialog";
 import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
 
+/** Managed Python 不支持同设备原地运行（工作区就在目标设备上，没有本地暂存目录可 inspect） */
+export function managedPythonBlocked(
+  workspaceDeviceId: string | null,
+  targetDeviceId: string | null,
+): boolean {
+  return !!workspaceDeviceId && workspaceDeviceId === targetDeviceId;
+}
+
 export function RunToolbar() {
   const { t } = useTranslation();
   const {
     selectedDeviceId,
     devices,
     selectDevice,
-    workspaceDir,
+    workspace,
     workspaceTree,
     activeFile,
     activeRunId,
     runs,
   } = useAppStore(useShallow((s) => ({ selectedDeviceId: s.selectedDeviceId, devices: s.devices,
     selectDevice: s.selectDevice,
-    workspaceDir: s.workspaceDir, workspaceTree: s.workspaceTree, activeFile: s.activeFile,
+    workspace: s.workspace, workspaceTree: s.workspaceTree, activeFile: s.activeFile,
     activeRunId: s.activeRunId, runs: s.runs })));
 
   const { mode, entry, argsText, command, managed, consoleMode, timeoutSecs } = useAppStore((s) => s.runDraft);
@@ -33,6 +41,11 @@ export function RunToolbar() {
   const editorBusy = useAppStore((s) => s.loading || s.saving || s.starting || s.guarding);
   const isSerial = devices.find((device) => device.id === selectedDeviceId)?.transport === "serial";
   const effectiveConsoleMode = isSerial ? "pty" : consoleMode;
+  // 同设备原地运行：工作区所在设备与运行目标相同，此时禁用 Managed Python
+  const inPlace = managedPythonBlocked(
+    workspace?.type === "device" ? workspace.device_id : null,
+    selectedDeviceId,
+  );
 
   const activeRun = activeRunId ? runs[activeRunId] : null;
   const running =
@@ -57,7 +70,7 @@ export function RunToolbar() {
         if (!command.trim()) return;
         request = {
           device_id: selectedDeviceId,
-          workspace_dir: workspaceDir,
+          workspace,
           kind: "command",
           command: command.trim(),
           console_mode: effectiveConsoleMode,
@@ -75,11 +88,11 @@ export function RunToolbar() {
         }
         request = {
           device_id: selectedDeviceId,
-          workspace_dir: workspaceDir,
+          workspace,
           kind,
           entry: effectiveEntry,
           args,
-          managed_python: kind === "python" && managed && !isSerial,
+          managed_python: kind === "python" && managed && !isSerial && !inPlace,
           console_mode: effectiveConsoleMode,
           timeout_secs: timeoutSecs,
         };
@@ -161,13 +174,13 @@ export function RunToolbar() {
 
       {mode === "script" && isPythonEntry && (
         <label
-          className={`managed-toggle${isSerial ? " disabled" : ""}`}
-          title={isSerial ? t("run.managedSerialTitle") : t("run.managedTitle")}
+          className={`managed-toggle${isSerial || inPlace ? " disabled" : ""}`}
+          title={inPlace ? t("run.managedInPlaceTitle") : isSerial ? t("run.managedSerialTitle") : t("run.managedTitle")}
         >
           <input
             type="checkbox"
-            checked={managed && !isSerial}
-            disabled={isSerial}
+            checked={managed && !isSerial && !inPlace}
+            disabled={isSerial || inPlace}
             onChange={(e) => setDraft({ managed: e.target.checked })}
           />
           {t("run.managedLabel")}

@@ -4,6 +4,7 @@ pub mod error;
 pub mod events;
 pub mod local;
 pub mod process;
+pub mod remote_workspace;
 pub mod runner;
 pub mod runtime;
 pub mod serial;
@@ -12,6 +13,7 @@ pub mod terminal;
 pub mod tray;
 pub mod update;
 pub mod workspace;
+pub mod workspace_ref;
 pub mod workspace_upload;
 pub mod wsl;
 
@@ -68,6 +70,7 @@ pub fn run() {
                 config_dir,
                 event_rx: parking_lot::Mutex::new(event_rx),
                 leases,
+                workspace_sessions: remote_workspace::SessionStore::default(),
             };
             app.manage(state);
 
@@ -98,6 +101,7 @@ pub fn run() {
             commands::rename_workspace_entry,
             commands::delete_workspace_entry,
             commands::generate_workspace_config,
+            commands::close_workspace_session,
             commands::run_script,
             commands::stop_run,
             commands::send_run_input,

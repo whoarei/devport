@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, DeviceProfile, RunEvent, RunStatus, RunRequest, WorkspaceEntryKind, errorMessage, AppUpdateInfo } from "./api";
+import { api, DeviceProfile, RunEvent, RunStatus, RunRequest, WorkspaceEntryKind, WorkspaceRef, errorMessage, workspaceRefEquals, AppUpdateInfo } from "./api";
 import { anyDirty, ChangeChoice, dirtyTab, EditorLanguage, EditorTab, inferLanguage, neighborAfterClose, uploadBusy, withTab } from "./editorDocument";
 import i18n from "./i18n";
 import { appendOutput, MAX_TOTAL_OUTPUT_BYTES, OutputBuffer, trimOutput } from "./outputBuffer";
@@ -16,9 +16,12 @@ interface AppState {
   selectedDeviceId: string | null;
   /** 正在添加 / 编辑的设备（驱动设备对话框）；null 表示对话框关闭 */
   editingDevice: DeviceProfile | null;
+  /** 「打开设备工作区」对话框开关 */
+  remoteWorkspaceDialogOpen: boolean;
 
-  workspaceDir: string | null;
-  recentWorkspaces: string[];
+  /** 当前工作区来源：本机目录或某台设备上的目录（00029） */
+  workspace: WorkspaceRef | null;
+  recentWorkspaces: WorkspaceRef[];
   /** 目录树缓存：键为相对目录路径，"" 为工作区根 */
   workspaceTree: WorkspaceTree;
   workspaceError: string | null;
@@ -57,7 +60,9 @@ interface AppState {
   /** 打开设备对话框：传入空模板表示添加新设备，传入已有设备表示编辑 */
   openDeviceDialog: (device: DeviceProfile) => void;
   closeDeviceDialog: () => void;
-  setWorkspaceDir: (dir: string | null) => Promise<void>;
+  openRemoteWorkspaceDialog: () => void;
+  closeRemoteWorkspaceDialog: () => void;
+  setWorkspace: (workspace: WorkspaceRef | null) => Promise<void>;
   loadWorkspaceDir: (dir: WorkspacePath) => Promise<void>;
   toggleWorkspaceDir: (dir: WorkspacePath) => Promise<void>;
   createWorkspaceEntry: (dir: WorkspacePath, name: string, kind: WorkspaceEntryKind) => Promise<boolean>;
@@ -100,12 +105,25 @@ export function selectedDeviceAfterLoad(devices: DeviceProfile[], current: strin
 
 /** 工作区变更（新建 / 重命名 / 删除）的前置检查，返回可见提示或 null */
 function workspaceChangeBlocker(
-  state: Pick<AppState, "workspaceDir" | "workspaceMutating" | "saving" | "starting" | "guarding" | "runs">,
+  state: Pick<AppState, "workspace" | "workspaceMutating" | "saving" | "starting" | "guarding" | "runs">,
 ): string | null {
-  if (!state.workspaceDir) return i18n.t("workspace.selectFirst");
+  if (!state.workspace) return i18n.t("workspace.selectFirst");
   if (state.workspaceMutating || state.saving || state.starting || state.guarding) return i18n.t("workspace.busy");
   if (uploadBusy(state)) return i18n.t("workspace.uploadBusy");
   return null;
+}
+
+/** 标题栏 / 面板标题用的工作区显示名：本机显示路径，远端显示 设备名:/path */
+export function workspaceLabel(workspace: WorkspaceRef | null, devices: DeviceProfile[]): string | null {
+  if (!workspace) return null;
+  if (workspace.type === "local") return workspace.dir;
+  const device = devices.find((d) => d.id === workspace.device_id);
+  return `${device?.name ?? workspace.device_id}:${workspace.path}`;
+}
+
+/** 离开设备工作区时释放后端编辑会话（尽力而为，不阻塞切换） */
+function releaseRemoteSession(workspace: WorkspaceRef | null) {
+  if (workspace?.type === "device") void api.closeWorkspaceSession().catch(() => {});
 }
 
 /** 打开 / 激活文件意味着要看内容：编辑区隐藏或折叠时自动恢复 */
@@ -145,8 +163,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   devices: [],
   selectedDeviceId: null,
   editingDevice: null,
+  remoteWorkspaceDialogOpen: false,
 
-  workspaceDir: null,
+  workspace: null,
   recentWorkspaces: loadWorkspaceHistory(),
   workspaceTree: {},
   workspaceError: null,
@@ -197,8 +216,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   openDeviceDialog: (device) => set({ editingDevice: device }),
   closeDeviceDialog: () => set({ editingDevice: null }),
+  openRemoteWorkspaceDialog: () => set({ remoteWorkspaceDialogOpen: true }),
+  closeRemoteWorkspaceDialog: () => set({ remoteWorkspaceDialogOpen: false }),
 
-  setWorkspaceDir: async (dir) => {
+  setWorkspace: async (workspace) => {
     if (get().saving || get().starting || get().guarding) return;
     const sequence = ++loadSequence;
     ++workspaceSequence;
@@ -206,12 +227,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ loading: false });
     if (!await get().confirmAllUnsaved() || sequence !== loadSequence) return;
     set({ loading: true, editorError: null, workspaceError: null });
+    const previous = get().workspace;
     try {
-      const workspaceTree = dir ? rootTree(await api.listWorkspaceDir(dir, WORKSPACE_ROOT)) : {};
+      const workspaceTree = workspace ? rootTree(await api.listWorkspaceDir(workspace, WORKSPACE_ROOT)) : {};
       if (sequence !== loadSequence) return;
-      const recentWorkspaces = dir ? rememberWorkspace(get().recentWorkspaces, dir) : get().recentWorkspaces;
-      if (dir) saveWorkspaceHistory(recentWorkspaces);
-      set((s) => ({ workspaceDir: dir, workspaceTree, recentWorkspaces,
+      releaseRemoteSession(previous);
+      const recentWorkspaces = workspace ? rememberWorkspace(get().recentWorkspaces, workspace) : get().recentWorkspaces;
+      if (workspace) saveWorkspaceHistory(recentWorkspaces);
+      set((s) => ({ workspace, workspaceTree, recentWorkspaces,
         openTabs: [], activeFile: null,
         runDraft: { ...s.runDraft, entry: "" } }));
     } catch (error) {
@@ -223,16 +246,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   loadWorkspaceDir: async (dir) => {
-    const root = get().workspaceDir;
+    const root = get().workspace;
     if (!root) return;
     const sequence = workspaceSequence;
     try {
       const entries = await api.listWorkspaceDir(root, dir);
-      if (sequence !== workspaceSequence || get().workspaceDir !== root) return;
+      if (sequence !== workspaceSequence || !workspaceRefEquals(get().workspace, root)) return;
       set((s) => ({ workspaceTree: withNode(s.workspaceTree, dir, (node) =>
         ({ entries, expanded: node?.expanded ?? false, loaded: true })) }));
     } catch (error) {
-      if (sequence === workspaceSequence && get().workspaceDir === root) set({ workspaceError: errorMessage(error) });
+      if (sequence === workspaceSequence && workspaceRefEquals(get().workspace, root)) set({ workspaceError: errorMessage(error) });
     }
   },
 
@@ -249,7 +272,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get();
     const blocked = workspaceChangeBlocker(state);
     if (blocked) { set({ workspaceError: blocked }); return false; }
-    const root = state.workspaceDir!;
+    const root = state.workspace!;
     const sequence = workspaceSequence;
     set({ workspaceMutating: true, workspaceError: null });
     try {
@@ -272,7 +295,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get();
     const blocked = workspaceChangeBlocker(state);
     if (blocked) { set({ workspaceError: blocked }); return false; }
-    const root = state.workspaceDir!;
+    const root = state.workspace!;
     const sequence = workspaceSequence;
     set({ workspaceMutating: true, workspaceError: null });
     try {
@@ -293,7 +316,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get();
     const blocked = workspaceChangeBlocker(state);
     if (blocked) { set({ workspaceError: blocked }); return false; }
-    const root = state.workspaceDir!;
+    const root = state.workspace!;
     const dir = parentOf(path);
     const target = joinPath(dir, newName);
     if (target === path) return true;
@@ -328,7 +351,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get();
     const blocked = workspaceChangeBlocker(state);
     if (blocked) { set({ workspaceError: blocked }); return false; }
-    const root = state.workspaceDir!;
+    const root = state.workspace!;
     const dir = parentOf(path);
     // 删除会连带丢掉受影响标签的未保存修改，逐个复用既有的保存 / 放弃 / 取消确认
     for (const tab of state.openTabs.filter((t) => isWithin(t.name, path))) {
@@ -362,8 +385,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   dismissWorkspaceError: () => set({ workspaceError: null }),
 
   openWorkspaceFile: async (name) => {
-    const dir = get().workspaceDir;
-    if (!dir || get().saving || get().starting || get().guarding) return;
+    const workspace = get().workspace;
+    if (!workspace || get().saving || get().starting || get().guarding) return;
     // 已打开的文件只激活标签，不重新读盘
     if (get().openTabs.some((tab) => tab.name === name)) {
       get().activateFile(name);
@@ -372,8 +395,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const sequence = ++loadSequence;
     set({ loading: true, editorError: null });
     try {
-      const doc = await api.readWorkspaceFile(dir, name);
-      if (sequence === loadSequence && get().workspaceDir === dir) {
+      const doc = await api.readWorkspaceFile(workspace, name);
+      if (sequence === loadSequence && workspaceRefEquals(get().workspace, workspace)) {
         set((s) => ({ openTabs: [...s.openTabs, { name, fileContent: doc.content, savedContent: doc.content,
           revision: doc.revision, eol: doc.eol, bom: doc.bom, language: inferLanguage(name),
           conflict: false, generation: 1 }], activeFile: name }));
@@ -408,14 +431,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const tab = state.openTabs.find((t) => t.name === (name ?? state.activeFile));
     if (!tab) return false;
     if (!dirtyTab(tab)) return true;
-    if (!state.workspaceDir) return false;
+    if (!state.workspace) return false;
     if (uploadBusy(state)) {
       set({ editorError: i18n.t("run.saveBlocked") });
       return false;
     }
     set({ saving: true, editorError: null });
     try {
-      const saved = await api.writeWorkspaceFile({ dir: state.workspaceDir, name: tab.name,
+      const saved = await api.writeWorkspaceFile({ workspace: state.workspace!, name: tab.name,
         content: tab.fileContent, expectedRevision: tab.revision, eol: tab.eol, bom: tab.bom });
       // 标签被关闭或重读后，旧响应不得覆盖新文档
       const current = get().openTabs.find((t) => t.name === tab.name);
@@ -468,13 +491,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   reloadFile: async () => {
     const state = get();
     const tab = state.openTabs.find((t) => t.name === state.activeFile);
-    if (!tab || !state.workspaceDir || state.loading || state.saving || state.starting || state.guarding) return;
+    if (!tab || !state.workspace || state.loading || state.saving || state.starting || state.guarding) return;
     // Reuse the same save/discard/cancel choice, preserving the buffer on read failure.
     if (!await get().confirmUnsaved(tab.name)) return;
     const sequence = ++loadSequence;
     set({ loading: true, editorError: null });
     try {
-      const doc = await api.readWorkspaceFile(state.workspaceDir, tab.name);
+      const doc = await api.readWorkspaceFile(state.workspace, tab.name);
       if (sequence === loadSequence) set((s) => ({ openTabs: withTab(s.openTabs, tab.name, (t) =>
         ({ ...t, fileContent: doc.content, savedContent: doc.content, revision: doc.revision,
           eol: doc.eol, bom: doc.bom, conflict: false, generation: t.generation + 1 })) }));
@@ -503,7 +526,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get();
     if (state.updating) throw new Error(i18n.t("run.errorUpdating"));
     if (state.loading || state.saving || state.starting || state.guarding) throw new Error(i18n.t("run.errorFileBusy"));
-    if ((request.workspace_dir ?? null) !== state.workspaceDir) throw new Error(i18n.t("run.errorWorkspaceChanged"));
+    if (!workspaceRefEquals(request.workspace ?? null, state.workspace)) throw new Error(i18n.t("run.errorWorkspaceChanged"));
     if (!request.device_id || (request.kind === "command" ? !request.command?.trim() : !request.entry)) throw new Error(i18n.t("run.errorMissingTarget"));
     set({ starting: true });
     try {

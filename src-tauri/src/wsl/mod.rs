@@ -37,6 +37,7 @@ pub(crate) enum Message {
         data: String,
     },
     /// Managed Runtime 结构化 exec 完成（00027）
+    #[serde(rename = "exec_exit")]
     ExecExit {
         code: Option<u32>,
     },
@@ -45,6 +46,33 @@ pub(crate) enum Message {
         stopped: Option<StopReason>,
     },
     Error {
+        message: String,
+    },
+    // ---- fs_* 文件服务消息（00029 远端工作区）----
+    #[serde(rename = "fs_entry")]
+    FsEntry {
+        name: String,
+        dir: bool,
+        link: bool,
+    },
+    #[serde(rename = "fs_file")]
+    FsFile {
+        size: u64,
+        revision: String,
+    },
+    #[serde(rename = "fs_chunk")]
+    FsChunk {
+        data: String,
+    },
+    #[serde(rename = "fs_done")]
+    FsDone,
+    #[serde(rename = "fs_saved")]
+    FsSaved {
+        revision: String,
+    },
+    #[serde(rename = "fs_error")]
+    FsError {
+        code: String,
         message: String,
     },
 }
@@ -315,6 +343,7 @@ pub async fn execute(
     config: &WslConfig,
     req: &RunRequest,
     remote: &str,
+    in_place: bool,
     files: Vec<filesync::Entry>,
     controls: &mut mpsc::UnboundedReceiver<SessionControl>,
     emit: impl FnMut(Event),
@@ -323,6 +352,7 @@ pub async fn execute(
         helper_command(config)?,
         req,
         remote,
+        in_place,
         files,
         controls,
         emit,
@@ -338,6 +368,7 @@ pub async fn execute_with_command(
     command: Command,
     req: &RunRequest,
     remote: &str,
+    in_place: bool,
     files: Vec<filesync::Entry>,
     controls: &mut mpsc::UnboundedReceiver<SessionControl>,
     mut emit: impl FnMut(Event),
@@ -356,18 +387,18 @@ pub async fn execute_with_command(
             result = &mut launch => break result?,
         }
     };
-    if req.workspace_dir.is_some() {
+    if req.workspace.is_some() {
         emit(Event::State(RunState::Syncing));
     }
     let prepare = async {
         // The helper already changes directory using its verified directory fd.
         // Avoid resolving the workspace path again from shell code.
         let mut script_req = req.clone();
-        script_req.workspace_dir = None;
+        script_req.workspace = None;
         bridge
             .request(
-                json!({"type":"init", "remote":req.workspace_dir.as_ref().map(|_| remote),
-            "command":build_script(&script_req, remote), "mode":req.console_mode,
+                json!({"type":"init", "remote":req.workspace.as_ref().map(|_| remote),
+            "in_place":in_place, "command":build_script(&script_req, remote), "mode":req.console_mode,
             "cols":req.cols, "rows":req.rows, "timeout":req.timeout_secs}),
             )
             .await?;

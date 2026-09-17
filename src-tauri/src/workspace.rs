@@ -59,7 +59,9 @@ pub struct Document {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveRequest {
-    pub dir: String,
+    /// 工作区来源（00029）；兼容旧字段名 dir（裸字符串 = 本机目录）
+    #[serde(alias = "dir")]
+    pub workspace: crate::workspace_ref::WorkspaceRef,
     pub name: String,
     pub content: String,
     pub expected_revision: String,
@@ -185,10 +187,10 @@ fn too_large() -> FileError {
     FileError::new("too_large", "编辑器最多支持 1 MiB，请使用外部编辑器")
 }
 
-pub fn read(dir: &str, name: &str) -> Result<Document> {
-    let path = resolve(dir, name)?;
-    let (data, meta) = bytes(&path)?;
-    let text = std::str::from_utf8(&data)
+/// UTF-8 / BOM / 行尾检查并构造 Document；远端工作区（00029）共享同一文本契约，
+/// revision 由调用方按各自来源计算。
+pub(crate) fn decode_document(data: &[u8], revision: String) -> Result<Document> {
+    let text = std::str::from_utf8(data)
         .map_err(|_| FileError::new("encoding", "仅支持 UTF-8 文本，请使用外部编辑器转换编码"))?;
     if text.contains('\0') {
         return Err(FileError::new("encoding", "不支持包含 NUL 的文件"));
@@ -205,10 +207,42 @@ pub fn read(dir: &str, name: &str) -> Result<Document> {
     }
     Ok(Document {
         content: normalized,
-        revision: revision(&data, &meta),
+        revision,
         eol: if crlf { Eol::Crlf } else { Eol::Lf },
         bom,
     })
+}
+
+/// 将编辑内容编码为落盘字节（BOM + 行尾）；远端工作区共享同一编码。
+pub(crate) fn encode_content(content: &str, eol: Eol, bom: bool) -> Result<Vec<u8>> {
+    if content.contains(['\0', '\r']) {
+        return Err(FileError::new(
+            "encoding",
+            "编辑内容必须是无 NUL 的 LF 文本",
+        ));
+    }
+    if content.len() > FILE_LIMIT {
+        return Err(too_large());
+    }
+    let mut data = if bom {
+        vec![0xef, 0xbb, 0xbf]
+    } else {
+        Vec::new()
+    };
+    match eol {
+        Eol::Lf => data.extend_from_slice(content.as_bytes()),
+        Eol::Crlf => data.extend_from_slice(content.replace('\n', "\r\n").as_bytes()),
+    }
+    if data.len() > FILE_LIMIT {
+        return Err(too_large());
+    }
+    Ok(data)
+}
+
+pub fn read(dir: &str, name: &str) -> Result<Document> {
+    let path = resolve(dir, name)?;
+    let (data, meta) = bytes(&path)?;
+    decode_document(&data, revision(&data, &meta))
 }
 
 // Keep the original file in place until a complete replacement is ready.
@@ -261,28 +295,11 @@ fn replace(source: &Path, target: &Path) -> std::io::Result<()> {
 
 /// Caller holds FILE_OPERATIONS and checks that no desktop run is syncing.
 pub fn write(request: SaveRequest) -> Result<Saved> {
-    if request.content.contains(['\0', '\r']) {
-        return Err(FileError::new(
-            "encoding",
-            "编辑内容必须是无 NUL 的 LF 文本",
-        ));
-    }
-    if request.content.len() > FILE_LIMIT {
-        return Err(too_large());
-    }
-    let mut data = if request.bom {
-        vec![0xef, 0xbb, 0xbf]
-    } else {
-        Vec::new()
+    let data = encode_content(&request.content, request.eol, request.bom)?;
+    let crate::workspace_ref::WorkspaceRef::Local { dir } = &request.workspace else {
+        return Err(invalid_path());
     };
-    match request.eol {
-        Eol::Lf => data.extend_from_slice(request.content.as_bytes()),
-        Eol::Crlf => data.extend_from_slice(request.content.replace('\n', "\r\n").as_bytes()),
-    }
-    if data.len() > FILE_LIMIT {
-        return Err(too_large());
-    }
-    let path = resolve(&request.dir, &request.name)?;
+    let path = resolve(dir, &request.name)?;
     let (original, meta) = bytes(&path)?;
     let conflict = || {
         FileError::new(
@@ -309,7 +326,7 @@ pub fn write(request: SaveRequest) -> Result<Saved> {
     file.set_permissions(meta.permissions())?;
     file.sync_all()?;
     drop(file);
-    if resolve(&request.dir, &request.name)? != path {
+    if resolve(dir, &request.name)? != path {
         return Err(conflict());
     }
     let (latest, latest_meta) = bytes(&path)?;
@@ -318,7 +335,7 @@ pub fn write(request: SaveRequest) -> Result<Saved> {
     }
     replace(&temp.0, &path)?;
     // Read after replacement so the revision includes the new file metadata.
-    let saved = read(&request.dir, &request.name)?;
+    let saved = read(dir, &request.name)?;
     if saved.content != request.content {
         return Err(conflict());
     }
@@ -343,7 +360,7 @@ fn invalid_name() -> FileError {
 /// 不要加入 .git / .env 等：它们不应出现在树的操作范围里。
 const ALLOWED_HIDDEN_FILES: [&str; 1] = [".python-version"];
 
-fn allowed_hidden(part: &str) -> bool {
+pub(crate) fn allowed_hidden(part: &str) -> bool {
     ALLOWED_HIDDEN_FILES.contains(&part)
 }
 
@@ -364,7 +381,7 @@ fn reserved_device(name: &str) -> bool {
 /// (`.` prefix) are rejected except ALLOWED_HIDDEN_FILES: the tree never lists
 /// other dot entries, so they cannot be addressed from the UI and must not be
 /// created either.
-fn components(relative: &str) -> Result<Vec<&str>> {
+pub(crate) fn components(relative: &str) -> Result<Vec<&str>> {
     if relative.is_empty() {
         return Err(invalid_name());
     }
@@ -607,7 +624,7 @@ mod tests {
         fn request(&self, content: &str) -> SaveRequest {
             let doc = read(self.dir(), "main.py").unwrap();
             SaveRequest {
-                dir: self.dir().into(),
+                workspace: crate::workspace_ref::WorkspaceRef::local(self.dir()),
                 name: "main.py".into(),
                 content: content.into(),
                 expected_revision: doc.revision,
@@ -1000,7 +1017,7 @@ mod tests {
             ]
         );
         let request = SaveRequest {
-            dir: f.dir().into(),
+            workspace: crate::workspace_ref::WorkspaceRef::local(f.dir()),
             name: ".python-version".into(),
             content: "3.12.9\n".into(),
             expected_revision: read(f.dir(), ".python-version").unwrap().revision,

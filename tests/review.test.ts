@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { api, RunStatus } from "../src/api";
+import { api, localWorkspace, RunStatus } from "../src/api";
 import { useAppStore } from "../src/store";
 import { panelVisibilityPatch } from "../src/layoutState";
 import i18n from "../src/i18n";
@@ -25,7 +25,7 @@ function setup(t: test.TestContext) {
   // hydration path; actual subscriptions are verified separately below.
   t.mock.method(React, "useSyncExternalStore", (_subscribe, getSnapshot) => getSnapshot());
   t.mock.method(console, "warn", () => {});
-  useAppStore.setState({ workspaceDir: "/work", openTabs: [mainTab()], activeFile: "main.py",
+  useAppStore.setState({ workspace: localWorkspace("/work"), openTabs: [mainTab()], activeFile: "main.py",
     loading: false, saving: false, starting: false, guarding: false, runs: {}, history: [], outputBuffers: {}, activeRunId: null });
   return useAppStore.getState();
 }
@@ -38,10 +38,10 @@ test("canceling a workspace switch invalidates the in-flight read and preserves 
   await Promise.resolve();
   assert.equal(useAppStore.getState().loading, true);
   // 切换工作区作废旧读取；脏标签选择取消则工作区不变
-  const second = s.setWorkspaceDir("/elsewhere");
+  const second = s.setWorkspace(localWorkspace("/elsewhere"));
   useAppStore.getState().changePrompt!.resolve("cancel");
   await second;
-  assert.equal(useAppStore.getState().workspaceDir, "/work");
+  assert.deepEqual(useAppStore.getState().workspace, localWorkspace("/work"));
   finish({ content: "stale read", revision: "v2", eol: "lf", bom: false });
   await first;
   assert.equal(useAppStore.getState().loading, false);
@@ -79,7 +79,7 @@ test("run drafts survive panel remount and layout reset; workspace switch clears
   assert.match(markup, /value="42"/);
   assert.match(markup, /value="pipe" selected/);
   t.mock.method(api, "listWorkspaceDir", async () => []);
-  await s.setWorkspaceDir("/new");
+  await s.setWorkspace(localWorkspace("/new"));
   assert.equal(useAppStore.getState().runDraft.entry, "");
   assert.equal(useAppStore.getState().runDraft.command, "echo retained");
 });

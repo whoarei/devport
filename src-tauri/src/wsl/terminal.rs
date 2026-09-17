@@ -7,17 +7,28 @@ pub async fn execute(
     config: &WslConfig,
     cols: u32,
     rows: u32,
+    cwd: Option<String>,
     controls: &mut mpsc::Receiver<Control>,
     cancel: &mut watch::Receiver<bool>,
     emit: impl FnMut(TerminalEvent) -> Result<()>,
 ) -> Result<Option<u32>> {
-    execute_with_command(helper_command(config)?, cols, rows, controls, cancel, emit).await
+    execute_with_command(
+        helper_command(config)?,
+        cols,
+        rows,
+        cwd,
+        controls,
+        cancel,
+        emit,
+    )
+    .await
 }
 
 pub(super) async fn execute_with_command(
     command: Command,
     cols: u32,
     rows: u32,
+    cwd: Option<String>,
     controls: &mut mpsc::Receiver<Control>,
     cancel: &mut watch::Receiver<bool>,
     mut emit: impl FnMut(TerminalEvent) -> Result<()>,
@@ -29,7 +40,7 @@ pub(super) async fn execute_with_command(
         result = Bridge::launch(command) => result?,
     };
     let session = async {
-        bridge.request(json!({"type":"init", "terminal":true, "mode":"pty", "cols":cols, "rows":rows, "timeout":0})).await?;
+        bridge.request(json!({"type":"init", "terminal":true, "mode":"pty", "cols":cols, "rows":rows, "timeout":0, "cwd":cwd})).await?;
         bridge.send(json!({"type":"start"})).await?;
         match tokio::time::timeout(IO_TIMEOUT, bridge.next())
             .await

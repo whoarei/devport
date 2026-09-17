@@ -29,9 +29,36 @@ export interface LocalShellInfo {
 export type ScriptKind = "python" | "shell" | "command";
 export type ConsoleMode = "pty" | "pipe";
 
+/** 工作区来源（00029）：本机目录，或某台设备上的目录（SSH 走 SFTP / WSL 走 helper 文件服务） */
+export type WorkspaceRef =
+  | { type: "local"; dir: string }
+  | { type: "device"; device_id: string; path: string };
+
+export const localWorkspace = (dir: string): WorkspaceRef => ({ type: "local", dir });
+export const deviceWorkspace = (deviceId: string, path: string): WorkspaceRef => ({
+  type: "device",
+  device_id: deviceId,
+  path,
+});
+
+export function workspaceRefEquals(a: WorkspaceRef | null | undefined, b: WorkspaceRef | null | undefined): boolean {
+  if (!a || !b) return a === b || (!a && !b);
+  if (a.type !== b.type) return false;
+  return a.type === "local"
+    ? a.dir === (b as { dir: string }).dir
+    : a.type === "device" &&
+        a.device_id === (b as { device_id: string }).device_id &&
+        a.path === (b as { path: string }).path;
+}
+
+/** 设备工作区能否作为远端宿主（串口没有文件操作通道） */
+export function isRemoteWorkspaceHost(device: DeviceProfile): boolean {
+  return device.transport === "ssh" || device.transport === "wsl";
+}
+
 export interface RunRequest {
   device_id: string;
-  workspace_dir?: string | null;
+  workspace?: WorkspaceRef | null;
   kind: ScriptKind;
   entry?: string | null;
   args?: string[];
@@ -169,7 +196,7 @@ export interface WorkspaceDocument {
 }
 
 export interface SaveWorkspaceRequest {
-  dir: string;
+  workspace: WorkspaceRef;
   name: string;
   content: string;
   expectedRevision: string;
@@ -194,8 +221,8 @@ export function errorMessage(error: unknown): string {
 
 export const api = {
   openTerminal: (deviceId: string, cols = 80, rows = 24) => invoke<TerminalStatus>("open_terminal", { deviceId, cols, rows }),
-  openWorkspaceTerminal: (deviceId: string, dir: string, subdir: string, cols = 80, rows = 24) =>
-    invoke<TerminalStatus>("open_workspace_terminal", { deviceId, dir, subdir, cols, rows }),
+  openWorkspaceTerminal: (deviceId: string, workspace: WorkspaceRef, subdir: string, cols = 80, rows = 24) =>
+    invoke<TerminalStatus>("open_workspace_terminal", { deviceId, workspace, subdir, cols, rows }),
   readTerminal: (sessionId: string) => invoke<TerminalRead>("read_terminal", { sessionId }),
   sendTerminalInput: (sessionId: string, data: string) => invoke<void>("send_terminal_input", { sessionId, data }),
   resizeTerminal: (sessionId: string, cols: number, rows: number) => invoke<void>("resize_terminal", { sessionId, cols, rows }),
@@ -211,20 +238,22 @@ export const api = {
   listWslDistributions: () => invoke<string[]>("list_wsl_distributions"),
   listLocalShells: () => invoke<LocalShellInfo[]>("list_local_shells"),
 
-  listWorkspaceDir: (dir: string, subdir: string) =>
-    invoke<WorkspaceEntry[]>("list_workspace_dir", { dir, subdir }),
-  readWorkspaceFile: (dir: string, name: string) =>
-    invoke<WorkspaceDocument>("read_workspace_file", { dir, name }),
+  listWorkspaceDir: (workspace: WorkspaceRef, subdir: string) =>
+    invoke<WorkspaceEntry[]>("list_workspace_dir", { workspace, subdir }),
+  readWorkspaceFile: (workspace: WorkspaceRef, name: string) =>
+    invoke<WorkspaceDocument>("read_workspace_file", { workspace, name }),
   writeWorkspaceFile: (request: SaveWorkspaceRequest) =>
     invoke<{ revision: string }>("write_workspace_file", { request }),
-  createWorkspaceEntry: (dir: string, name: string, kind: WorkspaceEntryKind) =>
-    invoke<void>("create_workspace_entry", { dir, name, kind }),
-  renameWorkspaceEntry: (dir: string, oldName: string, newName: string) =>
-    invoke<void>("rename_workspace_entry", { dir, oldName, newName }),
-  deleteWorkspaceEntry: (dir: string, name: string) =>
-    invoke<void>("delete_workspace_entry", { dir, name }),
-  generateWorkspaceConfig: (dir: string) =>
-    invoke<void>("generate_workspace_config", { dir }),
+  createWorkspaceEntry: (workspace: WorkspaceRef, name: string, kind: WorkspaceEntryKind) =>
+    invoke<void>("create_workspace_entry", { workspace, name, kind }),
+  renameWorkspaceEntry: (workspace: WorkspaceRef, oldName: string, newName: string) =>
+    invoke<void>("rename_workspace_entry", { workspace, oldName, newName }),
+  deleteWorkspaceEntry: (workspace: WorkspaceRef, name: string) =>
+    invoke<void>("delete_workspace_entry", { workspace, name }),
+  generateWorkspaceConfig: (workspace: WorkspaceRef) =>
+    invoke<void>("generate_workspace_config", { workspace }),
+  /** 关闭远端工作区编辑会话（关闭或切换工作区时调用；本机工作区为 no-op） */
+  closeWorkspaceSession: () => invoke<void>("close_workspace_session"),
 
   runScript: (request: RunRequest) => invoke<string>("run_script", { request }),
   stopRun: (runId: string) => invoke<void>("stop_run", { runId }),

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { onRunEvents, api } from "./api";
 import { useAppStore } from "./store";
 import { DeviceDialog } from "./components/DeviceDialog";
+import { RemoteWorkspaceDialog } from "./components/RemoteWorkspaceDialog";
 import { UnsavedDialog } from "./components/UnsavedDialog";
 import { TitleBar } from "./components/TitleBar";
 import { AboutDialog } from "./components/AboutDialog";
@@ -237,6 +238,7 @@ export default function App() {
       <UnsavedDialog />
       <AboutDialog dialogRef={aboutDialog} autoCheckNonce={aboutAutoCheck} />
       <DeviceDialog />
+      <RemoteWorkspaceDialog />
       <TitleBar
         closeReady={closeReady}
         uiZoom={uiZoom}

@@ -47,7 +47,9 @@ fn invocation_dispatches_per_flavor() {
 fn invocation_builds_script_entries_without_shell_interpolation() {
     let mut req = command_request("unused");
     req.kind = ScriptKind::Shell;
-    req.workspace_dir = Some(if cfg!(windows) { r"E:\ws" } else { "/ws" }.into());
+    req.workspace = Some(crate::workspace_ref::WorkspaceRef::local(
+        if cfg!(windows) { r"E:\ws" } else { "/ws" },
+    ));
     req.entry = Some("sub/main.sh".into());
     req.args = vec!["a b".into()];
     let posix = fake_shell("bash", Flavor::Posix, false);
@@ -405,7 +407,9 @@ async fn login_shells_keep_the_workspace_as_cwd() {
             continue;
         }
         let mut req = command_request("pwd -W");
-        req.workspace_dir = Some(dir.to_string_lossy().into_owned());
+        req.workspace = Some(crate::workspace_ref::WorkspaceRef::local(
+            dir.to_string_lossy().into_owned(),
+        ));
         req.console_mode = ConsoleMode::Pipe;
         let (outcome, collected) = run_to_finish(&config, &req).await;
         assert_eq!(outcome.code, Some(0), "shell {}", info.id);

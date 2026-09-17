@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { api, RunStatus, type DeviceProfile } from "../src/api";
+import { api, deviceWorkspace, localWorkspace, RunStatus, type DeviceProfile } from "../src/api";
 import { useAppStore } from "../src/store";
 import i18n from "../src/i18n";
 
@@ -26,7 +26,7 @@ const makeTab = (name: string, content: string, saved = content, extra: Partial<
 });
 
 const treeState = () => ({
-  workspaceDir: "/work",
+  workspace: localWorkspace("/work"),
   workspaceTree: {
     [WORKSPACE_ROOT]: { entries: [{ name: "sub", is_dir: true }, { name: "main.py", is_dir: false }], expanded: true, loaded: true },
     sub: { entries: [{ name: "inner.py", is_dir: false }], expanded: true, loaded: true },
@@ -90,31 +90,43 @@ test("workspace panel renders the tree with expansion state and an empty hint", 
   // 折叠时只渲染标题，未打开工作区时显示提示而不是空白
   const collapsed = renderToStaticMarkup(createElement(WorkspacePanel, { collapsed: true, onToggleCollapse: () => {} }));
   assert.doesNotMatch(collapsed, /inner\.py/);
-  useAppStore.setState({ workspaceDir: null, workspaceTree: {} });
+  useAppStore.setState({ workspace: null, workspaceTree: {} });
   assert.match(renderToStaticMarkup(createElement(WorkspacePanel, { collapsed: false, onToggleCollapse: () => {} })),
     /尚未选择工作区目录/);
 });
 
 test("empty workspace context menu offers open and recent workspaces", () => {
-  const withRecent = workspacePickerMenuEntries((key) => i18n.t(key), ["/a", "/b"]);
+  const withRecent = workspacePickerMenuEntries((key) => i18n.t(key), [localWorkspace("/a"), localWorkspace("/b")]);
   assert.deepEqual(withRecent.map((entry) => entry === "separator" ? "|" : entry.label),
-    ["打开工作区…", "|", "/a", "/b"]);
+    ["打开工作区…", "打开设备工作区…", "|", "/a", "/b"]);
 
   const empty = workspacePickerMenuEntries((key) => i18n.t(key), []);
   assert.deepEqual(empty.map((entry) => entry === "separator" ? "|" : entry.label),
-    ["打开工作区…", "|", "（无最近记录）"]);
-  const placeholder = empty[2];
+    ["打开工作区…", "打开设备工作区…", "|", "（无最近记录）"]);
+  const placeholder = empty[3];
   assert.ok(placeholder !== "separator" && placeholder.disabled);
 });
 
-test("open workspace blank-area menu adds close, open and recent entries for switching", () => {
-  const entries = workspaceSwitchMenuEntries((key) => i18n.t(key), ["/a", "/b"]);
+test("recent device workspaces are labelled with their host device", () => {
+  const device: DeviceProfile = {
+    id: "d1", name: "board", is_default: false, transport: "ssh",
+    host: "10.0.0.2", port: 22, username: "root", auth: { type: "key", key_path: null },
+    workspace_root: "/srv",
+  };
+  const entries = workspacePickerMenuEntries(
+    (key) => i18n.t(key), [deviceWorkspace("d1", "/srv/app"), localWorkspace("/local")], [device]);
   assert.deepEqual(entries.map((entry) => entry === "separator" ? "|" : entry.label),
-    ["打开工作区…", "关闭工作区", "|", "/a", "/b"]);
+    ["打开工作区…", "打开设备工作区…", "|", "board:/srv/app", "/local"]);
+});
+
+test("open workspace blank-area menu adds close, open and recent entries for switching", () => {
+  const entries = workspaceSwitchMenuEntries((key) => i18n.t(key), [localWorkspace("/a"), localWorkspace("/b")]);
+  assert.deepEqual(entries.map((entry) => entry === "separator" ? "|" : entry.label),
+    ["打开工作区…", "打开设备工作区…", "关闭工作区", "|", "/a", "/b"]);
 
   const empty = workspaceSwitchMenuEntries((key) => i18n.t(key), []);
   assert.deepEqual(empty.map((entry) => entry === "separator" ? "|" : entry.label),
-    ["打开工作区…", "关闭工作区", "|", "（无最近记录）"]);
+    ["打开工作区…", "打开设备工作区…", "关闭工作区", "|", "（无最近记录）"]);
 });
 
 test("workspace terminal submenu lists only local devices with fallbacks for full or none", () => {
@@ -125,11 +137,12 @@ test("workspace terminal submenu lists only local devices with fallbacks for ful
   const t = (key: string) => i18n.t(key);
 
   // 标签已满：唯一的置灰占位项
-  const full = workspaceTerminalMenuEntries(t, [localDevice("l1")], true, () => {});
+  const full = workspaceTerminalMenuEntries(t, [localDevice("l1")], localWorkspace("/work"), true, () => {});
   assert.ok(full[0] !== "separator" && full[0].disabled && full[0].label === i18n.t("terminal.maxTabs"));
 
-  // 没有本机设备：置灰占位；SSH/WSL 不出现在子菜单里
-  const none = workspaceTerminalMenuEntries(t, [{ ...localDevice("s1"), transport: "ssh", local: null }], false, () => {});
+  // 本机工作区但没有本机设备：置灰占位；SSH/WSL 不出现在子菜单里
+  const none = workspaceTerminalMenuEntries(t, [{ ...localDevice("s1"), transport: "ssh", local: null }],
+    localWorkspace("/work"), false, () => {});
   assert.ok(none[0] !== "separator" && none[0].disabled && none[0].label === i18n.t("workspace.noLocalDevices"));
 
   // 正常：只列本机设备，默认设备带后缀，选择回调带出设备
@@ -138,13 +151,30 @@ test("workspace terminal submenu lists only local devices with fallbacks for ful
     { ...localDevice("s1"), transport: "ssh", local: null },
     localDevice("l1", true),
     localDevice("l2"),
-  ], false, (device) => opened.push(device.id));
+  ], localWorkspace("/work"), false, (device) => opened.push(device.id));
   assert.deepEqual(entries.map((entry) => entry !== "separator" && entry.label),
     ["l1 (Local · bash) · 默认", "l2 (Local · bash)"]);
   const first = entries[0];
   assert.ok(first !== "separator" && first.onSelect);
   first.onSelect!();
   assert.deepEqual(opened, ["l1"]);
+
+  // 设备工作区：只列托管它的那台设备（SSH/WSL 终端启动后 cd 到工作区目录）
+  const ssh: DeviceProfile = {
+    ...localDevice("s1"), transport: "ssh", local: null, host: "10.0.0.2", username: "root",
+  };
+  const hosted = workspaceTerminalMenuEntries(t, [ssh, localDevice("l1")],
+    deviceWorkspace("s1", "/srv/app"), false, (device) => opened.push(device.id));
+  assert.deepEqual(hosted.map((entry) => entry !== "separator" && entry.label), ["s1 (root@10.0.0.2)"]);
+  const hostedEntry = hosted[0];
+  assert.ok(hostedEntry !== "separator" && hostedEntry.onSelect);
+  hostedEntry.onSelect!();
+  assert.deepEqual(opened, ["l1", "s1"]);
+
+  // 设备工作区在本机设备上打开：没有宿主设备可列
+  const missing = workspaceTerminalMenuEntries(t, [localDevice("l1")],
+    deviceWorkspace("gone", "/srv/app"), false, () => {});
+  assert.ok(missing[0] !== "separator" && missing[0].disabled);
 });
 
 test("opening a workspace loads the root and expanding a directory loads it once", async (t) => {
@@ -158,7 +188,7 @@ test("opening a workspace loads the root and expanding a directory loads it once
       ? [{ name: "sub", is_dir: true }, { name: "main.py", is_dir: false }]
       : [{ name: "deep.py", is_dir: false }];
   });
-  await useAppStore.getState().setWorkspaceDir("/work");
+  await useAppStore.getState().setWorkspace(localWorkspace("/work"));
   assert.deepEqual(listed, [""]);
   assert.deepEqual(useAppStore.getState().workspaceTree[""].entries.map((e) => e.name), ["sub", "main.py"]);
 
@@ -180,31 +210,31 @@ test("closing the workspace clears tabs, tree and entry draft without touching d
   t.after(() => useAppStore.setState(previous, true));
   useAppStore.setState({
     ...treeState(),
-    recentWorkspaces: ["/work"],
+    recentWorkspaces: [localWorkspace("/work")],
     openTabs: [makeTab("main.py")],
     activeFile: "main.py",
     runDraft: { ...DEFAULT_RUN_DRAFT, entry: "main.py" },
   });
   const listed: string[] = [];
   t.mock.method(api, "listWorkspaceDir", async (_dir: string, subdir: string) => { listed.push(subdir); return []; });
-  await useAppStore.getState().setWorkspaceDir(null);
+  await useAppStore.getState().setWorkspace(null);
   const state = useAppStore.getState();
-  assert.equal(state.workspaceDir, null);
+  assert.equal(state.workspace, null);
   assert.deepEqual(state.workspaceTree, {});
   assert.deepEqual(state.openTabs, []);
   assert.equal(state.activeFile, null);
   assert.equal(state.runDraft.entry, "");
-  assert.deepEqual(state.recentWorkspaces, ["/work"]);
+  assert.deepEqual(state.recentWorkspaces, [localWorkspace("/work")]);
   assert.deepEqual(listed, []);
 
   // 有未保存修改时复用保存 / 放弃 / 取消确认；取消则保留当前工作区
   useAppStore.setState({ ...treeState(), openTabs: [makeTab("dirty.py", "changed", "saved")], activeFile: "dirty.py" });
-  const closing = useAppStore.getState().setWorkspaceDir(null);
+  const closing = useAppStore.getState().setWorkspace(null);
   const prompt = useAppStore.getState().changePrompt;
   assert.ok(prompt);
   prompt.resolve("cancel");
   await closing;
-  assert.equal(useAppStore.getState().workspaceDir, "/work");
+  assert.deepEqual(useAppStore.getState().workspace, localWorkspace("/work"));
 });
 
 test("create refreshes the parent directory and surfaces backend errors", async (t) => {
@@ -212,14 +242,14 @@ test("create refreshes the parent directory and surfaces backend errors", async 
   t.after(() => useAppStore.setState(previous, true));
   useAppStore.setState(treeState());
   const created: string[][] = [];
-  t.mock.method(api, "createWorkspaceEntry", async (_dir: string, name: string, kind: string) => {
-    created.push([_dir, name, kind]);
+  t.mock.method(api, "createWorkspaceEntry", async (workspace: unknown, name: string, kind: string) => {
+    created.push([JSON.stringify(workspace), name, kind]);
   });
   t.mock.method(api, "listWorkspaceDir", async (_dir: string, subdir: string) =>
     subdir === "sub" ? [{ name: "new.py", is_dir: false }] : []);
 
   assert.equal(await useAppStore.getState().createWorkspaceEntry("sub", "new.py", "file"), true);
-  assert.deepEqual(created, [["/work", "sub/new.py", "file"]]);
+  assert.deepEqual(created, [[JSON.stringify(localWorkspace("/work")), "sub/new.py", "file"]]);
   const node = useAppStore.getState().workspaceTree.sub;
   assert.equal(node.expanded, true);
   assert.deepEqual(node.entries.map((e) => e.name), ["new.py"]);
@@ -240,7 +270,7 @@ test("generateWorkspaceConfig creates the template, refreshes the root, and open
   t.after(() => useAppStore.setState(previous, true));
   useAppStore.setState(treeState());
   const called: string[] = [];
-  t.mock.method(api, "generateWorkspaceConfig", async (dir: string) => { called.push(dir); });
+  t.mock.method(api, "generateWorkspaceConfig", async (workspace: unknown) => { called.push(JSON.stringify(workspace)); });
   t.mock.method(api, "listWorkspaceDir", async (_dir: string, subdir: string) =>
     subdir === WORKSPACE_ROOT ? [{ name: "pyproject.toml", is_dir: false }] : []);
   t.mock.method(api, "readWorkspaceFile", async (_dir: string, name: string) => {
@@ -249,7 +279,7 @@ test("generateWorkspaceConfig creates the template, refreshes the root, and open
   });
 
   assert.equal(await useAppStore.getState().generateWorkspaceConfig(), true);
-  assert.deepEqual(called, ["/work"]);
+  assert.deepEqual(called, [JSON.stringify(localWorkspace("/work"))]);
   const state = useAppStore.getState();
   assert.deepEqual(state.workspaceTree[WORKSPACE_ROOT].entries.map((e) => e.name), ["pyproject.toml"]);
   assert.equal(state.activeFile, "pyproject.toml");
@@ -369,12 +399,12 @@ test("a workspace switch discards in-flight directory loads and mutations", asyn
 
   const creating = useAppStore.getState().createWorkspaceEntry("sub", "late.py", "file");
   assert.equal(useAppStore.getState().workspaceMutating, true);
-  const switching = useAppStore.getState().setWorkspaceDir("/elsewhere");
+  const switching = useAppStore.getState().setWorkspace(localWorkspace("/elsewhere"));
   finishCreate();
   await creating;
   await switching;
   const state = useAppStore.getState();
-  assert.equal(state.workspaceDir, "/elsewhere");
+  assert.deepEqual(state.workspace, localWorkspace("/elsewhere"));
   assert.deepEqual(state.workspaceTree[""].entries.map((e) => e.name), ["other.py"]);
   assert.equal(state.workspaceTree.sub, undefined);
   assert.equal(state.workspaceMutating, false);

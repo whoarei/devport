@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { api, type TerminalStatus } from "../src/api";
+import { api, deviceWorkspace, localWorkspace, type TerminalStatus, type WorkspaceRef } from "../src/api";
 import { useTerminalStore, terminalActive } from "../src/terminalStore";
 import { terminalInput, readTerminal } from "../src/terminalIO";
 import { loadTabCycleOrder, mruCycleOrder, nextMruId, nextSequentialId } from "../src/tabCycle";
@@ -86,22 +86,26 @@ test("reconnect retires the old session before opening another; stale events can
 
 test("workspace terminals open with the workspace cwd and reconnect replays it", async (t) => {
   const s = reset(t);
-  const calls: Array<{ id: string; dir: string; subdir: string }> = [];
+  const calls: Array<{ id: string; workspace: WorkspaceRef; subdir: string }> = [];
   // 以 exited 状态打开：reconnect 对活跃会话是 no-op，只有非活跃会话才会重开
-  t.mock.method(api, "openWorkspaceTerminal", async (id: string, dir: string, subdir: string) => {
-    calls.push({ id, dir, subdir });
+  t.mock.method(api, "openWorkspaceTerminal", async (id: string, workspace: WorkspaceRef, subdir: string) => {
+    calls.push({ id, workspace, subdir });
     return status(`ws${calls.length}`, "exited");
   });
   t.mock.method(api, "openTerminal", async () => { throw new Error("must use the workspace entry"); });
   t.mock.method(api, "closeTerminal", async () => {});
-  await s.open("local", "本机", { dir: "/work", subdir: "sub/inner" });
-  const tab = useTerminalStore.getState().tabs[0];
-  assert.equal(tab.status?.session_id, "ws1");
-  assert.deepEqual(tab.workspace, { dir: "/work", subdir: "sub/inner" });
-  await s.reconnect(tab.id);
+  // 本机工作区与设备工作区都走同一个入口：来源原样透传，重连时原样复放
+  for (const workspace of [localWorkspace("/work"), deviceWorkspace("board", "/srv/app")]) {
+    await s.open("local", "本机", { workspace, subdir: "sub/inner" });
+    const tab = useTerminalStore.getState().tabs.at(-1)!;
+    assert.deepEqual(tab.workspace, { workspace, subdir: "sub/inner" });
+    await s.reconnect(tab.id);
+  }
   assert.deepEqual(calls, [
-    { id: "local", dir: "/work", subdir: "sub/inner" },
-    { id: "local", dir: "/work", subdir: "sub/inner" },
+    { id: "local", workspace: localWorkspace("/work"), subdir: "sub/inner" },
+    { id: "local", workspace: localWorkspace("/work"), subdir: "sub/inner" },
+    { id: "local", workspace: deviceWorkspace("board", "/srv/app"), subdir: "sub/inner" },
+    { id: "local", workspace: deviceWorkspace("board", "/srv/app"), subdir: "sub/inner" },
   ]);
   assert.equal(useTerminalStore.getState().tabs[0].status?.session_id, "ws2");
 });

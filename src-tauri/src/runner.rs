@@ -12,6 +12,7 @@ use crate::runtime::{code, PreparedEnvironment, RuntimePhase, RuntimeReady};
 use crate::ssh::client::SshConnection;
 use crate::ssh::filesync;
 use crate::ssh::session::{self, SpawnSpec};
+use crate::workspace_ref::WorkspaceRef;
 use chrono::Local;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -33,8 +34,10 @@ pub enum ScriptKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunRequest {
     pub device_id: String,
-    /// 本地工作区目录（Command 类型可为空）
-    pub workspace_dir: Option<String>,
+    /// 工作区来源（00029；Command 类型可为空）。
+    /// 兼容旧字段名 workspace_dir（裸字符串 = 本机目录）。
+    #[serde(default, alias = "workspace_dir")]
+    pub workspace: Option<WorkspaceRef>,
     pub kind: ScriptKind,
     /// python/shell 的入口文件（相对 workspace），command 类型忽略
     pub entry: Option<String>,
@@ -643,6 +646,7 @@ impl RunManager {
         mut req: RunRequest,
         device: DeviceProfile,
         config_dir: PathBuf,
+        workspace_source: Option<DeviceProfile>,
     ) -> Result<String> {
         device.validate()?;
         // Serial Shell V1 无法部署二进制 Runtime：在任何端口操作前明确拒绝（00027 §4）
@@ -702,7 +706,8 @@ impl RunManager {
         let this = self.clone();
         let rid = run_id.clone();
         tauri::async_runtime::spawn(async move {
-            this.execute(rid, req, device, config_dir, stop_rx).await;
+            this.execute(rid, req, device, config_dir, workspace_source, stop_rx)
+                .await;
         });
         Ok(run_id)
     }
@@ -713,10 +718,18 @@ impl RunManager {
         req: RunRequest,
         device: DeviceProfile,
         config_dir: PathBuf,
+        workspace_source: Option<DeviceProfile>,
         stop_rx: mpsc::UnboundedReceiver<StopKind>,
     ) {
         match self
-            .execute_inner(&run_id, req, &device, &config_dir, stop_rx)
+            .execute_inner(
+                &run_id,
+                req,
+                &device,
+                &config_dir,
+                workspace_source,
+                stop_rx,
+            )
             .await
         {
             Ok(outcome) => match outcome {
@@ -749,11 +762,35 @@ impl RunManager {
         mut req: RunRequest,
         device: &DeviceProfile,
         config_dir: &std::path::Path,
+        workspace_source: Option<DeviceProfile>,
         mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
     ) -> Result<RunOutcome> {
+        // 0. 跨设备工作区（00029）：先暂存到本机临时目录，再走既有本机工作区管线；
+        //    同设备工作区（SSH/WSL）由各自 transport 分支原地运行。
+        let mut in_place_workspace: Option<String> = None;
+        let _staging = match req.workspace.as_ref().and_then(|w| w.device_ref()) {
+            Some((source_id, path)) if source_id == device.id => {
+                in_place_workspace = Some(path.to_string());
+                None
+            }
+            Some((_, path)) => {
+                let source = workspace_source.as_ref().ok_or_else(|| {
+                    RunnerError::InvalidInput("workspace source device is unavailable".into())
+                })?;
+                self.set_state(run_id, RunState::Syncing);
+                let staged = tokio::select! {
+                    biased;
+                    _ = stop_rx.recv() => return Ok(RunOutcome::Canceled { code: None }),
+                    result = crate::remote_workspace::stage::download(source, config_dir, path, run_id) => result?,
+                };
+                req.workspace = Some(WorkspaceRef::local(staged.path().to_string_lossy()));
+                Some(staged)
+            }
+            None => None,
+        };
         if device.transport == TransportKind::Wsl {
             return self
-                .execute_wsl(run_id, req, device, config_dir, stop_rx)
+                .execute_wsl(run_id, req, device, config_dir, in_place_workspace, stop_rx)
                 .await;
         }
         if device.transport == TransportKind::Serial {
@@ -778,9 +815,13 @@ impl RunManager {
             RuntimeReady,
         )> = None;
         if req.managed_python {
-            let workspace = req.workspace_dir.clone().ok_or_else(|| {
-                RunnerError::InvalidInput("managed python requires a workspace".into())
-            })?;
+            let workspace = req
+                .workspace
+                .as_ref()
+                .and_then(|w| w.local_dir().map(str::to_owned))
+                .ok_or_else(|| {
+                    RunnerError::InvalidInput("managed python requires a workspace".into())
+                })?;
             let project = crate::runtime::project::inspect(std::path::Path::new(&workspace))?;
             let host: Arc<dyn RuntimeHost + Send + Sync> =
                 Arc::new(crate::runtime::hosts::ssh::SshHost::from_arc(
@@ -796,20 +837,48 @@ impl RunManager {
             return Ok(RunOutcome::Canceled { code: None });
         }
 
-        // 3. 同步 workspace（如有）
-        let remote_dir = format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id);
-        if let Some(local_dir) = &req.workspace_dir {
-            self.set_state(run_id, RunState::Syncing);
-            let sync = async {
-                let sftp = filesync::open_sftp(&conn).await?;
-                filesync::upload_dir(&sftp, std::path::Path::new(local_dir), &remote_dir).await
-            };
-            let n = tokio::select! {
-                biased;
-                _ = stop_rx.recv() => return Ok(RunOutcome::Canceled { code: None }),
-                result = sync => result?,
-            };
-            tracing::info!("run {run_id}: uploaded {n} files to {remote_dir}");
+        // 3. 同步 workspace（如有）；同设备原地运行改为校验入口与目录（00029）
+        let remote_dir = match &in_place_workspace {
+            Some(path) => {
+                self.set_state(run_id, RunState::Syncing);
+                let check = async {
+                    let workspace = crate::remote_workspace::ssh::SshWorkspace::from_connection(
+                        conn.clone(),
+                        path,
+                    )
+                    .await
+                    .map_err(|e| RunnerError::TaskFailed(e.message))?;
+                    if req.kind != ScriptKind::Command {
+                        let entry = req.entry.as_deref().unwrap_or_default();
+                        workspace
+                            .check_script_entry(entry)
+                            .await
+                            .map_err(|e| RunnerError::InvalidInput(e.message))?;
+                    }
+                    Ok::<_, RunnerError>(workspace.root().to_string())
+                };
+                tokio::select! {
+                    biased;
+                    _ = stop_rx.recv() => return Ok(RunOutcome::Canceled { code: None }),
+                    result = check => result?,
+                }
+            }
+            None => format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id),
+        };
+        if in_place_workspace.is_none() {
+            if let Some(local_dir) = req.workspace.as_ref().and_then(|w| w.local_dir()) {
+                self.set_state(run_id, RunState::Syncing);
+                let sync = async {
+                    let sftp = filesync::open_sftp(&conn).await?;
+                    filesync::upload_dir(&sftp, std::path::Path::new(local_dir), &remote_dir).await
+                };
+                let n = tokio::select! {
+                    biased;
+                    _ = stop_rx.recv() => return Ok(RunOutcome::Canceled { code: None }),
+                    result = sync => result?,
+                };
+                tracing::info!("run {run_id}: uploaded {n} files to {remote_dir}");
+            }
         }
         if stop_rx.try_recv().is_ok() {
             return Ok(RunOutcome::Canceled { code: None });
@@ -1001,20 +1070,30 @@ impl RunManager {
         mut req: RunRequest,
         device: &DeviceProfile,
         config_dir: &std::path::Path,
+        in_place_workspace: Option<String>,
         mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
     ) -> Result<RunOutcome> {
         use crate::wsl::{self, Event};
         if stop_rx.try_recv().is_ok() {
             return Ok(RunOutcome::Canceled { code: None });
         }
-        let remote = format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id);
+        // 同设备原地运行（00029）：remote 即工作区本身，零文件上传
+        let remote = in_place_workspace.clone().unwrap_or_else(|| {
+            format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id)
+        });
         let mut _env_lease = None;
-        let files = if req.managed_python {
+        let files = if in_place_workspace.is_some() {
+            Vec::new()
+        } else if req.managed_python {
             // Managed Runtime：独立 helper 会话上传 workspace 并完成准备（00027 §13）；
             // 运行会话（bridge A）随后零文件上传、直接 cd 到已就绪目录
-            let workspace = req.workspace_dir.clone().ok_or_else(|| {
-                RunnerError::InvalidInput("managed python requires a workspace".into())
-            })?;
+            let workspace = req
+                .workspace
+                .as_ref()
+                .and_then(|w| w.local_dir().map(str::to_owned))
+                .ok_or_else(|| {
+                    RunnerError::InvalidInput("managed python requires a workspace".into())
+                })?;
             let project = crate::runtime::project::inspect(std::path::Path::new(&workspace))?;
             let host: Arc<dyn RuntimeHost + Send + Sync> = Arc::new(
                 crate::runtime::hosts::wsl::WslHost::open(
@@ -1040,7 +1119,11 @@ impl RunManager {
             req.entry = Some(project.entry.clone());
             _env_lease = Some(EnvLeaseGuard::new(self.leases.clone(), &env.environment_id));
             Vec::new()
-        } else if let Some(dir) = req.workspace_dir.clone() {
+        } else if let Some(dir) = req
+            .workspace
+            .as_ref()
+            .and_then(|w| w.local_dir().map(str::to_owned))
+        {
             tokio::task::spawn_blocking(move || wsl::filesync::collect(std::path::Path::new(&dir)))
                 .await
                 .map_err(|e| RunnerError::TaskFailed(e.to_string()))??
@@ -1058,6 +1141,7 @@ impl RunManager {
             device.wsl.as_ref().unwrap(),
             &req,
             &remote,
+            in_place_workspace.is_some(),
             files,
             &mut controls,
             |event| match event {
@@ -1081,7 +1165,11 @@ impl RunManager {
         if stop_rx.try_recv().is_ok() {
             return Ok(RunOutcome::Canceled { code: None });
         }
-        let files = if let Some(dir) = req.workspace_dir.clone() {
+        let files = if let Some(dir) = req
+            .workspace
+            .as_ref()
+            .and_then(|w| w.local_dir().map(str::to_owned))
+        {
             tokio::task::spawn_blocking(move || {
                 serial::filesync::collect(std::path::Path::new(&dir))
             })
@@ -1134,9 +1222,13 @@ impl RunManager {
         // Managed Runtime：本机应用数据目录管理 Runtime/Environment，原工作区直接 sync
         let mut _env_lease = None;
         if req.managed_python {
-            let workspace = req.workspace_dir.clone().ok_or_else(|| {
-                RunnerError::InvalidInput("managed python requires a workspace".into())
-            })?;
+            let workspace = req
+                .workspace
+                .as_ref()
+                .and_then(|w| w.local_dir().map(str::to_owned))
+                .ok_or_else(|| {
+                    RunnerError::InvalidInput("managed python requires a workspace".into())
+                })?;
             let project = crate::runtime::project::inspect(std::path::Path::new(&workspace))?;
             let host: Arc<dyn RuntimeHost + Send + Sync> =
                 Arc::new(crate::runtime::hosts::local::LocalHost::new(
@@ -1325,13 +1417,26 @@ fn validate_request(req: &mut RunRequest) -> Result<()> {
     if req.args.iter().any(|a| a.contains('\0')) {
         return Err(invalid("arguments cannot contain NUL"));
     }
-    let workspace = req
-        .workspace_dir
-        .as_ref()
-        .map(std::fs::canonicalize)
-        .transpose()?;
-    if workspace.as_ref().is_some_and(|p| !p.is_dir()) {
-        return Err(invalid("workspace must be a directory"));
+    // 解析工作区来源（00029）：本机目录 canonicalize；设备目录在此校验路径形态，
+    // 存在性由暂存下载或原地校验阶段在设备上确认
+    let mut local_workspace: Option<PathBuf> = None;
+    match &req.workspace {
+        Some(WorkspaceRef::Local { dir }) => {
+            let root = std::fs::canonicalize(dir)?;
+            if !root.is_dir() {
+                return Err(invalid("workspace must be a directory"));
+            }
+            local_workspace = Some(root);
+        }
+        Some(WorkspaceRef::Device { device_id, path }) => {
+            crate::workspace_ref::validate_device_path(path).map_err(|m| invalid(&m))?;
+            if req.managed_python && device_id == &req.device_id {
+                return Err(invalid(
+                    "同设备原地运行暂不支持 Managed Python；请选择其他运行设备或关闭 Managed Python",
+                ));
+            }
+        }
+        None => {}
     }
     if req.managed_python && req.kind != ScriptKind::Python {
         return Err(invalid("managed python requires a python script workload"));
@@ -1349,14 +1454,14 @@ fn validate_request(req: &mut RunRequest) -> Result<()> {
         _ if req.managed_python => {
             // Managed 项目入口由项目契约（[tool.remote-runner]）决定，可以是模块名；
             // entry/python-path 的文件级校验由 ProjectInspector 在准备阶段完成
-            if workspace.is_none() {
+            if req.workspace.is_none() {
                 return Err(invalid("script requires a workspace"));
             }
         }
         _ => {
-            let root = workspace
-                .as_ref()
-                .ok_or_else(|| invalid("script requires a workspace"))?;
+            if req.workspace.is_none() {
+                return Err(invalid("script requires a workspace"));
+            }
             let entry = req
                 .entry
                 .as_ref()
@@ -1372,24 +1477,30 @@ fn validate_request(req: &mut RunRequest) -> Result<()> {
                     "entry must be a relative path inside the workspace",
                 ));
             }
-            let mut path = root.clone();
-            for part in entry.split('/') {
-                path.push(part);
-                if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
-                    return Err(invalid(
-                        "symbolic links are not supported for script entries",
-                    ));
+            match &local_workspace {
+                Some(root) => {
+                    let mut path = root.clone();
+                    for part in entry.split('/') {
+                        path.push(part);
+                        if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                            return Err(invalid(
+                                "symbolic links are not supported for script entries",
+                            ));
+                        }
+                    }
+                    let resolved = std::fs::canonicalize(&path)?;
+                    if !resolved.starts_with(root) || !resolved.is_file() {
+                        return Err(invalid("entry must be a file inside the workspace"));
+                    }
                 }
-            }
-            let resolved = std::fs::canonicalize(&path)?;
-            if !resolved.starts_with(root) || !resolved.is_file() {
-                return Err(invalid("entry must be a file inside the workspace"));
+                // 设备工作区：入口存在性在设备上确认（00029）
+                None => {}
             }
             req.entry = Some(entry);
         }
     }
-    if let Some(root) = workspace {
-        req.workspace_dir = Some(root.to_string_lossy().into_owned());
+    if let Some(root) = local_workspace {
+        req.workspace = Some(WorkspaceRef::local(root.to_string_lossy()));
     }
     Ok(())
 }
@@ -1470,7 +1581,7 @@ pub(crate) fn build_script(req: &RunRequest, remote_dir: &str) -> String {
         ScriptKind::Command => req.command.clone().unwrap_or_default(),
     };
 
-    if req.workspace_dir.is_some() {
+    if req.workspace.is_some() {
         format!(
             "cd {} || exit $?; {env_prefix} {pythonpath_prefix} {body}",
             sh_quote(remote_dir)
@@ -1714,7 +1825,9 @@ mod tests {
         std::fs::write(root.join("sub/test.py"), "print(1)").unwrap();
         let mut req = request();
         req.kind = ScriptKind::Python;
-        req.workspace_dir = Some(root.to_string_lossy().into_owned());
+        req.workspace = Some(crate::workspace_ref::WorkspaceRef::local(
+            root.to_string_lossy().into_owned(),
+        ));
         for entry in ["../test.py", "/test.py", "C:/test.py", "sub", "missing.py"] {
             req.entry = Some(entry.into());
             assert!(validate_request(&mut req).is_err(), "{entry}");
@@ -1993,7 +2106,7 @@ mod tests {
     fn managed_request() -> RunRequest {
         let mut req = request();
         req.kind = ScriptKind::Python;
-        req.workspace_dir = Some("/tmp/ws".into());
+        req.workspace = Some(crate::workspace_ref::WorkspaceRef::local("/tmp/ws"));
         req.entry = Some("main.py".into());
         req.managed_python = true;
         req
@@ -2055,7 +2168,7 @@ mod tests {
         .unwrap();
         let mut req = request();
         req.managed_python = true;
-        let err = manager.start(req, device, root.clone()).unwrap_err();
+        let err = manager.start(req, device, root.clone(), None).unwrap_err();
         assert!(err.to_string().contains(code::NOT_SUPPORTED), "{err}");
         assert!(manager.list_running().is_empty());
         std::fs::remove_dir_all(root).unwrap();

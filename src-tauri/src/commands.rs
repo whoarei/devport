@@ -1,6 +1,7 @@
 use crate::device::{DeviceProfile, DeviceStore};
 use crate::error::Result;
 use crate::runner::{RunManager, RunStatus};
+use crate::workspace_ref::WorkspaceRef;
 use std::path::PathBuf;
 
 pub struct AppState {
@@ -11,6 +12,8 @@ pub struct AppState {
     pub event_rx: parking_lot::Mutex<tokio::sync::broadcast::Receiver<crate::runner::RunEvent>>,
     /// 活跃 Run 持有的 Environment lease（00027 §16）；删除/GC 不得触碰
     pub leases: std::sync::Arc<crate::runtime::manager::LeaseSet>,
+    /// 远端工作区编辑会话（00029；单槽长连接）
+    pub workspace_sessions: crate::remote_workspace::SessionStore,
 }
 
 #[tauri::command]
@@ -112,100 +115,225 @@ fn blocked_by_run(state: &AppState) -> Option<crate::workspace::FileError> {
         })
 }
 
+/// 设备工作区的来源设备（远端会话的目标）
+fn session_device(state: &AppState, workspace: &WorkspaceRef) -> WorkspaceResult<DeviceProfile> {
+    let (device_id, _) = workspace
+        .device_ref()
+        .ok_or_else(|| crate::workspace::FileError::new("path", "不是设备工作区"))?;
+    state
+        .device_store
+        .get(device_id)
+        .map_err(|_| crate::workspace::FileError::new("not_found", "设备不存在或已被删除"))
+}
+
 #[tauri::command]
-pub fn list_workspace_dir(
-    dir: String,
+pub async fn list_workspace_dir(
+    state: tauri::State<'_, AppState>,
+    workspace: WorkspaceRef,
     subdir: String,
 ) -> WorkspaceResult<Vec<crate::workspace::Entry>> {
-    // Read-only listing takes no lock: the tree stays usable during a run.
-    crate::workspace::list_dir(&dir, &subdir)
+    match &workspace {
+        // Read-only listing takes no lock: the tree stays usable during a run.
+        WorkspaceRef::Local { dir } => crate::workspace::list_dir(dir, &subdir),
+        WorkspaceRef::Device { .. } => {
+            let device = session_device(&state, &workspace)?;
+            state
+                .workspace_sessions
+                .with(&workspace, &device, &state.config_dir, move |session| {
+                    Box::pin(async move { session.list_dir(&subdir).await })
+                })
+                .await
+        }
+    }
 }
 
 #[tauri::command]
-pub fn read_workspace_file(
-    dir: String,
+pub async fn read_workspace_file(
+    state: tauri::State<'_, AppState>,
+    workspace: WorkspaceRef,
     name: String,
 ) -> WorkspaceResult<crate::workspace::Document> {
-    let _guard = crate::workspace::FILE_OPERATIONS.lock();
-    crate::workspace::read(&dir, &name)
+    match &workspace {
+        WorkspaceRef::Local { dir } => {
+            let _guard = crate::workspace::FILE_OPERATIONS.lock();
+            crate::workspace::read(dir, &name)
+        }
+        WorkspaceRef::Device { .. } => {
+            let device = session_device(&state, &workspace)?;
+            state
+                .workspace_sessions
+                .with(&workspace, &device, &state.config_dir, move |session| {
+                    Box::pin(async move { session.read(&name).await })
+                })
+                .await
+        }
+    }
 }
 
 #[tauri::command]
-pub fn write_workspace_file(
+pub async fn write_workspace_file(
     state: tauri::State<'_, AppState>,
     request: crate::workspace::SaveRequest,
 ) -> WorkspaceResult<crate::workspace::Saved> {
-    let _guard = crate::workspace::FILE_OPERATIONS.lock();
-    if let Some(busy) = blocked_by_run(&state) {
-        return Err(busy);
+    match &request.workspace {
+        WorkspaceRef::Local { .. } => {
+            let _guard = crate::workspace::FILE_OPERATIONS.lock();
+            if let Some(busy) = blocked_by_run(&state) {
+                return Err(busy);
+            }
+            crate::workspace::write(request)
+        }
+        WorkspaceRef::Device { .. } => {
+            if let Some(busy) = blocked_by_run(&state) {
+                return Err(busy);
+            }
+            let workspace = request.workspace.clone();
+            let device = session_device(&state, &workspace)?;
+            let data =
+                crate::workspace::encode_content(&request.content, request.eol, request.bom)?;
+            state
+                .workspace_sessions
+                .with(&workspace, &device, &state.config_dir, move |session| {
+                    Box::pin(async move {
+                        session
+                            .write(&request.name, &data, &request.expected_revision)
+                            .await
+                    })
+                })
+                .await
+        }
     }
-    crate::workspace::write(request)
 }
 
 #[tauri::command]
-pub fn create_workspace_entry(
+pub async fn create_workspace_entry(
     state: tauri::State<'_, AppState>,
-    dir: String,
+    workspace: WorkspaceRef,
     name: String,
     kind: crate::workspace::EntryKind,
 ) -> WorkspaceResult<()> {
-    let _guard = crate::workspace::FILE_OPERATIONS.lock();
     if let Some(busy) = blocked_by_run(&state) {
         return Err(busy);
     }
-    crate::workspace::create(&dir, &name, kind)
+    match &workspace {
+        WorkspaceRef::Local { dir } => {
+            let _guard = crate::workspace::FILE_OPERATIONS.lock();
+            crate::workspace::create(dir, &name, kind)
+        }
+        WorkspaceRef::Device { .. } => {
+            let device = session_device(&state, &workspace)?;
+            state
+                .workspace_sessions
+                .with(&workspace, &device, &state.config_dir, move |session| {
+                    Box::pin(async move { session.create(&name, kind).await })
+                })
+                .await
+        }
+    }
 }
 
 #[tauri::command]
-pub fn rename_workspace_entry(
+pub async fn rename_workspace_entry(
     state: tauri::State<'_, AppState>,
-    dir: String,
+    workspace: WorkspaceRef,
     old_name: String,
     new_name: String,
 ) -> WorkspaceResult<()> {
-    let _guard = crate::workspace::FILE_OPERATIONS.lock();
     if let Some(busy) = blocked_by_run(&state) {
         return Err(busy);
     }
-    crate::workspace::rename(&dir, &old_name, &new_name)
+    match &workspace {
+        WorkspaceRef::Local { dir } => {
+            let _guard = crate::workspace::FILE_OPERATIONS.lock();
+            crate::workspace::rename(dir, &old_name, &new_name)
+        }
+        WorkspaceRef::Device { .. } => {
+            let device = session_device(&state, &workspace)?;
+            state
+                .workspace_sessions
+                .with(&workspace, &device, &state.config_dir, move |session| {
+                    Box::pin(async move { session.rename(&old_name, &new_name).await })
+                })
+                .await
+        }
+    }
 }
 
 #[tauri::command]
-pub fn delete_workspace_entry(
+pub async fn delete_workspace_entry(
     state: tauri::State<'_, AppState>,
-    dir: String,
+    workspace: WorkspaceRef,
     name: String,
 ) -> WorkspaceResult<()> {
-    let _guard = crate::workspace::FILE_OPERATIONS.lock();
     if let Some(busy) = blocked_by_run(&state) {
         return Err(busy);
     }
-    crate::workspace::delete(&dir, &name)
+    match &workspace {
+        WorkspaceRef::Local { dir } => {
+            let _guard = crate::workspace::FILE_OPERATIONS.lock();
+            crate::workspace::delete(dir, &name)
+        }
+        WorkspaceRef::Device { .. } => {
+            let device = session_device(&state, &workspace)?;
+            state
+                .workspace_sessions
+                .with(&workspace, &device, &state.config_dir, move |session| {
+                    Box::pin(async move { session.delete(&name).await })
+                })
+                .await
+        }
+    }
 }
 
 /// 生成工作区配置模板（pyproject.toml 的 [tool.remote-runner] 契约）；
 /// 已存在 pyproject.toml 时拒绝，不覆盖
 #[tauri::command]
-pub fn generate_workspace_config(
+pub async fn generate_workspace_config(
     state: tauri::State<'_, AppState>,
-    dir: String,
+    workspace: WorkspaceRef,
 ) -> WorkspaceResult<()> {
-    let _guard = crate::workspace::FILE_OPERATIONS.lock();
     if let Some(busy) = blocked_by_run(&state) {
         return Err(busy);
     }
-    if dir.trim().is_empty() {
-        return Err(crate::workspace::FileError::new(
-            "path",
-            "工作区目录不能为空",
-        ));
+    match &workspace {
+        WorkspaceRef::Local { dir } => {
+            let _guard = crate::workspace::FILE_OPERATIONS.lock();
+            if dir.trim().is_empty() {
+                return Err(crate::workspace::FileError::new(
+                    "path",
+                    "工作区目录不能为空",
+                ));
+            }
+            let name = crate::runtime::project::template_project_name(std::path::Path::new(dir));
+            crate::workspace::create_with_content(
+                dir,
+                "pyproject.toml",
+                &crate::runtime::project::config_template(&name),
+            )
+        }
+        WorkspaceRef::Device { path, .. } => {
+            let device = session_device(&state, &workspace)?;
+            let name = crate::runtime::project::template_project_name(std::path::Path::new(path));
+            let content = crate::runtime::project::config_template(&name);
+            let data =
+                crate::workspace::encode_content(&content, crate::workspace::Eol::Lf, false)?;
+            state
+                .workspace_sessions
+                .with(&workspace, &device, &state.config_dir, move |session| {
+                    Box::pin(
+                        async move { session.create_with_content("pyproject.toml", &data).await },
+                    )
+                })
+                .await
+        }
     }
-    let name = crate::runtime::project::template_project_name(std::path::Path::new(&dir));
-    crate::workspace::create_with_content(
-        &dir,
-        "pyproject.toml",
-        &crate::runtime::project::config_template(&name),
-    )
+}
+
+/// 关闭当前远端工作区编辑会话（前端关闭或切换工作区时调用）
+#[tauri::command]
+pub async fn close_workspace_session(state: tauri::State<'_, AppState>) -> Result<()> {
+    state.workspace_sessions.close().await;
+    Ok(())
 }
 
 // ---------- 运行控制 ----------
@@ -219,9 +347,25 @@ pub fn run_script(
     let _update_guard = updates.allow_run()?;
     let _guard = crate::workspace::FILE_OPERATIONS.lock();
     let device = state.device_store.get(&request.device_id)?;
+    // 远端工作区的来源设备（00029）：在边界校验存在性、路径与宿主能力后随请求传递
+    let workspace_source = match request.workspace.as_ref().and_then(|w| w.device_ref()) {
+        Some((source_id, path)) => {
+            crate::workspace_ref::validate_device_path(path)
+                .map_err(crate::error::RunnerError::InvalidInput)?;
+            let source = state.device_store.get(source_id)?;
+            source.validate()?;
+            if !crate::workspace_ref::host_supported(source.transport) {
+                return Err(crate::error::RunnerError::InvalidInput(
+                    "该设备类型不支持作为工作区宿主".into(),
+                ));
+            }
+            Some(source)
+        }
+        None => None,
+    };
     state
         .run_manager
-        .start(request, device, state.config_dir.clone())
+        .start(request, device, state.config_dir.clone(), workspace_source)
 }
 
 #[tauri::command]
@@ -436,27 +580,57 @@ pub fn open_terminal(
     )
 }
 
-/// 在工作区目录中打开本机设备的终端标签。subdir 与工作区树同构（"" 为根目录）；
-/// 路径与设备类别的校验全部在此边界完成。
+/// 在工作区目录中打开终端标签。本机工作区仅支持本机设备（就地 cwd）；
+/// 设备工作区仅支持在托管它的那台设备上打开（SSH/WSL 终端启动后 cd）。
+/// subdir 与工作区树同构（"" 为根目录）；路径与设备类别的校验全部在此边界完成。
 #[tauri::command]
 pub fn open_workspace_terminal(
     state: tauri::State<'_, AppState>,
     updates: tauri::State<'_, crate::update::UpdateState>,
     device_id: String,
-    dir: String,
+    workspace: WorkspaceRef,
     subdir: String,
     cols: u32,
     rows: u32,
 ) -> Result<crate::terminal::Status> {
     let _gate = updates.allow_run()?;
     let device = state.device_store.get(&device_id)?;
-    if device.transport != crate::device::TransportKind::Local {
-        return Err(crate::error::RunnerError::InvalidInput(
-            "仅本机设备支持在工作区目录中打开终端".into(),
-        ));
-    }
-    let cwd = crate::workspace::terminal_dir(&dir, &subdir)
-        .map_err(|e| crate::error::RunnerError::InvalidInput(e.message))?;
+    let cwd = match &workspace {
+        WorkspaceRef::Local { dir } => {
+            if device.transport != crate::device::TransportKind::Local {
+                return Err(crate::error::RunnerError::InvalidInput(
+                    "本机工作区只能在本机设备上打开终端".into(),
+                ));
+            }
+            crate::workspace::terminal_dir(dir, &subdir)
+                .map_err(|e| crate::error::RunnerError::InvalidInput(e.message))?
+                .to_string_lossy()
+                .into_owned()
+        }
+        WorkspaceRef::Device {
+            device_id: source,
+            path,
+        } => {
+            if *source != device_id {
+                return Err(crate::error::RunnerError::InvalidInput(
+                    "只能在托管该工作区的设备上打开终端".into(),
+                ));
+            }
+            if !crate::workspace_ref::host_supported(device.transport) {
+                return Err(crate::error::RunnerError::InvalidInput(
+                    "该设备类型不支持在工作区目录中打开终端".into(),
+                ));
+            }
+            if subdir.is_empty() {
+                path.clone()
+            } else {
+                // components 校验拒绝 .. 等组件，拼接结果始终在工作区内
+                crate::workspace::components(&subdir)
+                    .map_err(|e| crate::error::RunnerError::InvalidInput(e.message))?;
+                format!("{}/{}", path.trim_end_matches('/'), subdir)
+            }
+        }
+    };
     state
         .terminal_manager
         .open(device, state.config_dir.clone(), cols, rows, Some(cwd))

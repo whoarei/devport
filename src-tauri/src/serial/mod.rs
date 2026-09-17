@@ -119,7 +119,7 @@ pub async fn execute<T: AsyncRead + AsyncWrite + Unpin>(
         ));
     }
 
-    if req.workspace_dir.is_some() {
+    if req.workspace.is_some() {
         events(Event::State(RunState::Syncing));
         let mkdir = session
             .execute(

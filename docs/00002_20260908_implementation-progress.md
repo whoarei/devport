@@ -232,6 +232,7 @@ rr-cli stop-test      # sleep 60 中途 stop        → canceled，exit=143，�
 - [ ] 2026-09-08 曾记录“首次连接偶发一次 run 不结束”，没有形成可复现用例或对应修复；现有自动化覆盖 TOFU 损坏/过期快照、SSH 拒绝与异常关闭，但不能据此宣称该历史现象已定位。
 - [x] Serial Shell transport V1 已实现（端口枚举、8N1、marker 协议、文本工作区上传、stdin、停止与超时）；详见 00004。
 - [x] WSL 直接执行、本机 Shell、独立终端、工作区文件管理、运行日志导出、更新、托盘/自启动、单实例、i18n、预置命令和模块化布局已实现；详见 00007—00026。
+- [x] 远端（设备）工作区已实现：SSH（SFTP）与 WSL（helper `fs_*` 文件服务）可作宿主，同设备原地运行、跨设备暂存两跳、终端 cwd 与历史 v1→v2 迁移均已完成；详见 00029。
 - [ ] Serial Agent、Node/Binary 专用入口、uv-only Managed Python Runtime、Expect、增量同步仍未实现；完整清单见本文顶部“已确认仍未实现”。
 
 ### 运行方式

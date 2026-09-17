@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { appendOutput, MAX_OUTPUT_BYTES } from "../src/outputBuffer";
 import { useAppStore } from "../src/store";
-import { api } from "../src/api";
+import { api, localWorkspace } from "../src/api";
 import { loadWorkspaceHistory } from "../src/workspaceHistory";
 import { anyDirty, dirtyTab, EditorTab, inferLanguage } from "../src/editorDocument";
 
@@ -41,42 +41,65 @@ test("terminal events update history synchronously and without duplicates", () =
 test("recent workspaces persist successful opens, reorder repeats, and survive failed opens", async (t) => {
   const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   const originalState = useAppStore.getState();
-  let stored: string | null = null;
+  // 按键存取的 localStorage 替身：v1 → v2 迁移会同时读写两个键
+  const stored = new Map<string, string>();
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,
-    value: { getItem: () => stored, setItem: (_key: string, value: string) => { stored = value; } },
+    value: {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => { stored.set(key, value); },
+      removeItem: (key: string) => { stored.delete(key); },
+    },
   });
   t.after(() => {
     if (originalStorage) Object.defineProperty(globalThis, "localStorage", originalStorage);
     else Reflect.deleteProperty(globalThis, "localStorage");
     useAppStore.setState(originalState, true);
   });
-  t.mock.method(api, "listWorkspaceDir", async (dir: string) => {
-    if (dir === "/missing") throw new Error("Directory no longer exists");
+  t.mock.method(api, "listWorkspaceDir", async (workspace: { type: string; dir?: string }) => {
+    if (workspace.type === "local" && workspace.dir === "/missing") throw new Error("Directory no longer exists");
     return [{ name: "main.py", is_dir: false }];
   });
   useAppStore.setState({ recentWorkspaces: [] });
-  const { setWorkspaceDir } = useAppStore.getState();
-  for (let i = 0; i < 12; i++) await setWorkspaceDir(`/workspace/${i}`);
-  await setWorkspaceDir("/workspace/5");
+  const { setWorkspace } = useAppStore.getState();
+  const pathOf = (workspace: { type: string; dir?: string; path?: string }) =>
+    workspace.type === "local" ? workspace.dir : workspace.path;
+  for (let i = 0; i < 12; i++) await setWorkspace(localWorkspace(`/workspace/${i}`));
+  await setWorkspace(localWorkspace("/workspace/5"));
   const recent = useAppStore.getState().recentWorkspaces;
   assert.equal(recent.length, 10);
-  assert.equal(recent[0], "/workspace/5");
-  assert.equal(new Set(recent).size, 10);
-  assert.ok(!recent.includes("/workspace/0"));
+  assert.equal(pathOf(recent[0]), "/workspace/5");
+  assert.equal(new Set(recent.map(pathOf)).size, 10);
+  assert.ok(!recent.some((workspace) => pathOf(workspace) === "/workspace/0"));
   assert.deepEqual(loadWorkspaceHistory(), recent);
 
   useAppStore.setState({ openTabs: [makeTab("main.py", "print('hello')")], activeFile: "main.py" });
   const beforeFailure = useAppStore.getState();
-  await assert.rejects(setWorkspaceDir("/missing"), /Directory no longer exists/);
+  await assert.rejects(setWorkspace(localWorkspace("/missing")), /Directory no longer exists/);
   assert.equal(useAppStore.getState().openTabs, beforeFailure.openTabs);
-  assert.equal(useAppStore.getState().workspaceDir, beforeFailure.workspaceDir);
+  assert.equal(useAppStore.getState().workspace, beforeFailure.workspace);
   assert.deepEqual(loadWorkspaceHistory(), recent);
 
-  stored = "invalid JSON";
+  const v1Key = "remote-runner.recent-workspaces.v1";
+  const v2Key = "remote-runner.recent-workspaces.v2";
+  stored.set(v2Key, "invalid JSON");
   assert.deepEqual(loadWorkspaceHistory(), []);
-  stored = JSON.stringify([null, 7, "", "  ", "/valid", "/valid"]);
-  assert.deepEqual(loadWorkspaceHistory(), ["/valid"]);
+  stored.set(v2Key, JSON.stringify([null, 7, "", "  ", "/valid", "/valid"]));
+  assert.deepEqual(loadWorkspaceHistory(), [localWorkspace("/valid")]);
+
+  // v1（裸字符串数组）自动迁移为 v2：Local 条目 + 合法 Device 条目，非法条目丢弃
+  stored.delete(v2Key);
+  stored.set(v1Key, JSON.stringify(["/legacy/a", "/legacy/a",
+    { type: "device", device_id: "d1", path: "/srv/app" },
+    { type: "device", device_id: "d1", path: "relative" }, { type: "other" }, 42]));
+  const migrated = [localWorkspace("/legacy/a"), { type: "device" as const, device_id: "d1", path: "/srv/app" }];
+  assert.deepEqual(loadWorkspaceHistory(), migrated);
+  assert.deepEqual(JSON.parse(stored.get(v2Key)!), migrated);
+  assert.equal(stored.has(v1Key), false);
+
+  // 重复条目去重且保持首次出现的顺序
+  stored.set(v2Key, JSON.stringify([...migrated, { type: "device", device_id: "d1", path: "/srv/app" }]));
+  assert.deepEqual(loadWorkspaceHistory(), migrated);
 
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,
@@ -84,8 +107,8 @@ test("recent workspaces persist successful opens, reorder repeats, and survive f
   });
   t.mock.method(console, "warn", () => {});
   assert.deepEqual(loadWorkspaceHistory(), []);
-  await setWorkspaceDir("/still-works");
-  assert.equal(useAppStore.getState().workspaceDir, "/still-works");
+  await setWorkspace(localWorkspace("/still-works"));
+  assert.equal(useAppStore.getState().workspace?.type === "local" && useAppStore.getState().workspace.dir, "/still-works");
 });
 
 function deferred<T>() {
@@ -100,7 +123,7 @@ const makeTab = (name: string, content: string, saved = content, extra: Partial<
   name, fileContent: content, savedContent: saved, revision: "v1", eol: "lf", bom: false,
   language: inferLanguage(name), conflict: false, generation: 1, ...extra,
 });
-const editorState = () => ({ workspaceDir: "/work", openTabs: [makeTab("main.py", "original")], activeFile: "main.py" as string | null,
+const editorState = () => ({ workspace: localWorkspace("/work"), openTabs: [makeTab("main.py", "original")], activeFile: "main.py" as string | null,
   loading: false, saving: false, starting: false, guarding: false, changePrompt: null,
   editorError: null, runs: {} });
 const tabNamed = (name: string) => useAppStore.getState().openTabs.find((t) => t.name === name);
@@ -130,10 +153,10 @@ test("latest file selection wins including stale failures and cross-workspace re
   t.mock.method(api, "listWorkspaceDir", async () => []);
   const oldRead = useAppStore.getState().openWorkspaceFile("c.py");
   await Promise.resolve();
-  await useAppStore.getState().setWorkspaceDir("/new");
+  await useAppStore.getState().setWorkspace(localWorkspace("/new"));
   late.resolve(diskDocument("old workspace"));
   await oldRead;
-  assert.equal(useAppStore.getState().workspaceDir, "/new");
+  assert.equal(useAppStore.getState().workspace?.type === "local" && useAppStore.getState().workspace.dir, "/new");
   assert.deepEqual(useAppStore.getState().openTabs, []);
   assert.equal(useAppStore.getState().activeFile, null);
 });
@@ -148,6 +171,7 @@ test("save preserves newer edits, serializes writes, and undo to baseline clears
     calls++;
     assert.equal(request.content, "saved snapshot");
     assert.equal(request.expectedRevision, "v1");
+    assert.deepEqual(request.workspace, localWorkspace("/work"));
     return pending.promise;
   });
   const state = useAppStore.getState();
@@ -207,7 +231,7 @@ test("save-and-continue writes before switching workspace and the unsaved guard 
   const order: string[] = [];
   t.mock.method(api, "writeWorkspaceFile", async () => { order.push("save"); return { revision: "v2" }; });
   t.mock.method(api, "listWorkspaceDir", async () => { order.push("list"); return []; });
-  const switching = useAppStore.getState().setWorkspaceDir("/new");
+  const switching = useAppStore.getState().setWorkspace(localWorkspace("/new"));
   useAppStore.getState().changePrompt!.resolve("save");
   await switching;
   assert.deepEqual(order, ["save", "list"]);
@@ -271,7 +295,7 @@ test("both run modes save non-entry edits first; failed saves never launch and s
   t.mock.method(api, "getRunStatus", async () => null);
   for (const kind of ["python", "command"] as const) {
     useAppStore.setState({ ...editorState(), openTabs: [makeTab("helper.py", "edited helper", "original")], activeFile: "helper.py" });
-    const request = { device_id: "device", workspace_dir: "/work", kind, entry: "main.py", command: "python3 main.py" };
+    const request = { device_id: "device", workspace: localWorkspace("/work"), kind, entry: "main.py", command: "python3 main.py" };
     const starting = useAppStore.getState().startRun(request);
     useAppStore.getState().editContent("helper.py", "ignored during launch");
     assert.equal(tabNamed("helper.py")!.fileContent, "edited helper");
@@ -283,7 +307,7 @@ test("both run modes save non-entry edits first; failed saves never launch and s
   assert.deepEqual(order, ["save", "run", "save", "run"]);
   useAppStore.setState({ ...editorState(), openTabs: [makeTab("main.py", "edits", "original")] });
   t.mock.method(api, "writeWorkspaceFile", async () => { throw new Error("disk full"); });
-  await assert.rejects(useAppStore.getState().startRun({ device_id: "device", workspace_dir: "/work", kind: "python", entry: "main.py" }), /disk full/);
+  await assert.rejects(useAppStore.getState().startRun({ device_id: "device", workspace: localWorkspace("/work"), kind: "python", entry: "main.py" }), /disk full/);
   assert.equal(order.length, 4);
   assert.equal(useAppStore.getState().starting, false);
   assert.equal(tabNamed("main.py")!.fileContent, "edits");
@@ -302,7 +326,7 @@ test("startRun saves every dirty tab and aborts on the first failure", async (t)
     makeTab("main.py", "main edits", "original"),
     makeTab("notes.txt", "clean"),
   ], activeFile: "main.py" });
-  await useAppStore.getState().startRun({ device_id: "device", workspace_dir: "/work", kind: "python", entry: "main.py" });
+  await useAppStore.getState().startRun({ device_id: "device", workspace: localWorkspace("/work"), kind: "python", entry: "main.py" });
   assert.deepEqual(order, ["save helper.py", "save main.py", "run"]);
   assert.equal(anyDirty(useAppStore.getState()), false);
   // 第一个保存失败即中止：不写第二个标签，也不启动
@@ -313,7 +337,7 @@ test("startRun saves every dirty tab and aborts on the first failure", async (t)
     throw new Error("disk full");
   });
   await assert.rejects(
-    useAppStore.getState().startRun({ device_id: "device", workspace_dir: "/work", kind: "python", entry: "a.py" }),
+    useAppStore.getState().startRun({ device_id: "device", workspace: localWorkspace("/work"), kind: "python", entry: "a.py" }),
     /disk full/);
   assert.deepEqual(order, ["save a.py"]);
   assert.equal(dirtyTab(tabNamed("b.py")!), true);

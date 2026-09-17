@@ -11,6 +11,8 @@ The supported transports are:
 - **WSL**: Windows `wsl.exe` directly starts a bundled Python helper in a selected local distribution, without SSH. Supports binary workspace snapshots, Linux PTY or separate pipes, stdin, resize, process-group stop escalation, and history. Requires Python 3.8+ inside the distribution.
 - **Local Shell**: runs workloads directly on this machine with a detected shell (Windows: pwsh, powershell, cmd, msys2, Git Bash; macOS/Linux: bash, zsh, sh), no SSH or helper. The workspace runs **in place** (no upload/copy; artifacts land in the workspace). PTY via `portable-pty` (ConPTY/openpty) or separate pipes, stdin, resize, and INT → TERM → KILL stop escalation (Windows pipe mode has no graceful interrupt; kills use `taskkill /T /F`). ConPTY startup requires the backend reader thread to answer the `\x1b[6n` DSR query itself. See `docs/00023_20260913_local-shell.md` and `docs/00024_20260913_local-shell-implementation.md`.
 
+The workspace itself has two sources (`WorkspaceRef`): a local directory, or a directory on an SSH/WSL device. A device workspace is browsed and edited over SFTP (SSH) or the WSL helper's `fs_*` file-service messages; running **on that same device** happens in place (no copy), while running **on any other device** first stages the workspace into a local temp directory and then reuses the existing upload pipeline. Serial cannot host a workspace (no file-operation channel) but remains a valid cross-device run target. See `docs/00029_20260917_remote-workspace.md`.
+
 There is no hardware available in the development environment. Serial behavior is verified with Tokio duplex streams and a local POSIX/Git Bash shell.
 
 ## Repository map
@@ -24,6 +26,8 @@ There is no hardware available in the development environment. Serial behavior i
 - `src-tauri/src/serial/`: serial port leasing, shell framing, session control, and text workspace upload.
 - `src-tauri/src/wsl/`: direct WSL process bridge, bounded workspace snapshots, Python helper, and opt-in WSL integration tests.
 - `src-tauri/src/local/`: local shell registry and detection, portable-pty/pipe session layer with thread-based IO, per-flavor argv construction (posix/powershell/cmd), stop escalation, and real local-process integration tests (shells auto-skip when missing).
+- `src-tauri/src/workspace_ref.rs`: `WorkspaceRef` (local directory vs. device directory), device path validation, and workspace-host capability.
+- `src-tauri/src/remote_workspace/`: device workspace access — SFTP (`ssh.rs`), WSL helper file service (`wsl.rs`), the single-slot long-lived editing session (`SessionStore` in `mod.rs`), and cross-device staging into a local temp directory (`stage.rs`).
 - `src-tauri/src/process.rs`: transport-independent console and session control types.
 - `src-tauri/src/tray.rs`: system tray icon/menu, close-to-tray semantics, and autostart (`tauri-plugin-autostart`, `--minimized` silent launch; design: `docs/00018_20260912_tray-autostart.md`). Single instance is enforced via `tauri-plugin-single-instance` (registered first in `lib.rs`; a manual relaunch focuses the existing window, `--minimized` relaunches exit silently; design: `docs/00019_20260912_single-instance.md`).
 - `src-tauri/src/update.rs`: app self-update — update check against the GitHub `latest.json` manifest, Tauri updater install with minisign verification, installed-vs-portable detection with manual-download fallback (design: `docs/00011_20260912_app-upgrade.md`).
@@ -75,6 +79,8 @@ cargo test --offline --lib wsl::tests -- --include-ignored
 - Do not add tests that require a physical serial device. Extend the duplex-stream simulator and local-shell smoke tests instead.
 - Keep documentation in `docs/` synchronized when transport behavior, limits, or unsupported capabilities change.
 - WSL must use structured process arguments and a separate control protocol; never interpolate distribution names, users, file contents, or paths into shell commands. Only an explicit helper exit message confirms completion; EOF is a failure. Do not terminate a whole WSL distribution to stop a run.
+- A device workspace must never escape its canonical root: reject symlinks below the root (SSH: per-component `symlink_metadata`; WSL: dirfd + `O_NOFOLLOW` inside the helper) and validate every relative path component at the Rust boundary. Device workspace paths must be absolute and free of `.` / `..` components.
+- The workspace editing session is one long-lived connection, invalidated on connection errors; runs never share it. Cross-device staging must mirror the SSH upload limits (64 MiB per file, 256 MiB total, 4096 entries, skip symlinks and `.git`) and must remove its temp directory on every exit path.
 
 ## Change verification
 

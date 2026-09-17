@@ -85,7 +85,9 @@ async fn main() {
         let request = if interact {
             RunRequest {
                 device_id: device.id.clone(),
-                workspace_dir: Some(ws.to_string_lossy().to_string()),
+                workspace: Some(remote_runner::workspace_ref::WorkspaceRef::local(
+                    ws.to_string_lossy(),
+                )),
                 kind: ScriptKind::Python,
                 entry: Some("ask.py".to_string()),
                 args: vec![],
@@ -103,7 +105,7 @@ async fn main() {
         } else {
             RunRequest {
                 device_id: device.id.clone(),
-                workspace_dir: None,
+                workspace: None,
                 kind: ScriptKind::Command,
                 entry: None,
                 args: vec![],
@@ -120,7 +122,7 @@ async fn main() {
             }
         };
 
-        let run_id = manager.start(request, device, config_dir).unwrap();
+        let run_id = manager.start(request, device, config_dir, None).unwrap();
         eprintln!("[rr-cli] run_id = {run_id}");
 
         // 延迟动作：interact 发送 stdin；stop 发送停止
@@ -172,7 +174,7 @@ async fn main() {
         }
     }
 
-    let (kind, entry, workspace_dir, command, run_args) = match mode.as_str() {
+    let (kind, entry, workspace, command, run_args) = match mode.as_str() {
         "command" => (
             ScriptKind::Command,
             None,
@@ -240,7 +242,7 @@ async fn main() {
         .start(
             RunRequest {
                 device_id: device.id.clone(),
-                workspace_dir,
+                workspace: workspace.map(remote_runner::workspace_ref::WorkspaceRef::local),
                 kind,
                 entry,
                 args: run_args,
@@ -257,6 +259,7 @@ async fn main() {
             },
             device,
             config_dir,
+            None,
         )
         .expect("start run failed");
     eprintln!("[rr-cli] run_id = {run_id}");

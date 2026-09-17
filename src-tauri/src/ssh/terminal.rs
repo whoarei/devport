@@ -13,6 +13,7 @@ pub async fn execute(
     config: &Path,
     cols: u32,
     rows: u32,
+    cwd: Option<String>,
     controls: &mut mpsc::Receiver<Control>,
     cancel: &mut watch::Receiver<bool>,
     mut emit: impl FnMut(Event) -> Result<()>,
@@ -36,6 +37,18 @@ pub async fn execute(
         super::session::await_success(&mut channel, &mut pending).await?;
         channel.request_shell(true).await?;
         super::session::await_success(&mut channel, &mut pending).await?;
+        // 工作区终端（00029）：tty 输入队列会缓冲该行，shell 就绪后即执行
+        if let Some(cwd) = &cwd {
+            channel
+                .data(
+                    format!(
+                        "cd {} || echo 'remote-runner: workspace directory not found'\n",
+                        crate::runner::sh_quote(cwd)
+                    )
+                    .as_bytes(),
+                )
+                .await?;
+        }
         emit(Event::Connected)?;
         let mut exit = None;
         loop {

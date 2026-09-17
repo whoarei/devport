@@ -9,11 +9,13 @@ import { PanelTitle } from "./PanelTitle";
 /** Managed Python Runtime 管理面板：Runtime 摘要 + 项目环境列表 + 重建/删除/清理 */
 export function RuntimePanel({ collapsed, onToggleCollapse }: { collapsed: boolean; onToggleCollapse: () => void }) {
   const { t } = useTranslation();
-  const { selectedDeviceId, devices, workspaceDir } = useAppStore(useShallow((s) => ({
-    selectedDeviceId: s.selectedDeviceId, devices: s.devices, workspaceDir: s.workspaceDir,
+  const { selectedDeviceId, devices, workspace } = useAppStore(useShallow((s) => ({
+    selectedDeviceId: s.selectedDeviceId, devices: s.devices, workspace: s.workspace,
   })));
   const device = devices.find((d) => d.id === selectedDeviceId) ?? null;
   const isSerial = device?.transport === "serial";
+  // 项目环境重建走本机 uv 检查：仅本机工作区有可 inspect 的本地目录
+  const workspaceDir = workspace?.type === "local" ? workspace.dir : null;
 
   const [runtime, setRuntime] = useState<ManagedRuntimeInfo | null>(null);
   const [envs, setEnvs] = useState<ProjectEnvironmentInfo[]>([]);

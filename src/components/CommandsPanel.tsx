@@ -121,7 +121,7 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
     const device = state.devices.find((d) => d.id === state.selectedDeviceId);
     const request: RunRequest = {
       device_id: state.selectedDeviceId,
-      workspace_dir: state.workspaceDir,
+      workspace: state.workspace,
       kind: "command",
       command: preset.command,
       console_mode: device?.transport === "serial" ? "pty" : preset.consoleMode,

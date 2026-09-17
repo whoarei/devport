@@ -113,7 +113,8 @@ impl client::Handler for ClientHandler {
     }
 }
 
-/// 已认证的 SSH 连接
+/// 已认证的 SSH 连接（Arc 句柄；克隆共享同一连接，channel 各自独立）
+#[derive(Clone)]
 pub struct SshConnection {
     pub handle: Arc<Handle<ClientHandler>>,
 }

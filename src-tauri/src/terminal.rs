@@ -80,23 +80,33 @@ pub async fn canceled(cancel: &mut watch::Receiver<bool>) {
 }
 
 impl TerminalManager {
-    /// 打开独立终端。`cwd` 仅对 Local transport 有意义（工作区终端），
-    /// 其他 transport 传 Some 一律拒绝，避免静默落到错误目录。
+    /// 打开独立终端。`cwd` 为工作区终端的起始目录：Local 作为子进程 cwd，
+    /// SSH/WSL 在 shell 启动后进入该目录（00029）；Serial 不支持终端。
     pub fn open(
         &self,
         device: DeviceProfile,
         config: PathBuf,
         cols: u32,
         rows: u32,
-        cwd: Option<PathBuf>,
+        cwd: Option<String>,
     ) -> Result<Status> {
         device.validate()?;
         validate_size(cols, rows)?;
         if device.transport == TransportKind::Serial {
             return Err(invalid("串口暂不支持独立终端，请使用运行控制台"));
         }
-        if cwd.is_some() && device.transport != TransportKind::Local {
-            return Err(invalid("仅本机设备支持在工作区目录中打开终端"));
+        if let Some(cwd) = &cwd {
+            match device.transport {
+                TransportKind::Local => {
+                    if cwd.trim().is_empty() {
+                        return Err(invalid("终端工作目录不能为空"));
+                    }
+                }
+                TransportKind::Ssh | TransportKind::Wsl => {
+                    crate::workspace_ref::validate_device_path(cwd).map_err(|m| invalid(&m))?;
+                }
+                TransportKind::Serial => unreachable!(),
+            }
         }
         let (control, mut controls) = mpsc::channel(32);
         let (cancel, mut cancellation) = watch::channel(false);
@@ -135,6 +145,7 @@ impl TerminalManager {
                         &config,
                         cols,
                         rows,
+                        cwd,
                         &mut controls,
                         &mut cancellation,
                         emit,
@@ -146,6 +157,7 @@ impl TerminalManager {
                         device.wsl.as_ref().unwrap(),
                         cols,
                         rows,
+                        cwd,
                         &mut controls,
                         &mut cancellation,
                         emit,
@@ -156,7 +168,7 @@ impl TerminalManager {
                 TransportKind::Local => {
                     crate::local::terminal::execute(
                         device.local.as_ref().unwrap(),
-                        cwd,
+                        cwd.map(PathBuf::from),
                         cols,
                         rows,
                         &mut controls,
@@ -354,22 +366,29 @@ mod tests {
             .contains('8'));
     }
 
-    #[test]
-    fn workspace_cwd_is_only_accepted_for_local_devices() {
+    #[tokio::test]
+    async fn workspace_cwd_is_accepted_for_local_ssh_wsl_but_not_serial() {
         let manager = TerminalManager::default();
-        let cwd = std::env::temp_dir();
+        let cwd = "/srv/app".to_string();
+        let ssh: DeviceProfile = serde_json::from_value(
+            serde_json::json!({"id":"s", "name":"ssh", "host":"localhost", "username":"test"}),
+        )
+        .unwrap();
+        // SSH/WSL 的工作区终端在 shell 启动后 cd 到该目录（00029）
+        assert!(manager
+            .open(ssh, PathBuf::new(), 80, 24, Some(cwd.clone()))
+            .is_ok());
+        let serial: DeviceProfile = serde_json::from_value(serde_json::json!({"id":"s", "name":"serial", "transport":"serial", "serial":{"port":"COM1"}})).unwrap();
+        assert!(manager
+            .open(serial, PathBuf::new(), 80, 24, Some(cwd))
+            .is_err());
+        // 远端 cwd 必须是合法的绝对 Linux 路径
         let ssh: DeviceProfile = serde_json::from_value(
             serde_json::json!({"id":"s", "name":"ssh", "host":"localhost", "username":"test"}),
         )
         .unwrap();
         assert!(manager
-            .open(ssh, PathBuf::new(), 80, 24, Some(cwd.clone()))
-            .unwrap_err()
-            .to_string()
-            .contains("本机设备"));
-        let serial: DeviceProfile = serde_json::from_value(serde_json::json!({"id":"s", "name":"serial", "transport":"serial", "serial":{"port":"COM1"}})).unwrap();
-        assert!(manager
-            .open(serial, PathBuf::new(), 80, 24, Some(cwd))
+            .open(ssh, PathBuf::new(), 80, 24, Some("relative/dir".into()))
             .is_err());
     }
 

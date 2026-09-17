@@ -145,6 +145,7 @@ async fn terminal_shell_preserves_state_ctrl_c_resize_and_exit() {
             python(HELPER),
             80,
             24,
+            None,
             &mut controls,
             &mut cancel,
             |event| {
@@ -216,6 +217,7 @@ async fn terminal_close_cleans_job_control_groups_and_other_sessions_survive() {
             python(HELPER),
             80,
             24,
+            None,
             &mut controls,
             &mut cancel,
             |event| {
@@ -306,6 +308,7 @@ async fn terminal_eof_is_failure_and_cancel_before_launch_starts_nothing() {
         python(fake),
         80,
         24,
+        None,
         &mut controls,
         &mut cancel,
         |_| Ok(())
@@ -317,6 +320,7 @@ async fn terminal_eof_is_failure_and_cancel_before_launch_starts_nothing() {
         Command::new("must-not-exist-terminal-test"),
         80,
         24,
+        None,
         &mut controls,
         &mut cancel,
         |_| panic!("must not start"),
@@ -337,6 +341,7 @@ async fn run(
             python(HELPER),
             req,
             "/unused",
+            false,
             Vec::new(),
             controls,
             on_event,
@@ -467,13 +472,16 @@ async fn upload_is_literal_and_rejects_existing_or_redirected_destinations() {
     std::fs::write(root.join("literal ' $.bin"), &payload).unwrap();
     std::fs::create_dir(root.join("empty")).unwrap();
     let mut req = request("python3 -c 'import pathlib,hashlib; print(hashlib.sha256(next(pathlib.Path(\".\").glob(\"*.bin\")).read_bytes()).hexdigest()); print(pathlib.Path(\"empty\").is_dir())'");
-    req.workspace_dir = Some(root.to_string_lossy().into_owned());
+    req.workspace = Some(crate::workspace_ref::WorkspaceRef::local(
+        root.to_string_lossy().into_owned(),
+    ));
     let (_tx, mut rx) = mpsc::unbounded_channel();
     let mut output = Vec::new();
     let result = execute_with_command(
         python(HELPER),
         &req,
         &remote,
+        false,
         filesync::collect(&root).unwrap(),
         &mut rx,
         |event| {
@@ -496,6 +504,7 @@ async fn upload_is_literal_and_rejects_existing_or_redirected_destinations() {
         python(HELPER),
         &req,
         &remote,
+        false,
         Vec::new(),
         &mut rx,
         |_| {},
@@ -510,6 +519,7 @@ async fn upload_is_literal_and_rejects_existing_or_redirected_destinations() {
         python(HELPER),
         &req,
         &format!("{anchor}/link/run"),
+        false,
         Vec::new(),
         &mut rx,
         |_| {},
@@ -535,6 +545,7 @@ async fn eof_without_completion_is_failure_and_prelaunch_stop_executes_nothing()
         python("print('{\"type\":\"ready\",\"version\":1,\"info\":\"test\"}')"),
         &request("true"),
         "/unused",
+        false,
         Vec::new(),
         &mut rx,
         |_| {},
@@ -609,6 +620,7 @@ async fn run_manager_records_wsl_output_and_history_without_ssh() {
             request("printf 'WSL_DIRECT_OK'; exit 3"),
             device,
             root.clone(),
+            None,
         )
         .unwrap();
     let mut output = Vec::new();
@@ -633,4 +645,98 @@ async fn run_manager_records_wsl_output_and_history_without_ssh() {
     let (tx, _) = crate::events::channel();
     assert_eq!(RunManager::new(&root, tx).history()[0].run_id, id);
     std::fs::remove_dir_all(root).unwrap();
+}
+
+/// helper 发出的每一条消息都必须能被 Rust 侧反序列化。
+/// serde 的 `rename_all = "lowercase"` 不会插入下划线（`ExecExit` → `execexit`），
+/// 多词变体必须显式 rename —— 否则 helper 的 `exec_exit` 会被静默当成未知消息。
+/// 这不依赖 WSL 发行版，因此在所有平台上都运行。
+#[test]
+fn helper_message_names_round_trip_through_the_rust_protocol() {
+    fn variant(message: &Message) -> &'static str {
+        match message {
+            Message::Ready { .. } => "ready",
+            Message::Ack => "ack",
+            Message::Started => "started",
+            Message::Output { .. } => "output",
+            Message::ExecExit { .. } => "exec_exit",
+            Message::Exit { .. } => "exit",
+            Message::Error { .. } => "error",
+            Message::FsEntry { .. } => "fs_entry",
+            Message::FsFile { .. } => "fs_file",
+            Message::FsChunk { .. } => "fs_chunk",
+            Message::FsDone => "fs_done",
+            Message::FsSaved { .. } => "fs_saved",
+            Message::FsError { .. } => "fs_error",
+        }
+    }
+    let cases = [
+        (json!({"type":"ready","version":1,"info":"helper"}), "ready"),
+        (json!({"type":"ack"}), "ack"),
+        (json!({"type":"started"}), "started"),
+        (
+            json!({"type":"output","stream":"stdout","data":""}),
+            "output",
+        ),
+        (json!({"type":"exec_exit","code":7}), "exec_exit"),
+        (json!({"type":"exit","code":0}), "exit"),
+        (json!({"type":"error","message":"boom"}), "error"),
+        (
+            json!({"type":"fs_entry","name":"a.py","dir":false,"link":false}),
+            "fs_entry",
+        ),
+        (json!({"type":"fs_file","revision":"r","size":3}), "fs_file"),
+        (json!({"type":"fs_chunk","data":""}), "fs_chunk"),
+        (json!({"type":"fs_done"}), "fs_done"),
+        (json!({"type":"fs_saved","revision":"r"}), "fs_saved"),
+        (
+            json!({"type":"fs_error","code":"not_found","message":"gone"}),
+            "fs_error",
+        ),
+    ];
+    for (value, expected) in cases {
+        let text = value.to_string();
+        let parsed: Message = serde_json::from_value(value)
+            .unwrap_or_else(|e| panic!("helper message {text} is not understood by Rust: {e}"));
+        assert_eq!(variant(&parsed), expected, "wrong variant for {text}");
+    }
+    // 派生名（缺下划线）不是合法协议名：误加 rename_all 会立刻被这条断言挡住
+    assert!(serde_json::from_value::<Message>(json!({"type":"execexit","code":0})).is_err());
+    assert!(
+        serde_json::from_value::<Message>(json!({"type":"fserror","code":"io","message":"x"}))
+            .is_err()
+    );
+}
+
+/// 执行结束标记必须携带退出码，否则会被当成未知消息
+#[test]
+fn exec_exit_carries_the_exit_code() {
+    let parsed: Message = serde_json::from_value(json!({"type":"exec_exit","code":3})).unwrap();
+    assert!(matches!(parsed, Message::ExecExit { code: Some(3) }));
+    let parsed: Message = serde_json::from_value(json!({"type":"exec_exit","code":null})).unwrap();
+    assert!(matches!(parsed, Message::ExecExit { code: None }));
+}
+
+/// Rust 侧发送的 fs_* 请求也必须与 helper 接受的名字一致
+#[test]
+fn rust_fs_requests_use_the_names_the_helper_accepts() {
+    let sent = [
+        json!({"type":"fs_open","path":"/srv"}),
+        json!({"type":"fs_list","path":""}),
+        json!({"type":"fs_read","path":"a.py","limit":1}),
+        json!({"type":"fs_write","path":"a.py","expected":"r"}),
+        json!({"type":"fs_wchunk","data":""}),
+        json!({"type":"fs_wdone"}),
+        json!({"type":"fs_create","path":"a.py","kind":"file"}),
+        json!({"type":"fs_rename","from":"a.py","to":"b.py"}),
+        json!({"type":"fs_delete","path":"a.py"}),
+    ];
+    let helper = include_str!("helper.py");
+    for message in sent {
+        let name = message["type"].as_str().unwrap();
+        assert!(
+            helper.contains(&format!("\"{name}\"")),
+            "helper does not handle the `{name}` request"
+        );
+    }
 }

@@ -84,15 +84,18 @@ fn to_msys_path(path: &Path) -> String {
     }
 }
 
+/// 本机工作区目录（跨设备暂存后亦为本地路径；设备工作区不会到达这里）
+fn workspace_dir(req: &RunRequest) -> Option<&str> {
+    req.workspace.as_ref().and_then(|w| w.local_dir())
+}
+
 /// 按 shell 风味构造 spawn 参数；Python/Shell 类型不经 shell 解释参数
 pub(crate) fn invocation(shell: &Shell, req: &RunRequest) -> Result<(PathBuf, Vec<String>)> {
     match req.kind {
         ScriptKind::Python => {
             let entry = req.entry.as_deref().unwrap_or("main.py");
-            let workspace = req
-                .workspace_dir
-                .as_deref()
-                .ok_or_else(|| failure("script requires a workspace"))?;
+            let workspace =
+                workspace_dir(req).ok_or_else(|| failure("script requires a workspace"))?;
             // Managed Runtime：直接 spawn 环境内 Python，不探测系统 Python（00027 §13）
             if let Some(env_python) = &req.managed_env_python {
                 let mut args = vec!["-u".to_string()];
@@ -114,10 +117,8 @@ pub(crate) fn invocation(shell: &Shell, req: &RunRequest) -> Result<(PathBuf, Ve
         }
         ScriptKind::Shell => {
             let entry = req.entry.as_deref().unwrap_or("main.sh");
-            let workspace = req
-                .workspace_dir
-                .as_deref()
-                .ok_or_else(|| failure("script requires a workspace"))?;
+            let workspace =
+                workspace_dir(req).ok_or_else(|| failure("script requires a workspace"))?;
             let entry = entry_path(workspace, entry);
             let mut args: Vec<String> = match shell.flavor {
                 Flavor::Posix => {
@@ -167,7 +168,7 @@ pub(crate) fn invocation(shell: &Shell, req: &RunRequest) -> Result<(PathBuf, Ve
 
 fn spec_for(shell: &Shell, req: &RunRequest) -> Result<SessionSpec> {
     let (program, args) = invocation(shell, req)?;
-    let cwd = match &req.workspace_dir {
+    let cwd = match workspace_dir(req) {
         Some(workspace) => PathBuf::from(workspace),
         None => default_working_directory()
             .ok_or_else(|| failure("cannot determine the local working directory"))?,
@@ -179,7 +180,7 @@ fn spec_for(shell: &Shell, req: &RunRequest) -> Result<SessionSpec> {
         .collect();
     // Managed Runtime：python-path 由后端验证，展开为工作区内绝对路径加入 PYTHONPATH
     if !req.managed_pythonpath.is_empty() {
-        if let Some(workspace) = &req.workspace_dir {
+        if let Some(workspace) = workspace_dir(req) {
             let paths: Vec<PathBuf> = req
                 .managed_pythonpath
                 .iter()

@@ -7,7 +7,7 @@ import { anyDirty } from "../editorDocument";
 import i18n from "../i18n";
 import { panelVisibilityPatch, toggleSidePanel } from "../layoutState";
 import { panelsInDock } from "../panels/registry";
-import { useAppStore } from "../store";
+import { useAppStore, workspaceLabel } from "../store";
 import { startOneClickUpdate } from "../updateFlow";
 import { updateButtonLabel, type UpdateButtonPhase } from "../updateStatus";
 import { MenuBar } from "./MenuBar";
@@ -26,7 +26,8 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
   onCheckUpdate: () => void;
 }) {
   const { t } = useTranslation();
-  const workspaceDir = useAppStore((state) => state.workspaceDir);
+  const workspace = useAppStore((state) => state.workspace);
+  const devices = useAppStore((state) => state.devices);
   const availableUpdate = useAppStore((state) => state.availableUpdate);
   const layout = useAppStore((state) => state.layout);
   const setLayout = useAppStore((state) => state.setLayout);
@@ -35,7 +36,10 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
   const [focused, setFocused] = useState(true);
   const [updatePhase, setUpdatePhase] = useState<UpdateButtonPhase | null>(null);
   const desktop = isTauri();
-  const workspaceName = workspaceDir?.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || workspaceDir;
+  const label = workspaceLabel(workspace, devices);
+  const workspaceName = workspace?.type === "device"
+    ? label
+    : label?.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || label;
 
   useEffect(() => {
     if (!desktop) return;
@@ -71,7 +75,7 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
       </div>
       <MenuBar uiZoom={uiZoom} onUiZoom={onUiZoom} onAbout={onAbout} onCheckUpdate={onCheckUpdate} />
       <div className="titlebar-drag" data-tauri-drag-region>
-        <div className="titlebar-workspace" data-tauri-drag-region title={workspaceDir ?? t("titlebar.noWorkspaceTitle")}>
+        <div className="titlebar-workspace" data-tauri-drag-region title={label ?? t("titlebar.noWorkspaceTitle")}>
           <span className="titlebar-workspace-name">{workspaceName ?? t("titlebar.noWorkspace")}</span>
           {dirty && <span className="titlebar-dirty" role="img" aria-label={t("titlebar.unsavedChanges")} />}
         </div>
