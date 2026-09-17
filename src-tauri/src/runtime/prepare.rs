@@ -2,7 +2,7 @@
 //! 锁 → 复用或 `uv sync --locked` → smoke test → manifest + .ready（00027 §9-§13）。
 //!
 //! 取消语义：cancel 置位后当前 exec 终止远程/本地进程并返回 CANCELED；
-//! 未完成环境保留 `.preparing`（无 `.ready`），下次准备进入恢复路径。
+//! 中途取消的环境缺少 `.ready`，下次准备时缓存未命中并整体隔离重建。
 use crate::error::{Result, RunnerError};
 use crate::process::OutputStream;
 use crate::runtime::catalog::RuntimeCatalog;
@@ -134,9 +134,13 @@ pub async fn resolve_root(
 }
 
 /// 固定环境变量（00027 §7）
+///
+/// 注意：不能同时设置 `UV_PYTHON_PREFERENCE` 与 `--managed-python`——uv 0.10+
+/// 会把它们视为冲突来源而直接拒绝（`cannot be used with --python-preference`）。
+/// managed-only 约束由 `--managed-python` 标志和 `UV_PYTHON_INSTALL_DIR` 表达，
+/// 因此这里不再注入 `UV_PYTHON_PREFERENCE`。
 fn uv_env(host: &dyn RuntimeHost, root: &str, network: &NetworkConfig) -> Vec<(String, String)> {
     let mut env = vec![
-        ("UV_PYTHON_PREFERENCE".into(), "only-managed".into()),
         ("UV_PYTHON_INSTALL_DIR".into(), host.join(root, "python")),
         ("UV_CACHE_DIR".into(), host.join(root, "cache")),
         ("UV_NO_SYSTEM_CONFIG".into(), "1".into()),
@@ -368,12 +372,19 @@ async fn deploy_uv(
     Ok(uv_path)
 }
 
+/// `uv --version` 首行形如 `uv 0.12.13 (x86_64-unknown-linux-gnu)`；版本号必须逐项与
+/// Catalog 一致，版本号之后允许随附目标三元组等括号信息。额外的版本片段（dev、pre、
+/// 第四段）一律拒绝，防止不同构建被误判为已部署。
 fn uv_version_matches(stdout: &[u8], expected: &str) -> bool {
-    String::from_utf8_lossy(stdout)
-        .lines()
-        .next()
-        .map(str::trim)
-        .is_some_and(|line| line == format!("uv {expected}"))
+    let text = String::from_utf8_lossy(stdout);
+    let Some(line) = text.lines().next() else {
+        return false;
+    };
+    let Some(rest) = line.trim().strip_prefix("uv ") else {
+        return false;
+    };
+    let version = rest.split_whitespace().next().unwrap_or("");
+    !version.is_empty() && version == expected
 }
 
 /// 安装并验证 Managed Python：精确版本、managed-only、拒绝系统 Python
@@ -654,11 +665,12 @@ async fn prepare_environment_locked(
         (events.on_progress)("quarantined incomplete environment", 0, None);
     }
 
-    // 最终路径创建 + .preparing（venv 不可整体 rename：console-script shebang 存绝对路径）
-    host.mkdir_all(env_dir).await?;
-    host.write_file(preparing_path, b"", 0o600).await?;
-
-    // uv sync --locked：锁文件过期/不一致直接失败，不改写锁文件
+    // uv sync --locked：锁文件过期/不一致直接失败，不改写锁文件。
+    // 不预先创建 env_dir：uv 只接受空目录作为新建 venv 的目标，任何已有文件
+    // （包括 .preparing 标记）都会让它把 env_dir 当作"复用现有环境"而拒绝——
+    // "not a valid Python environment (no Python executable was found)"。
+    // venv 不能整体 rename（console-script shebang 存绝对路径），因此崩溃恢复
+    // 依靠下一轮的缓存未命中 + 隔离路径，而不是 .preparing 标记。
     events.phase(RuntimePhase::SyncingDependencies);
     run_uv_sync(
         host,
@@ -698,7 +710,10 @@ async fn prepare_environment_locked(
     let bytes = manifest.to_json()?;
     manifest::write_atomic(&**host, manifest_path, &bytes).await?;
     manifest::write_atomic(&**host, ready_path, b"").await?;
-    let _ = host.remove(preparing_path).await;
+    // 兼容旧版本：sync 前预写 .preparing 的实现已移除，这里只在残留时清理
+    if host.exists(preparing_path).await {
+        let _ = host.remove(preparing_path).await;
+    }
 
     Ok(PreparedEnvironment {
         environment_id: environment_id.to_string(),
@@ -782,6 +797,35 @@ async fn run_uv_sync(
         ));
     }
     Ok(())
+}
+
+/// 测试专用入口：fake 集成测试需要直接驱动 sync（含 UV_PROJECT_ENVIRONMENT），
+/// 以验证"非空 env 目录被 uv 拒绝"的真实行为在 prepare 链路里成立。
+/// 不需要 catalog（run_uv_sync 不使用），这里复用内嵌 catalog 保持签名一致。
+#[cfg(test)]
+pub async fn run_uv_sync_for_test(
+    host: &Arc<dyn RuntimeHost + Send + Sync>,
+    ready: &RuntimeReady,
+    project: &PythonProject,
+    workspace_dir: &str,
+    env_dir: &str,
+    network: &NetworkConfig,
+    cancel: &AtomicBool,
+    events: &mut PrepareEvents,
+) -> Result<()> {
+    let catalog = crate::runtime::catalog::RuntimeCatalog::embedded()?;
+    run_uv_sync(
+        host,
+        ready,
+        project,
+        workspace_dir,
+        env_dir,
+        catalog,
+        network,
+        cancel,
+        events,
+    )
+    .await
 }
 
 /// 探测环境内 Python 并执行 smoke test；返回实际解释器路径
@@ -910,5 +954,34 @@ mod tests {
             python_build_id(&info("3.12.9")),
             python_build_id(&info("3.12.10"))
         );
+    }
+
+    #[test]
+    fn uv_version_output_accepts_exact_version_with_target_triple() {
+        // 真实 uv 0.12.13 输出：版本号 + 空格 + 括号内目标三元组
+        assert!(uv_version_matches(
+            b"uv 0.12.13 (x86_64-unknown-linux-gnu)\n",
+            "0.12.13"
+        ));
+        assert!(uv_version_matches(b"uv 0.12.13\n", "0.12.13"));
+        assert!(uv_version_matches(b"uv 0.12.13", "0.12.13"));
+        // 版本必须逐项一致，不是前缀
+        assert!(!uv_version_matches(b"uv 0.12.130 (x86_64)\n", "0.12.13"));
+        assert!(!uv_version_matches(
+            b"uv 0.12.13-dev.1 (x86_64-unknown-linux-gnu)\n",
+            "0.12.13"
+        ));
+        assert!(!uv_version_matches(
+            b"uv 0.12.13.1 (x86_64-unknown-linux-gnu)\n",
+            "0.12.13"
+        ));
+        assert!(!uv_version_matches(
+            b"uv 0.12.12 (x86_64-unknown-linux-gnu)\n",
+            "0.12.13"
+        ));
+        assert!(!uv_version_matches(b"uv  (x86_64)\n", "0.12.13"));
+        assert!(!uv_version_matches(b"", "0.12.13"));
+        // 非 UTF-8 输出不误报
+        assert!(!uv_version_matches(&[0xFF, 0xFE], "0.12.13"));
     }
 }

@@ -1,6 +1,6 @@
 # 00027 实施进度记录
 
-> 本文档跟踪 `docs/00027_20260916_uv-managed-python-runtime.md`（uv-only Managed Python Runtime）的实施进度，随实施更新。最近一次更新：2026-09-16。
+> 本文档跟踪 `docs/00027_20260916_uv-managed-python-runtime.md`（uv-only Managed Python Runtime）的实施进度，随实施更新。最近一次更新：2026-09-17（实机暴露的四处 bug 修复：uv 归档伴生文件、`uv --version` 三元组输出、`UV_PYTHON_PREFERENCE` 与 `--managed-python` 冲突、`UV_PROJECT_ENVIRONMENT` 非空目录被 uv 拒绝，见文末）。
 
 ## 总览
 
@@ -115,7 +115,7 @@
 `runtime/fake.rs`（`#[cfg(test)]`，约 700 行）实现 `FakeHost` + 可编程 fake uv，9 个集成测试全部通过：
 
 - **FakeHost**：内存文件系统（文件/目录/`rename` 支持目录子树、`mkdir` 父目录必须存在以保锁原子性、`remove` 幂等）+ 可编程 exec（posix 探测脚本、`.probe-*` 可执行性探针、`uv --version` / `python install` / `python find` / `sync` / `cache`、环境内 Python 信息探针与 smoke test）。`Behavior` 可中途改：`uv_version` / `python_version` / `find_returns_system` / `sync_fails` / `sync_stderr`；计数器 `deploys`（uv 上传次数）/ `install_count` / `sync_count` 与 `exec_log` 供断言。
-- **离线资产**：不用内嵌 Catalog（其 sha256 对应真实资产），测试用 `RuntimeCatalog::parse` 注入单平台 Catalog（`size: 0`），tar.gz 由 `tar::Builder` + `flate2` 自制（仅含单个 `uv` 文件），sha256 写入 Catalog 并经 `download::store_cache` 预置桌面端内容缓存——`cached_asset` 命中，全程无网络。
+- **离线资产**：不用内嵌 Catalog（其 sha256 对应真实资产），测试用 `RuntimeCatalog::parse` 注入单平台 Catalog（`size: 0`），tar.gz 由 `tar::Builder` + `flate2` 自制（复刻真实归档布局：目录条目 + `uvx` 在前、`uv` 在后，见下节 bug 修复），sha256 写入 Catalog 并经 `download::store_cache` 预置桌面端内容缓存——`cached_asset` 命中，全程无网络。
 - **覆盖矩阵**（9 个测试）：首次部署全流程（uv 发布、install/sync 各 1 次、manifest + `.ready`、phase 序列）；二次运行缓存命中（`deploys` 仍 1、`sync_count` 仍 1、`cache_hit=true`）；sync 失败（`environment_sync_failed`、`.preparing` 残留无 `.ready`，修复后重跑隔离残留到 quarantine 并成功）；取消（预置 cancel → `managed_runtime_canceled`，零部署零 sync）；`python find` 指回系统路径与 Python 版本报告不符均拒绝（`managed_python_verification_failed`）；并发两 prepare 同环境只 sync 一次（共享 FakeHost + 远端锁，恰好一个 cache_hit）；非 UTF-8 stderr 原样透传到输出事件；cancel 置位后任何 exec 立即拒绝。
 
 ### 全量验证
@@ -126,6 +126,26 @@
 
 - `docs/00027` 状态改为已实现 + 标注偏差（build identity 用摘要替代官方 build id、catalog `size=0` 语义、WSL 双 helper 会话、Windows 本机剩余空间不探测、LocalHost exec 测试 cfg(unix)）
 - `docs/00001` / `00002` 和 README 补 Managed Runtime 说明（AGENTS.md 要求）
+
+## 实机暴露的 bug 修复（2026-09-17）
+
+**现象**：真实设备上首次托管运行在 `deploying_uv` 失败，错误 `uv_asset_verification_failed: uv archive contains unexpected file "uv-x86_64-unknown-linux-gnu/uvx"`。
+
+**根因**：官方 uv 发布资产不止含 `uv` 一个文件——unix tar.gz 在同一目录随附 `uvx` 蹦床（x86_64 linux 归档里 `uvx` 排在 `uv` 之前），windows zip 含 `uv.exe` + `uvx.exe` + `uvw.exe`。`unpack_uv` 原先只接受单个 `uv`/`uv.exe` 条目，把合法的伴生文件当额外文件拒绝。⑧ 的 fake 资产只含单个 `uv`，因此内存集成测试拦不住这个形状差异。
+
+**修复**（`runtime/download.rs`）：新增 `ArchiveLayout` 统一校验 tar/zip 条目名——仍然只解出主二进制；伴生文件（`uvx`，windows 再加 `uvw.exe`）允许存在但跳过、不写入目标设备，且必须与主二进制同目录、不得重复；其余额外文件、链接、绝对路径、`..` 照旧拒绝。
+
+**测试**：
+
+- 新增 `unpack_accepts_release_companion_in_either_order`、`unpack_rejects_companion_without_main_outside_dir_and_duplicated`、`unpack_zip_accepts_release_companions`（windows 三件套通过，未知 `.exe` 与重复条目仍拒绝）。
+- `fake.rs` 离线资产改为复刻真实归档布局（目录条目 + `uvx` 在前、`uv` 在后），⑧ 的内存集成测试现在覆盖真实资产形状（修复前该资产必然失败）。
+- 手工验证：0.12.13 的 4 个真实资产（linux x86_64/aarch64 tar.gz、macOS aarch64 tar.gz、windows x86_64 zip，sha256 与 Catalog 一致）全部解包成功，主二进制长度与归档清单一致（49 388 608 / 42 893 648 / 36 449 104 / 41 556 784 字节）。该临时校验未留在测试套件中，测试默认不依赖公网。
+
+**次日实机复测（2026-09-17，紧随解包修复后）**：部署已能走完解包，但在 `uv --version` 校验处失败，`uv_version_mismatch: deployed uv version mismatch: expected 0.12.13, got "uv 0.12.13 (x86_64-unknown-linux-gnu)\n"`。根因：`uv_version_matches` 要求整行精确等于 `uv 0.12.13`，而真实 uv 输出在版本号后附带括号内的目标三元组。修复（`runtime/prepare.rs`）：改为逐项比较版本号本身——`uv ` 前缀 + 首个空白分隔的版本字段必须等于 Catalog 版本，括号三元组等尾随信息允许；多余版本片段（`0.12.13-dev.1`、`0.12.13.1`、`0.12.130`）一律拒绝。fake uv 的 `--version` 输出也改为复刻真实格式 `uv 0.12.13 (x86_64-unknown-linux-gnu)`，避免⑧ 再用理想化输出掩盖真实二进制的应答形状；新增单测 `uv_version_output_accepts_exact_version_with_target_triple`。
+
+**第三轮实机复测（2026-09-17）**：`uv python install` 通过后，`uv python find` 报错 `managed_python_install_failed: uv python find failed: error: the argument --managed-python cannot be used with --python-preference`。根因：`uv_env` 注入了 `UV_PYTHON_PREFERENCE=only-managed`，而 `find`/`sync` 又显式带 `--managed-python`；uv 0.10+ 把这两处视为同一配置的冲突来源，直接拒绝。在本机用真实 uv（0.10.7）复现：带 env + flag 报同样的错，只带 flag 正常返回 managed 解释器路径。修复（`runtime/prepare.rs`）：`uv_env` 不再注入 `UV_PYTHON_PREFERENCE`，managed-only 约束完全由 `--managed-python` 标志和 `UV_PYTHON_INSTALL_DIR` 表达；`find`/`sync` 的显式标志不变。FakeHost 增加 `exec_env_log`（与 `exec_log` 一一对应），`first_deploy_full_pipeline` 断言全部 exec 的 env 均不含 `UV_PYTHON_PREFERENCE`，把该冲突锁在测试里。00027 §7 的固定环境变量清单同步删除了这一项。
+
+**第四轮实机复测（2026-09-17）**：`uv sync` 报错 `environment_sync_failed: uv sync failed (exit Some(2)): error: Project virtual environment directory ... cannot be used because it is not a valid Python environment (no Python executable was found)`。根因：`prepare_environment_locked` 在调用 `uv sync` 之前主动 `mkdir_all(env_dir)` 并写入 `.preparing` 标记；uv 0.10+ 把已含任何文件的 `UV_PROJECT_ENVIRONMENT` 目录当作"复用现有环境"，发现没有 Python 可执行文件就拒绝。本机真实 uv（0.10.7）复现：空目录可正常 sync，目录里放任意一个文件就稳定报错。修复（`runtime/prepare.rs`）：不再预创建 `env_dir`，也不预写 `.preparing`——uv sync 自己创建环境目录；`.preparing` 只在成功收尾时清理（兼容旧版本残留），恢复路径仍靠"缺失 `.ready` 或 manifest 无效 → 隔离重建"。FakeHost 的 fake uv sync 现在复刻真实行为：`UV_PROJECT_ENVIRONMENT` 指向的目录若已含任何文件，直接按 exit 2 返回同样的错误；新增测试 `sync_rejects_non_empty_env_target` 通过 `run_uv_sync_for_test` 驱动该路径。`sync_failure_keeps_preparing_and_recovers` 相应调整：sync 失败时环境目录可能尚未创建（uv 报错在写盘之前），断言"无 `.ready`"而非"有 `.preparing`"。00027 §12 同步更新事务步骤（去掉预创建/预写 `.preparing`）。
 
 ## 遗留清理项（可选）
 

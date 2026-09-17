@@ -44,6 +44,8 @@ struct FakeState {
     dirs: HashSet<String>,
     behavior: Behavior,
     exec_log: Vec<Vec<String>>,
+    /// 与 exec_log 一一对应的 env 快照，用于断言约束不依赖环境变量
+    exec_env_log: Vec<Vec<(String, String)>>,
     sync_count: usize,
     install_count: usize,
     /// uv 二进制上传次数（downloads/ 下临时文件写入次数）
@@ -223,6 +225,10 @@ impl FakeHost {
         self.state.lock().unwrap().exec_log.clone()
     }
 
+    pub fn exec_log_envs(&self) -> Vec<Vec<(String, String)>> {
+        self.state.lock().unwrap().exec_env_log.clone()
+    }
+
     fn exec_inner(
         &self,
         argv: &[String],
@@ -232,6 +238,7 @@ impl FakeHost {
         check_cancel(cancel)?;
         let mut state = self.state.lock().unwrap();
         state.exec_log.push(argv.to_vec());
+        state.exec_env_log.push(env.to_vec());
         let program = argv.first().map(String::as_str).unwrap_or("");
 
         // posix 探测脚本（profile::POSIX_PROBE 内含 RRPROBE 标记）
@@ -268,9 +275,11 @@ impl FakeHost {
                 "--version" => {
                     if state.files.contains_key(program) {
                         let version = state.behavior.uv_version.clone();
+                        // 复刻真实 uv 输出：版本号 + 空格 + 括号内目标三元组
                         return Ok(ExecResult {
                             code: Some(0),
-                            stdout: format!("uv {version}\n").into_bytes(),
+                            stdout: format!("uv {version} (x86_64-unknown-linux-gnu)\n")
+                                .into_bytes(),
                             stderr: Vec::new(),
                         });
                     }
@@ -334,6 +343,22 @@ impl FakeHost {
                                 "fake uv sync: UV_PROJECT_ENVIRONMENT missing",
                             )
                         })?;
+                    // 复刻真实 uv：UV_PROJECT_ENVIRONMENT 指向含任何文件的目录时，
+                    // 按"复用现有环境"处理并直接报错（不能预先写 .preparing 标记）
+                    if state
+                        .files
+                        .keys()
+                        .any(|f| f.starts_with(&format!("{env_dir}/")))
+                    {
+                        return Ok(ExecResult {
+                            code: Some(2),
+                            stdout: Vec::new(),
+                            stderr: format!(
+                                "error: Project virtual environment directory `{env_dir}` cannot be used because it is not a valid Python environment (no Python executable was found)"
+                            )
+                            .into_bytes(),
+                        });
+                    }
                     state.mkdir_all_locked(&format!("{env_dir}/bin"))?;
                     state.write_locked(&format!("{env_dir}/bin/python"), b"fake-python")?;
                     let stderr = state.behavior.sync_stderr.clone();
@@ -533,18 +558,37 @@ mod tests {
         }
     }
 
-    /// 单文件 tar.gz（只含 `uv`），与 unpack_uv 的严格解包规则匹配
+    /// 复刻官方 linux x86_64 资产的实际布局：目录条目 + `uvx` 在前、`uv` 在后
+    /// （0.12.13 归档顺序如此），保证解包规则对真实资产成立
     fn fake_uv_archive() -> Vec<u8> {
         let mut buffer = Vec::new();
         {
             let encoder = flate2::write::GzEncoder::new(&mut buffer, flate2::Compression::fast());
             let mut builder = tar::Builder::new(encoder);
-            let data = b"#!/bin/sh\necho fake uv\n";
-            let mut header = tar::Header::new_gnu();
-            header.set_size(data.len() as u64);
-            header.set_mode(0o755);
-            header.set_cksum();
-            builder.append_data(&mut header, "uv", &data[..]).unwrap();
+            let mut dir = tar::Header::new_gnu();
+            dir.set_entry_type(tar::EntryType::Directory);
+            dir.set_size(0);
+            dir.set_mode(0o755);
+            dir.set_cksum();
+            builder
+                .append_data(&mut dir, "uv-x86_64-unknown-linux-gnu", &[][..])
+                .unwrap();
+            for (name, data) in [
+                (
+                    "uv-x86_64-unknown-linux-gnu/uvx",
+                    &b"#!/bin/sh\necho fake uvx\n"[..],
+                ),
+                (
+                    "uv-x86_64-unknown-linux-gnu/uv",
+                    &b"#!/bin/sh\necho fake uv\n"[..],
+                ),
+            ] {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(data.len() as u64);
+                header.set_mode(0o755);
+                header.set_cksum();
+                builder.append_data(&mut header, name, data).unwrap();
+            }
             builder.finish().unwrap();
         }
         buffer
@@ -662,6 +706,12 @@ mod tests {
         assert!(host.exists(&ready.uv_path).await, "uv 二进制已发布");
         assert_eq!(host.install_count(), 1);
         assert_eq!(host.deploys(), 1);
+        // UV_PYTHON_PREFERENCE 与 --managed-python 在 uv 0.10+ 冲突，env 里不得再出现
+        for env in host.exec_log_envs() {
+            for (key, _) in env {
+                assert_ne!(key, "UV_PYTHON_PREFERENCE");
+            }
+        }
         let seen = phases.lock().unwrap().clone();
         for phase in [
             RuntimePhase::ProbingRuntime,
@@ -701,6 +751,56 @@ mod tests {
                 .await
         );
         assert_eq!(env.python_path, format!("{}/bin/python", env.env_path));
+    }
+
+    /// 真实 uv 把非空的 UV_PROJECT_ENVIRONMENT 当作"复用现有环境"而拒绝。
+    /// FakeHost 已复刻该行为，这里直接驱动 prepare_environment，证明旧实现
+    /// （sync 前预写 .preparing）会被稳定拦下。
+    #[tokio::test]
+    async fn sync_rejects_non_empty_env_target() {
+        let host = Arc::new(FakeHost::new());
+        let cache = TestDir::new();
+        let catalog = fake_catalog(&cache.0);
+        let cancel = AtomicBool::new(false);
+        let (mut events, _, _) = collect_events();
+        let ready = prepare_runtime(
+            shared(&host),
+            &catalog,
+            PYTHON_VERSION,
+            &cache.0,
+            &NetworkConfig::default(),
+            &cancel,
+            &mut events,
+        )
+        .await
+        .unwrap();
+
+        // 模拟旧实现：sync 目标目录里预先放一个文件
+        let envs_root = format!("{}/envs", ready.profile.runtime_root);
+        host.mkdir_all(&envs_root).await.unwrap();
+        let probe_dir = format!("{envs_root}/probe");
+        host.mkdir_all(&probe_dir).await.unwrap();
+        host.write_file(&format!("{probe_dir}/.preparing"), b"", 0o600)
+            .await
+            .unwrap();
+
+        // 直接调用 fake uv sync 路径：env 目录非空应被拒绝（行为与真实 uv 对齐）
+        let (mut events, _, _) = collect_events();
+        let result = crate::runtime::prepare::run_uv_sync_for_test(
+            &shared(&host),
+            &ready,
+            &fake_project(),
+            "/ws",
+            &probe_dir,
+            &NetworkConfig::default(),
+            &cancel,
+            &mut events,
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "fake uv 应拒绝非空 env 目录（与真实 uv 行为一致）"
+        );
     }
 
     #[tokio::test]
@@ -759,21 +859,19 @@ mod tests {
             err.to_string().contains(code::ENV_SYNC),
             "unexpected error: {err}"
         );
-        // 环境目录保留 .preparing、无 .ready
+        // sync 失败：环境目录可能尚未创建（uv 报错在写盘之前），或创建了但无 .ready。
+        // 无论哪种，下一轮都会整体重建。
         let envs = host.list(&format!("{}/envs", host.root())).await.unwrap();
-        assert_eq!(envs.len(), 1);
-        let env_dir = format!("{}/envs/{}", host.root(), envs[0]);
-        assert!(
-            host.exists(&format!("{env_dir}/{}", manifest::PREPARING_MARKER))
-                .await
-        );
-        assert!(
-            !host
-                .exists(&format!("{env_dir}/{}", manifest::READY_MARKER))
-                .await
-        );
+        for name in &envs {
+            let env_dir = format!("{}/envs/{name}", host.root());
+            assert!(
+                !host
+                    .exists(&format!("{env_dir}/{}", manifest::READY_MARKER))
+                    .await
+            );
+        }
 
-        // 修复后重跑：隔离残留目录并成功
+        // 修复后重跑：隔离残留（若有）并成功
         host.set_behavior(|b| b.sync_fails = false);
         let (mut events, _, _) = collect_events();
         let env = prepare_environment(
@@ -795,12 +893,13 @@ mod tests {
             host.exists(&format!("{}/{}", env.env_path, manifest::READY_MARKER))
                 .await
         );
-        // 残留目录被隔离到 quarantine
+        // 残留目录被隔离到 quarantine（如果上一轮 sync 已写出 env_dir）。
+        // 在"失败发生在写盘前"的 fake 路径里可能为空，这里只要求最终环境可用。
         let quarantine = host
             .list(&format!("{}/quarantine", host.root()))
             .await
             .unwrap();
-        assert_eq!(quarantine.len(), 1);
+        assert!(quarantine.len() <= 1);
     }
 
     #[tokio::test]

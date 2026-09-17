@@ -66,8 +66,9 @@ fn verify_archive(asset: &UvAsset, data: &[u8]) -> Result<()> {
 }
 
 /// 从归档中解出唯一的 uv 可执行文件。
-/// tar.gz（unix）或 zip（windows）：只接受单个常规文件条目，名字必须为 `uv`/`uv.exe`；
-/// 允许一层归档自带目录前缀；拒绝绝对路径、`..`、链接与额外文件。
+/// tar.gz（unix）或 zip（windows）：只接受常规文件条目，主二进制名字必须为 `uv`/`uv.exe`；
+/// 官方发布资产在同一目录随附 `uvx`（windows 另有 `uvw.exe`），这些伴生文件被容忍但跳过、
+/// 不参与部署；允许一层归档自带目录前缀；拒绝绝对路径、`..`、链接与其余额外文件。
 pub fn unpack_uv(archive: &[u8], windows: bool) -> Result<UvBinary> {
     let expect = if windows { "uv.exe" } else { "uv" };
     let bytes = if windows {
@@ -81,28 +82,103 @@ pub fn unpack_uv(archive: &[u8], windows: bool) -> Result<UvBinary> {
     })
 }
 
-fn entry_name_ok(name: &str, expect: &str) -> Result<()> {
-    let normalized = name.replace('\\', "/");
-    if normalized.starts_with('/') || normalized.split('/').any(|p| p == "..") {
-        return Err(RunnerError::managed(
-            code::UV_ASSET_VERIFY,
-            format!("uv archive contains unsafe path {name:?}"),
-        ));
+/// 归档条目分类：只有主二进制会被解出，官方随附的伴生可执行文件（`uvx`、`uvw.exe`）
+/// 允许存在但必须与主二进制同目录，其余条目一律拒绝。
+struct ArchiveLayout {
+    expect: String,
+    companions: Vec<String>,
+    main_dir: Option<String>,
+    main_count: usize,
+    companion_leaves: Vec<String>,
+    companion_dirs: Vec<String>,
+}
+
+impl ArchiveLayout {
+    fn new(expect: &str) -> Self {
+        let (stem, suffix) = match expect.strip_suffix(".exe") {
+            Some(stem) => (stem, ".exe"),
+            None => (expect, ""),
+        };
+        let mut companions = vec![format!("{stem}x{suffix}")];
+        if !suffix.is_empty() {
+            // `uvw.exe`：windows 上隐藏控制台的启动器，unix 资产不含
+            companions.push(format!("{stem}w{suffix}"));
+        }
+        Self {
+            expect: expect.to_string(),
+            companions,
+            main_dir: None,
+            main_count: 0,
+            companion_leaves: Vec::new(),
+            companion_dirs: Vec::new(),
+        }
     }
-    let leaf = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
-    if leaf != expect {
-        return Err(RunnerError::managed(
+
+    /// `Ok(true)` = 主二进制（需要读取内容），`Ok(false)` = 可跳过的伴生文件
+    fn classify(&mut self, name: &str) -> Result<bool> {
+        let normalized = name.replace('\\', "/");
+        if normalized.starts_with('/') || normalized.split('/').any(|p| p == "..") {
+            return Err(RunnerError::managed(
+                code::UV_ASSET_VERIFY,
+                format!("uv archive contains unsafe path {name:?}"),
+            ));
+        }
+        let (dir, leaf) = match normalized.rfind('/') {
+            Some(index) => (
+                normalized[..index].to_string(),
+                normalized[index + 1..].to_string(),
+            ),
+            None => (String::new(), normalized.clone()),
+        };
+        if leaf == self.expect {
+            self.main_count += 1;
+            if self.main_count > 1 {
+                return Err(RunnerError::managed(
+                    code::UV_ASSET_VERIFY,
+                    "uv archive contains more than one file",
+                ));
+            }
+            self.main_dir = Some(dir);
+            return Ok(true);
+        }
+        if self.companions.contains(&leaf) {
+            if self.companion_leaves.contains(&leaf) {
+                return Err(RunnerError::managed(
+                    code::UV_ASSET_VERIFY,
+                    format!("uv archive contains more than one {leaf}"),
+                ));
+            }
+            self.companion_leaves.push(leaf);
+            self.companion_dirs.push(dir);
+            return Ok(false);
+        }
+        Err(RunnerError::managed(
             code::UV_ASSET_VERIFY,
             format!("uv archive contains unexpected file {name:?}"),
-        ));
+        ))
     }
-    Ok(())
+
+    fn finish(&self, main: Option<Vec<u8>>) -> Result<Vec<u8>> {
+        let main = main.ok_or_else(|| {
+            RunnerError::managed(code::UV_ASSET_VERIFY, "uv archive has no uv binary")
+        })?;
+        if let Some(main_dir) = &self.main_dir {
+            if self.companion_dirs.iter().any(|dir| dir != main_dir) {
+                return Err(RunnerError::managed(
+                    code::UV_ASSET_VERIFY,
+                    "uv archive contains a companion binary outside the uv directory",
+                ));
+            }
+        }
+        Ok(main)
+    }
 }
 
 fn unpack_tar_gz(archive: &[u8], expect: &str) -> Result<Vec<u8>> {
     use std::io::Read;
     let decoder = flate2::read::GzDecoder::new(archive);
     let mut tar = tar::Archive::new(decoder);
+    let mut layout = ArchiveLayout::new(expect);
     let mut found: Option<Vec<u8>> = None;
     for entry in tar.entries().map_err(|e| bad_archive(e.to_string()))? {
         let entry = entry.map_err(|e| bad_archive(e.to_string()))?;
@@ -120,12 +196,8 @@ fn unpack_tar_gz(archive: &[u8], expect: &str) -> Result<Vec<u8>> {
             continue;
         }
         let name = String::from_utf8_lossy(&header.path_bytes()).into_owned();
-        entry_name_ok(&name, expect)?;
-        if found.is_some() {
-            return Err(RunnerError::managed(
-                code::UV_ASSET_VERIFY,
-                "uv archive contains more than one file",
-            ));
+        if !layout.classify(&name)? {
+            continue;
         }
         let mut data = Vec::with_capacity(header.size().unwrap_or(0) as usize);
         entry
@@ -134,13 +206,14 @@ fn unpack_tar_gz(archive: &[u8], expect: &str) -> Result<Vec<u8>> {
             .map_err(|e| bad_archive(e.to_string()))?;
         found = Some(data);
     }
-    found.ok_or_else(|| RunnerError::managed(code::UV_ASSET_VERIFY, "uv archive has no uv binary"))
+    layout.finish(found)
 }
 
 fn unpack_zip(archive: &[u8], expect: &str) -> Result<Vec<u8>> {
     use std::io::Read;
     let reader = std::io::Cursor::new(archive);
     let mut zip = zip::ZipArchive::new(reader).map_err(|e| bad_archive(e.to_string()))?;
+    let mut layout = ArchiveLayout::new(expect);
     let mut found: Option<Vec<u8>> = None;
     for i in 0..zip.len() {
         let file = zip.by_index(i).map_err(|e| bad_archive(e.to_string()))?;
@@ -153,12 +226,8 @@ fn unpack_zip(archive: &[u8], expect: &str) -> Result<Vec<u8>> {
             }
             continue;
         }
-        entry_name_ok(file.name(), expect)?;
-        if found.is_some() {
-            return Err(RunnerError::managed(
-                code::UV_ASSET_VERIFY,
-                "uv archive contains more than one file",
-            ));
+        if !layout.classify(file.name())? {
+            continue;
         }
         let mut data = Vec::with_capacity(file.size() as usize);
         file.take(64 * 1024 * 1024)
@@ -166,7 +235,7 @@ fn unpack_zip(archive: &[u8], expect: &str) -> Result<Vec<u8>> {
             .map_err(|e| bad_archive(e.to_string()))?;
         found = Some(data);
     }
-    found.ok_or_else(|| RunnerError::managed(code::UV_ASSET_VERIFY, "uv archive has no uv binary"))
+    layout.finish(found)
 }
 
 fn bad_archive(detail: String) -> RunnerError {
@@ -229,7 +298,6 @@ pub fn store_cache(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(windows)]
     use std::io::Write as _;
 
     /// 手写 ustar 头（tar 0.4 的 set_path 拒绝 `..`/绝对路径，无法用它构造恶意条目）
@@ -253,7 +321,6 @@ mod tests {
     }
 
     fn tar_gz_with(files: &[(&str, &[u8])]) -> Vec<u8> {
-        use std::io::Write as _;
         let mut buffer = Vec::new();
         {
             let mut encoder =
@@ -282,6 +349,82 @@ mod tests {
         let binary = unpack_uv(&archive, false).unwrap();
         assert!(binary.bytes.starts_with(b"#!"));
         assert_eq!(binary.sha256.len(), 64);
+    }
+
+    /// 用 tar::Builder 构造官方发布布局（目录条目 + 合法条目名，无需手写头）
+    fn tar_gz_release(dir: &str, files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        {
+            let encoder = flate2::write::GzEncoder::new(&mut buffer, flate2::Compression::fast());
+            let mut builder = tar::Builder::new(encoder);
+            if !dir.is_empty() {
+                let mut header = tar::Header::new_gnu();
+                header.set_entry_type(tar::EntryType::Directory);
+                header.set_size(0);
+                header.set_mode(0o755);
+                header.set_cksum();
+                builder.append_data(&mut header, dir, &[][..]).unwrap();
+            }
+            for (name, data) in files {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(data.len() as u64);
+                header.set_mode(0o755);
+                header.set_cksum();
+                builder.append_data(&mut header, name, *data).unwrap();
+            }
+            builder.finish().unwrap();
+        }
+        buffer
+    }
+
+    /// 真实资产（0.12.13）在同一目录随附 `uvx`；x86_64 linux 归档里它排在 `uv` 之前
+    #[test]
+    fn unpack_accepts_release_companion_in_either_order() {
+        let dir = "uv-x86_64-unknown-linux-gnu";
+        for files in [
+            vec![
+                (format!("{dir}/uvx"), &b"trampoline"[..]),
+                (format!("{dir}/uv"), &b"#!/bin/sh\nuv"[..]),
+            ],
+            vec![
+                (format!("{dir}/uv"), &b"#!/bin/sh\nuv"[..]),
+                (format!("{dir}/uvx"), &b"trampoline"[..]),
+            ],
+        ] {
+            let entries: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (n.as_str(), *d)).collect();
+            let binary = unpack_uv(&tar_gz_release(dir, &entries), false).unwrap();
+            assert_eq!(binary.bytes, b"#!/bin/sh\nuv");
+        }
+    }
+
+    #[test]
+    fn unpack_rejects_companion_without_main_outside_dir_and_duplicated() {
+        let dir = "uv-x86_64-unknown-linux-gnu";
+        // 只有伴生文件：没有主二进制
+        let archive = tar_gz_release(dir, &[(format!("{dir}/uvx").as_str(), &b"x"[..])]);
+        assert!(unpack_uv(&archive, false).is_err());
+        // 伴生文件不在主二进制目录内
+        let archive = tar_gz_release(
+            "",
+            &[
+                ("uv", &b"a"[..]),
+                ("other/uvx", &b"x"[..]),
+                ("uvx", &b"x"[..]),
+            ],
+        );
+        assert!(unpack_uv(&archive, false).is_err());
+        // 重复的伴生文件
+        let archive = tar_gz_release(
+            dir,
+            &[("uv", &b"a"[..]), ("uvx", &b"x"[..]), ("uvx", &b"y"[..])],
+        );
+        assert!(unpack_uv(&archive, false).is_err());
+        // 伴生文件之外的额外文件仍然拒绝
+        let archive = tar_gz_release(
+            dir,
+            &[("uv", &b"a"[..]), ("uvx", &b"x"[..]), ("uvz", &b"z"[..])],
+        );
+        assert!(unpack_uv(&archive, false).is_err());
     }
 
     #[test]
@@ -331,6 +474,43 @@ mod tests {
         }
         let binary = unpack_uv(&buffer, true).unwrap();
         assert_eq!(binary.bytes, b"MZ");
+    }
+
+    /// 真实 windows 资产（0.12.13）无目录前缀，含 `uv.exe` + `uvx.exe` + `uvw.exe`
+    #[cfg(windows)]
+    #[test]
+    fn unpack_zip_accepts_release_companions() {
+        let mut buffer = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buffer));
+            let options: zip::write::FileOptions<()> = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            for (name, data) in [
+                ("uv.exe", &b"MZ"[..]),
+                ("uvx.exe", &b"MZx"[..]),
+                ("uvw.exe", &b"MZw"[..]),
+            ] {
+                zip.start_file(name, options).unwrap();
+                zip.write_all(data).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+        let binary = unpack_uv(&buffer, true).unwrap();
+        assert_eq!(binary.bytes, b"MZ");
+
+        // 未知的额外文件仍被拒绝
+        let mut buffer = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buffer));
+            let options: zip::write::FileOptions<()> = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            for (name, data) in [("uv.exe", &b"MZ"[..]), ("sshed.exe", &b"x"[..])] {
+                zip.start_file(name, options).unwrap();
+                zip.write_all(data).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+        assert!(unpack_uv(&buffer, true).is_err());
     }
 
     #[test]

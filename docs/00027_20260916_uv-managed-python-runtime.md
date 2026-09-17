@@ -179,12 +179,13 @@ Local 使用 Tauri 应用数据目录下的等价结构。Runtime 根目录必�
 固定环境变量（Windows 路径使用对应的应用数据目录和路径格式）：
 
 ```text
-UV_PYTHON_PREFERENCE=only-managed
 UV_PYTHON_INSTALL_DIR=<runtime-root>/python
 UV_PROJECT_ENVIRONMENT=<runtime-root>/envs/<environment-id>
 UV_CACHE_DIR=<runtime-root>/cache
 UV_NO_SYSTEM_CONFIG=1
 ```
+
+不再注入 `UV_PYTHON_PREFERENCE`：uv 0.10+ 把它与显式 `--managed-python` 视为冲突来源（`cannot be used with --python-preference`），两者不能同时出现。managed-only 约束由 `--managed-python` 标志和 `UV_PYTHON_INSTALL_DIR` 共同表达。
 
 依赖同步阶段再显式使用 `--managed-python --no-python-downloads`，保证 Python 已由 Runtime 安装阶段准备好，uv 不会寻找系统 Python 或临时下载另一个解释器。不得依赖目标机器的 PATH、active venv、用户级 uv 配置或系统级 uv 配置。
 
@@ -229,13 +230,13 @@ runtime_root_not_executable
 
 1. 桌面端按 Runtime Catalog 下载对应 uv 发布资产；
 2. 校验下载 URL、长度和归档 SHA256；
-3. 在桌面端安全解包，只接受 Catalog 指定的单个 uv 可执行文件，拒绝绝对路径、`..`、链接和额外文件；
+3. 在桌面端安全解包，只接受 Catalog 指定的 uv 可执行文件，拒绝绝对路径、`..`、链接和额外文件；官方发布归档在同一目录随附 `uvx`（windows 资产另有 `uvw.exe`），这些伴生可执行文件被容忍但跳过，不参与部署也不写入目标设备；
 4. 校验可执行文件长度和 SHA256，写入本地内容缓存；
 5. 通过对应 transport 上传到目标临时文件；
 6. 通过 transport 回读并计算 SHA256；不得假定目标已安装 `sha256sum`、Python、tar 或 unzip；
 7. 设置仅当前用户可执行权限；
 8. 在同一文件系统内原子发布到固定 uv 路径；
-9. 执行 `uv --version` 并要求与 Catalog 完全一致。
+9. 执行 `uv --version` 并要求与 Catalog 完全一致。输出形如 `uv 0.12.13 (x86_64-unknown-linux-gnu)`：版本号必须逐项精确相等，版本号之后的括号目标三元组是正常输出，不算不匹配；多出的版本片段（dev 构建、第四段等）一律拒绝。
 
 不允许 `uv self update`。Runtime Catalog、uv 许可证以及 Python/随附库许可证需要进入发布审查和第三方声明。
 
@@ -319,9 +320,8 @@ SHA256(
 2. 锁中写入 run ID、owner、开始时间和 heartbeat；
 3. 检查已有 manifest、`.ready` 与 smoke test；
 4. 无效环境移动到 `quarantine/` 或安全删除；
-5. 直接在最终 Environment 路径创建，先写 `.preparing`；
-6. 设置 `UV_PROJECT_ENVIRONMENT` 为最终路径；
-7. 执行：
+5. 设置 `UV_PROJECT_ENVIRONMENT` 为最终路径；
+6. 执行：
 
    ```text
    uv sync
@@ -335,13 +335,14 @@ SHA256(
      [--extra <name>]...
    ```
 
-8. 用环境内 Python 执行 smoke test；
-9. 原子写入 manifest，最后原子创建 `.ready`；
-10. 删除 `.preparing` 并释放锁。
+   **约束**：`UV_PROJECT_ENVIRONMENT` 指向的目录在 `uv sync` 时必须为空或不存在——uv 0.10+ 把已含任何文件的目录当作“复用现有环境”，发现没有 Python 可执行文件就直接拒绝（`not a valid Python environment`）。因此不能在 sync 之前向该目录写 `.preparing` 标记或任何文件；环境目录由 uv 自己创建。
+7. 用环境内 Python 执行 smoke test；
+8. 原子写入 manifest，最后原子创建 `.ready`；
+9. 释放锁。
 
 其他 Run 等待同一锁并接收进度，不允许使用没有 `.ready` 的环境。锁使用 heartbeat 和有限过期策略；过期锁只有在确认 owner 不再活跃后才能接管。
 
-Stop、timeout、进程异常或应用崩溃后，下一次准备会识别 `.preparing`、缺失 `.ready` 或无效 manifest，并执行恢复。不能把失败环境标记为缓存命中。
+Stop、timeout、进程异常或应用崩溃后，下一次准备会识别缺失 `.ready` 或无效 manifest，并执行恢复（隔离残留目录后重建）。不能把失败环境标记为缓存命中。
 
 `uv sync --locked` 在锁文件与项目元数据不一致时失败，不应改写锁文件。uv 默认 exact sync 会移除未声明包，因此只能对 Remote Runner 专属 Environment 使用：
 [uv locking and syncing](https://docs.astral.sh/uv/concepts/projects/sync/)。
