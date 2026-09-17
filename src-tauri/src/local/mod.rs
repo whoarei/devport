@@ -89,6 +89,15 @@ fn workspace_dir(req: &RunRequest) -> Option<&str> {
     req.workspace.as_ref().and_then(|w| w.local_dir())
 }
 
+/// PowerShell profile 开关的唯一出口：只有 PowerShell 风味、且配置置位 `no_profile`
+/// 时才加 `-NoProfile`。交互终端、命令、脚本与连接测试全部经由这里（00030）。
+pub(crate) fn profile_args(shell: &Shell) -> Vec<String> {
+    match (shell.flavor, shell.no_profile) {
+        (Flavor::PowerShell, true) => vec!["-NoProfile".into()],
+        _ => Vec::new(),
+    }
+}
+
 /// 按 shell 风味构造 spawn 参数；Python/Shell 类型不经 shell 解释参数
 pub(crate) fn invocation(shell: &Shell, req: &RunRequest) -> Result<(PathBuf, Vec<String>)> {
     match req.kind {
@@ -138,11 +147,12 @@ pub(crate) fn invocation(shell: &Shell, req: &RunRequest) -> Result<(PathBuf, Ve
                         vec![script]
                     }
                 }
-                Flavor::PowerShell => vec![
-                    "-NoProfile".to_string(),
-                    "-File".to_string(),
-                    entry.to_string_lossy().into_owned(),
-                ],
+                Flavor::PowerShell => {
+                    let mut args = profile_args(shell);
+                    args.push("-File".to_string());
+                    args.push(entry.to_string_lossy().into_owned());
+                    args
+                }
                 Flavor::Cmd => vec!["/C".to_string(), entry.to_string_lossy().into_owned()],
             };
             args.extend(req.args.iter().cloned());
@@ -157,7 +167,10 @@ pub(crate) fn invocation(shell: &Shell, req: &RunRequest) -> Result<(PathBuf, Ve
                 Flavor::Posix if shell.login => vec!["-l".to_string(), "-c".to_string(), command],
                 Flavor::Posix => vec!["-c".to_string(), command],
                 Flavor::PowerShell => {
-                    vec!["-NoProfile".to_string(), "-Command".to_string(), command]
+                    let mut args = profile_args(shell);
+                    args.push("-Command".to_string());
+                    args.push(command);
+                    args
                 }
                 Flavor::Cmd => vec!["/C".to_string(), command],
             };
@@ -344,26 +357,29 @@ pub async fn execute(
     })
 }
 
+/// 连接测试的命令行：打印版本/平台信息。与运行共用同一个 profile 开关。
+pub(crate) fn probe_args(shell: &Shell) -> Vec<String> {
+    const POSIX: &str = "uname -a 2>/dev/null; { python3 --version || python --version; } 2>&1";
+    const POWERSHELL: &str = "$PSVersionTable.PSVersion.ToString(); python --version 2>&1";
+    const CMD: &str = "ver & python --version 2>&1";
+    let mut args = profile_args(shell);
+    match shell.flavor {
+        Flavor::Posix => {
+            if shell.login {
+                args.push("-l".into());
+            }
+            args.extend(["-c".into(), POSIX.into()]);
+        }
+        Flavor::PowerShell => args.extend(["-Command".into(), POWERSHELL.into()]),
+        Flavor::Cmd => args.extend(["/C".into(), CMD.into()]),
+    }
+    args
+}
+
 /// 测试连接：以所选 shell 打印版本/平台信息
 pub async fn test_device(config: &LocalConfig) -> Result<String> {
     let shell = shells::resolve(config)?;
-    let args: Vec<String> = match shell.flavor {
-        Flavor::Posix if shell.login => vec![
-            "-l".into(),
-            "-c".into(),
-            "uname -a 2>/dev/null; { python3 --version || python --version; } 2>&1".into(),
-        ],
-        Flavor::Posix => vec![
-            "-c".into(),
-            "uname -a 2>/dev/null; { python3 --version || python --version; } 2>&1".into(),
-        ],
-        Flavor::PowerShell => vec![
-            "-NoProfile".into(),
-            "-Command".into(),
-            "$PSVersionTable.PSVersion.ToString(); python --version 2>&1".into(),
-        ],
-        Flavor::Cmd => vec!["/C".into(), "ver & python --version 2>&1".into()],
-    };
+    let args = probe_args(&shell);
     let spec = SessionSpec {
         program: shell.path.clone(),
         args,

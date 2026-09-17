@@ -91,6 +91,7 @@ mod tests {
             cfg.local = Some(LocalConfig {
                 shell: bad.into(),
                 path: None,
+                no_profile: false,
             });
             assert!(cfg.validate().is_err(), "{bad:?}");
         }
@@ -105,18 +106,34 @@ mod tests {
                 }
                 .into(),
             ),
+            no_profile: false,
         });
         cfg.validate().unwrap();
         cfg.local = Some(LocalConfig {
             shell: "pwsh".into(),
             path: Some("relative/pwsh".into()),
+            no_profile: false,
         });
         assert!(cfg.validate().is_err());
         cfg.local = Some(LocalConfig {
             shell: "pwsh".into(),
             path: Some("bad\0path".into()),
+            no_profile: false,
         });
         assert!(cfg.validate().is_err());
+        // profile 开关：默认加载 profile，反序列化缺省即关闭 -NoProfile
+        let default_profile: DeviceProfile = serde_json::from_value(serde_json::json!({
+            "id": "l3", "name": "x", "transport": "local",
+            "local": { "shell": "pwsh" }
+        }))
+        .unwrap();
+        assert!(!default_profile.local.unwrap().no_profile);
+        let explicit: DeviceProfile = serde_json::from_value(serde_json::json!({
+            "id": "l4", "name": "x", "transport": "local",
+            "local": { "shell": "pwsh", "no_profile": true }
+        }))
+        .unwrap();
+        assert!(explicit.local.unwrap().no_profile);
         // local 能力：pipe 与 resize 均支持
         let caps = TransportKind::Local.capabilities();
         assert!(caps.pipe && caps.resize);
@@ -152,11 +169,18 @@ pub struct SerialConfig {
 
 /// 本机 shell 直连配置。shell 为后端注册表中的 id（如 "pwsh"、"msys2"），
 /// path 留空时按注册表候选位置探测可执行文件。
+///
+/// `no_profile` 是唯一的 PowerShell profile 开关，交互终端、命令、脚本与连接测试
+/// 全部读它：默认加载 profile（与 posix login shell 的 `/etc/profile` 一致，
+/// fnm/nvm/conda 等由 profile 提供的 PATH 才可见），置位后统一加 `-NoProfile`。
+/// 对 cmd 无影响（cmd 没有 profile 概念）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalConfig {
     pub shell: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    #[serde(default)]
+    pub no_profile: bool,
 }
 
 impl LocalConfig {

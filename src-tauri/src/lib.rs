@@ -12,6 +12,7 @@ pub mod ssh;
 pub mod terminal;
 pub mod tray;
 pub mod update;
+pub mod verbatim;
 pub mod workspace;
 pub mod workspace_ref;
 pub mod workspace_upload;

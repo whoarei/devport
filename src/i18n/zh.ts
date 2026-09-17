@@ -249,6 +249,8 @@ export const zh = {
     localShellPlaceholder: "选择本机 shell",
     localShellPath: "自定义可执行路径（留空自动探测）",
     localShellPathPlaceholder: "例如 D:\\tools\\pwsh.exe",
+    localNoProfile: "PowerShell 使用 -NoProfile（不加载 profile）",
+    localNoProfileHint: "默认加载 profile：fnm、nvm、conda 等只由 profile 注入 PATH 的命令（如 npm 全局命令、opencode、node、npm）才可见。仅对 pwsh / Windows PowerShell 生效；勾选后交互终端、命令与脚本运行都不再加载 profile，行为更可预测但只有注册表 PATH 里的命令可用。",
     refreshShells: "刷新",
     enumShellsFailed: "本机 shell 枚举失败: {{message}}",
     localDescription: "直接在本机运行，无需 SSH。工作区原地执行（不上传、不复制），运行产物会直接写入工作区目录。支持 PTY 交互及 pipe 输出；cmd 命令内嵌双引号时行为可能不一致。",

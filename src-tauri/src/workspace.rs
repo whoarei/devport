@@ -597,6 +597,7 @@ pub fn list_dir(dir: &str, subdir: &str) -> Result<Vec<Entry>> {
 /// Resolve a workspace directory as the working directory of a local terminal.
 /// Validation matches listing: canonical root, no redirected components, every
 /// part must be a real directory. Empty subdir means the workspace root.
+/// 返回值直接成为 shell 的 cwd，因此用常规形式（去掉 canonicalize 的 `\\?\` 前缀）。
 pub fn terminal_dir(dir: &str, subdir: &str) -> Result<PathBuf> {
     let root = canonical_root(dir)?;
     let parts = if subdir.is_empty() {
@@ -604,7 +605,7 @@ pub fn terminal_dir(dir: &str, subdir: &str) -> Result<PathBuf> {
     } else {
         components(subdir)?
     };
-    resolve_dir(&root, &parts)
+    Ok(crate::verbatim::simplify(&resolve_dir(&root, &parts)?))
 }
 
 #[cfg(test)]
@@ -857,12 +858,24 @@ mod tests {
         create(f.dir(), "sub", EntryKind::Dir).unwrap();
         create(f.dir(), "sub/inner", EntryKind::Dir).unwrap();
         let canonical = fs::canonicalize(&f.0).unwrap();
-        assert_eq!(terminal_dir(f.dir(), "").unwrap(), canonical);
-        assert_eq!(terminal_dir(f.dir(), "sub").unwrap(), canonical.join("sub"));
+        // 终端 cwd 走常规形式：Windows 上不能把 canonicalize 的 \\?\ 前缀交给 shell
+        let expect = |rel: &str| {
+            crate::verbatim::simplify(&if rel.is_empty() {
+                canonical.clone()
+            } else {
+                canonical.join(rel)
+            })
+        };
+        assert_eq!(terminal_dir(f.dir(), "").unwrap(), expect(""));
+        assert_eq!(terminal_dir(f.dir(), "sub").unwrap(), expect("sub"));
         assert_eq!(
             terminal_dir(f.dir(), "sub/inner").unwrap(),
-            canonical.join("sub").join("inner")
+            expect("sub/inner")
         );
+        assert!(!terminal_dir(f.dir(), "")
+            .unwrap()
+            .to_string_lossy()
+            .starts_with(r"\\?\"));
         // 与 list_dir 同一套校验：越界/非法名 → name；指向文件或缺失 → not_found/path
         for subdir in ["..", "../evil", "a/../b", ".hidden", "a\\b"] {
             assert_eq!(

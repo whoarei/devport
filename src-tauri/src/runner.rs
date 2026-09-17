@@ -1500,7 +1500,11 @@ fn validate_request(req: &mut RunRequest) -> Result<()> {
         }
     }
     if let Some(root) = local_workspace {
-        req.workspace = Some(WorkspaceRef::local(root.to_string_lossy()));
+        // 校验用 canonical 形式，回写的工作区则用常规形式：它会成为 shell 的 cwd、
+        // msys2/gitbash 的入口路径以及界面展示的路径（00030）。
+        req.workspace = Some(WorkspaceRef::local(
+            crate::verbatim::simplify(&root).to_string_lossy(),
+        ));
     }
     Ok(())
 }

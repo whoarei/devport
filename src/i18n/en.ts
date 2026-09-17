@@ -248,6 +248,8 @@ export const en: Messages = {
     localShellPlaceholder: "Select a local shell",
     localShellPath: "Custom executable path (empty = auto-detect)",
     localShellPathPlaceholder: "e.g. D:\\tools\\pwsh.exe",
+    localNoProfile: "Start PowerShell with -NoProfile (skip the profile)",
+    localNoProfileHint: "The profile is loaded by default, which is what makes commands whose PATH comes from it (npm global CLI tools, opencode, node, npm via fnm/nvm/conda) visible. Applies to pwsh / Windows PowerShell only; with it enabled, the interactive terminal and command/script runs all skip the profile — more predictable, but only registry PATH entries are available.",
     refreshShells: "Refresh",
     enumShellsFailed: "Failed to list local shells: {{message}}",
     localDescription: "Runs directly on this machine without SSH. The workspace runs in place (no upload or copy), so run artifacts land in the workspace directory. PTY interaction and pipe output are supported; cmd commands with embedded double quotes may behave inconsistently.",

@@ -16,6 +16,16 @@ fn fake_shell(id: &'static str, flavor: Flavor, login: bool) -> Shell {
             "/bin/sh"
         }),
         login,
+        // 与 LocalConfig 默认一致：加载 profile
+        no_profile: false,
+    }
+}
+
+/// 同一个 shell，但配置置位 `-NoProfile`（00030 的开关）
+fn fake_shell_no_profile(id: &'static str, flavor: Flavor, login: bool) -> Shell {
+    Shell {
+        no_profile: true,
+        ..fake_shell(id, flavor, login)
     }
 }
 
@@ -37,6 +47,9 @@ fn invocation_dispatches_per_flavor() {
     assert_eq!(args, vec!["-c", "echo hello"]);
     let pwsh = fake_shell("pwsh", Flavor::PowerShell, false);
     let (_, args) = invocation(&pwsh, &cmd).unwrap();
+    assert_eq!(args, vec!["-Command", "echo hello"]);
+    let pwsh_no_profile = fake_shell_no_profile("pwsh", Flavor::PowerShell, false);
+    let (_, args) = invocation(&pwsh_no_profile, &cmd).unwrap();
     assert_eq!(args, vec!["-NoProfile", "-Command", "echo hello"]);
     let cmdshell = fake_shell("cmd", Flavor::Cmd, false);
     let (_, args) = invocation(&cmdshell, &cmd).unwrap();
@@ -68,7 +81,7 @@ fn invocation_builds_script_entries_without_shell_interpolation() {
     } else {
         "/ws/sub/main.sh"
     };
-    assert_eq!(args, vec!["-NoProfile", "-File", expect, "a b"]);
+    assert_eq!(args, vec!["-File", expect, "a b"]);
 
     req.kind = ScriptKind::Python;
     req.entry = Some("main.py".into());
@@ -79,6 +92,49 @@ fn invocation_builds_script_entries_without_shell_interpolation() {
         .to_string_lossy()
         .starts_with("python"));
     assert!(args[0] == "-u" && args[1].ends_with("main.py") && args[2] == "a b");
+}
+
+#[test]
+fn profile_switch_is_shared_by_every_local_powershell_entry_point() {
+    // 00030：交互终端 / 命令 / 脚本 / 连接测试读同一个 -NoProfile 开关，不允许某个
+    // 入口自己决定 profile 是否加载（曾经只有交互终端与运行各自硬编码，导致 profile
+    // 提供的 PATH 在某些入口可见、在另一些入口不可见）。
+    let cmd = command_request("echo hello");
+    let mut script = command_request("unused");
+    script.kind = ScriptKind::Shell;
+    script.workspace = Some(crate::workspace_ref::WorkspaceRef::local(
+        if cfg!(windows) { r"E:\ws" } else { "/ws" },
+    ));
+    script.entry = Some("main.ps1".into());
+    for no_profile in [false, true] {
+        let shell = if no_profile {
+            fake_shell_no_profile("pwsh", Flavor::PowerShell, false)
+        } else {
+            fake_shell("pwsh", Flavor::PowerShell, false)
+        };
+        let assert_switch = |args: Vec<String>, what: &str| {
+            assert_eq!(
+                args.iter().any(|arg| arg == "-NoProfile"),
+                no_profile,
+                "{what}: {args:?}"
+            );
+        };
+        assert_switch(invocation(&shell, &cmd).unwrap().1, "command");
+        assert_switch(invocation(&shell, &script).unwrap().1, "script");
+        assert_switch(super::terminal::interactive_args(&shell), "terminal");
+        assert_switch(probe_args(&shell), "probe");
+    }
+    // 其他风味不受开关影响：cmd 没有 profile，posix 用 login 进程拿到 profile
+    let cmd_shell = fake_shell_no_profile("cmd", Flavor::Cmd, false);
+    assert!(super::terminal::interactive_args(&cmd_shell).is_empty());
+    assert!(!probe_args(&cmd_shell).iter().any(|arg| arg == "-NoProfile"));
+    let bash = fake_shell_no_profile("bash", Flavor::Posix, true);
+    assert_eq!(super::terminal::interactive_args(&bash), vec!["-li"]);
+    assert!(!invocation(&bash, &cmd)
+        .unwrap()
+        .1
+        .iter()
+        .any(|arg| arg == "-NoProfile"));
 }
 
 #[test]
@@ -172,11 +228,13 @@ fn available(id: &str) -> Option<LocalConfig> {
     shells::resolve(&LocalConfig {
         shell: id.into(),
         path: None,
+        no_profile: false,
     })
     .ok()
     .map(|_| LocalConfig {
         shell: id.into(),
         path: None,
+        no_profile: false,
     })
 }
 
@@ -193,6 +251,7 @@ fn per_shell(shell_id: &str, for_cmd: &str, for_posix: &str, for_pwsh: &str) -> 
     let shell = shells::resolve(&LocalConfig {
         shell: shell_id.into(),
         path: None,
+        no_profile: false,
     })
     .ok()?;
     Some(
@@ -360,6 +419,7 @@ async fn every_detected_shell_runs_echo() {
         let config = LocalConfig {
             shell: info.id.clone(),
             path: None,
+            no_profile: false,
         };
         let marker = format!("local-{}", info.id);
         let Some(command) = per_shell(
@@ -399,6 +459,7 @@ async fn login_shells_keep_the_workspace_as_cwd() {
         let config = LocalConfig {
             shell: info.id.clone(),
             path: None,
+            no_profile: false,
         };
         let Ok(shell) = shells::resolve(&config) else {
             continue;

@@ -22,9 +22,30 @@ test("device label covers local shell devices and keeps other transports unchang
 
 test("new device template carries a local shell placeholder", () => {
   const device = emptyDevice();
-  assert.deepEqual(device.local, { shell: "", path: null });
+  assert.deepEqual(device.local, { shell: "", path: null, no_profile: false });
   assert.equal(device.transport, "ssh");
   assert.equal(device.is_default, false);
+});
+
+test("local shell profile switch round-trips through the device payload", () => {
+  // no_profile 是交互终端与运行共用的唯一 profile 开关（00030）：
+  // 缺省（老配置）必须解析为 false（加载 profile），显式 true 必须保留。
+  const legacy: DeviceProfile = {
+    ...emptyDevice(),
+    id: "l1",
+    name: "legacy",
+    transport: "local",
+    local: { shell: "pwsh", path: null },
+  };
+  assert.equal(legacy.local?.no_profile ?? false, false);
+  const enabled: DeviceProfile = {
+    ...emptyDevice(),
+    id: "l2",
+    name: "strict",
+    transport: "local",
+    local: { shell: "pwsh", path: null, no_profile: true },
+  };
+  assert.equal(enabled.local?.no_profile, true);
 });
 
 test("device loading prefers the default but preserves a valid explicit selection", () => {

@@ -25,6 +25,8 @@ pub struct Shell {
     pub path: PathBuf,
     /// posix shell 是否以 login 方式运行（msys2/gitbash 需要 /etc/profile 提供完整 PATH）
     pub login: bool,
+    /// PowerShell 是否加 `-NoProfile`（唯一开关，见 `LocalConfig::no_profile`）
+    pub no_profile: bool,
 }
 
 /// 前端下拉使用的可用 shell 信息
@@ -214,6 +216,7 @@ pub fn resolve(config: &LocalConfig) -> Result<Shell> {
         flavor: candidate.flavor,
         path,
         login: candidate.login,
+        no_profile: config.no_profile,
     })
 }
 
@@ -224,6 +227,7 @@ pub fn fallback_for_test() -> Shell {
     resolve(&LocalConfig {
         shell: id.into(),
         path: None,
+        no_profile: false,
     })
     .expect("fallback shell must exist")
 }
@@ -244,22 +248,25 @@ mod tests {
 
     #[test]
     fn resolve_rejects_unknown_ids_and_missing_paths() {
-        assert!(resolve(&LocalConfig {
-            shell: "nosuchshell".into(),
-            path: None,
-        })
-        .is_err());
+        let config = |shell: &str, path: Option<&str>| LocalConfig {
+            shell: shell.into(),
+            path: path.map(str::to_owned),
+            no_profile: false,
+        };
+        assert!(resolve(&config("nosuchshell", None)).is_err());
         let fallback = if cfg!(windows) { "cmd" } else { "sh" };
-        assert!(resolve(&LocalConfig {
-            shell: fallback.into(),
-            path: Some("E:/definitely/missing/shell.exe".into()),
-        })
-        .is_err());
-        let shell = resolve(&LocalConfig {
-            shell: fallback.into(),
-            path: None,
-        })
-        .unwrap();
+        assert!(resolve(&config(fallback, Some("E:/definitely/missing/shell.exe"))).is_err());
+        let shell = resolve(&config(fallback, None)).unwrap();
         assert!(shell.path.is_file());
+        // profile 开关由配置解析到 shell 上（默认加载 profile）
+        assert!(!shell.no_profile);
+        assert!(
+            resolve(&LocalConfig {
+                no_profile: true,
+                ..config(fallback, None)
+            })
+            .unwrap()
+            .no_profile
+        );
     }
 }

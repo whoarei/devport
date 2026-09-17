@@ -11,7 +11,7 @@ export const emptyDevice = (): DeviceProfile => ({
   transport: "ssh",
   serial: { port: "", baud_rate: 115200 },
   wsl: { distribution: "", user: "" },
-  local: { shell: "", path: null },
+  local: { shell: "", path: null, no_profile: false },
   host: "",
   port: 22,
   username: "root",
@@ -115,7 +115,7 @@ export function DeviceDialog() {
           {t("device.transport")}
           <select value={editing.transport} disabled={testing} onChange={(e) => {
             const transport = e.target.value as DeviceProfile["transport"];
-            update({ transport, serial: editing.serial ?? { port: "", baud_rate: 115200 }, wsl: editing.wsl ?? { distribution: "", user: "" }, local: editing.local ?? { shell: "", path: null } });
+            update({ transport, serial: editing.serial ?? { port: "", baud_rate: 115200 }, wsl: editing.wsl ?? { distribution: "", user: "" }, local: editing.local ?? { shell: "", path: null, no_profile: false } });
             setTestResult(null);
             if (transport === "serial") void refreshPorts();
             if (transport === "wsl") void refreshDistributions();
@@ -146,7 +146,7 @@ export function DeviceDialog() {
             {t("device.localShell")}
             <input list="local-shell-options" value={editing.local?.shell ?? ""}
               placeholder={t("device.localShellPlaceholder")}
-              onChange={(e) => update({ local: { shell: e.target.value, path: null } })} />
+              onChange={(e) => update({ local: { shell: e.target.value, path: null, no_profile: editing.local?.no_profile ?? false } })} />
             <datalist id="local-shell-options">
               {shells.map((shell) => <option key={shell.id} value={shell.id}>{shell.label} · {shell.path}</option>)}
             </datalist>
@@ -155,8 +155,14 @@ export function DeviceDialog() {
           <label>
             {t("device.localShellPath")}
             <input value={editing.local?.path ?? ""} placeholder={t("device.localShellPathPlaceholder")}
-              onChange={(e) => update({ local: { shell: editing.local?.shell ?? "", path: e.target.value || null } })} />
+              onChange={(e) => update({ local: { shell: editing.local?.shell ?? "", path: e.target.value || null, no_profile: editing.local?.no_profile ?? false } })} />
           </label>
+          <label className="checkbox-label">
+            <input type="checkbox" checked={editing.local?.no_profile ?? false}
+              onChange={(e) => update({ local: { shell: editing.local?.shell ?? "", path: editing.local?.path ?? null, no_profile: e.target.checked } })} />
+            {t("device.localNoProfile")}
+          </label>
+          <p className="field-hint">{t("device.localNoProfileHint")}</p>
           <p>{t("device.localDescription")}</p>
         </> : editing.transport === "serial" ? <>
           <label>

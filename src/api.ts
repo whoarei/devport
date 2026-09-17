@@ -11,7 +11,7 @@ export interface DeviceProfile {
   transport: "ssh" | "serial" | "wsl" | "local";
   serial?: { port: string; baud_rate: number } | null;
   wsl?: { distribution: string; user: string } | null;
-  local?: { shell: string; path?: string | null } | null;
+  local?: { shell: string; path?: string | null; no_profile?: boolean } | null;
   host: string;
   port: number;
   username: string;
