@@ -39,7 +39,7 @@
 
 ## 工作区与环境
 
-原地运行：有工作区时 `cwd = RunRequest.workspace_dir`（`validate_request` 已 canonicalize 并校验入口 containment）；无工作区命令与独立终端以本机用户目录为 cwd，并在无法解析用户目录时回退应用当前目录。工作区终端例外：`open_workspace_terminal` 命令经 `workspace::terminal_dir` 把 subdir 解析为 canonical 目录（与 `list_dir` 同一套校验），仅 Local 设备可用，其他 transport 传 cwd 一律拒绝。环境变量通过进程环境块注入（`CommandBuilder::env` / `Command::envs`），不生成 `export` 前缀，无 shell 注入面。Python/Shell 类型直接 spawn 解释器/脚本，参数不经 shell 解释；Python 解释器在 PATH 中解析（Windows `python` → `python3`，Unix 反之）。msys2/gitbash 的 Shell 入口路径转成 `/e/...` posix 形式（`to_msys_path`），避免 `-l` profile 改变 cwd 时相对路径失效。
+原地运行：有工作区时 `cwd = RunRequest.workspace_dir`（`validate_request` 已 canonicalize 并校验入口 containment）；无工作区命令与独立终端以本机用户目录为 cwd，并在无法解析用户目录时回退应用当前目录。工作区终端例外：`open_workspace_terminal` 命令经 `workspace::terminal_dir` 把 subdir 解析为 canonical 目录（与 `list_dir` 同一套校验），仅 Local 设备可用，其他 transport 传 cwd 一律拒绝。msys2/gitbash 以登录 shell 运行（`-l` 加载 /etc/profile 获得完整 PATH），run 与终端两条路径都会注入 `CHERE_INVOKING=1`（`preserve_cwd_env`，用户显式给出的同名变量优先），阻止 /etc/profile `cd $HOME` 覆盖 spawn cwd；msys shell 不识别盘符路径，Shell 入口仍转成 `/e/...` posix 形式（`to_msys_path`）。环境变量通过进程环境块注入（`CommandBuilder::env` / `Command::envs`），不生成 `export` 前缀，无 shell 注入面。Python/Shell 类型直接 spawn 解释器/脚本，参数不经 shell 解释；Python 解释器在 PATH 中解析（Windows `python` → `python3`，Unix 反之）。
 
 ## 测试
 

@@ -26,6 +26,20 @@ pub(super) fn default_working_directory() -> Option<PathBuf> {
         .or_else(|| std::env::current_dir().ok().filter(|path| path.is_dir()))
 }
 
+/// msys2/gitbash 以登录 shell 启动（-l）时，/etc/profile 会 `cd "$HOME"`，把 spawn
+/// 时给定的 cwd 覆盖掉；CHERE_INVOKING=1（与 Windows「Git Bash Here」右键菜单同一
+/// 约定）让 profile 保留当前目录。仅 login posix shell 需要；用户显式给出的同名
+/// 变量优先（Windows 环境变量大小写不敏感）。
+fn preserve_cwd_env(shell: &Shell, env: &mut Vec<(String, String)>) {
+    if shell.login
+        && !env
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("CHERE_INVOKING"))
+    {
+        env.push(("CHERE_INVOKING".into(), "1".into()));
+    }
+}
+
 /// 停止升级节奏，与 SSH/WSL 的 INT → TERM → KILL 对齐
 const STAGE_TERM_AFTER: Duration = Duration::from_secs(3);
 const STAGE_KILL_AFTER: Duration = Duration::from_secs(2);
@@ -176,6 +190,7 @@ fn spec_for(shell: &Shell, req: &RunRequest) -> Result<SessionSpec> {
             }
         }
     }
+    preserve_cwd_env(shell, &mut env);
     Ok(SessionSpec {
         program,
         args,

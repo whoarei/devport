@@ -42,11 +42,14 @@ pub async fn execute(
 ) -> Result<Option<u32>> {
     crate::terminal::validate_size(cols, rows)?;
     let shell = shells::resolve(config)?;
+    let mut env = Vec::new();
+    // msys2/gitbash 是登录 shell，/etc/profile 会 cd $HOME 覆盖 cwd，注入变量保住它
+    super::preserve_cwd_env(&shell, &mut env);
     let spec = SessionSpec {
         program: shell.path.clone(),
         args: interactive_args(&shell),
         cwd: working_directory(cwd)?,
-        env: Vec::new(),
+        env,
         mode: ConsoleMode::Pty,
         cols,
         rows,

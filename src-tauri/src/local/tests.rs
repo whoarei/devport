@@ -87,6 +87,38 @@ fn commands_without_a_workspace_start_in_a_local_user_directory() {
 }
 
 #[test]
+fn login_shells_get_chere_invoking_so_profile_keeps_the_spawn_cwd() {
+    // msys2/gitbash（login posix）：注入 CHERE_INVOKING=1 防 /etc/profile cd $HOME
+    let msys = fake_shell("msys2", Flavor::Posix, true);
+    let spec = spec_for(&msys, &command_request("pwd")).unwrap();
+    assert!(
+        spec.env
+            .iter()
+            .any(|(k, v)| k == "CHERE_INVOKING" && v == "1"),
+        "env: {:?}",
+        spec.env
+    );
+    // 非登录 shell 不注入
+    let bash = fake_shell("bash", Flavor::Posix, false);
+    let spec = spec_for(&bash, &command_request("pwd")).unwrap();
+    assert!(!spec
+        .env
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("CHERE_INVOKING")));
+    // 用户显式给出的同名变量优先，不重复注入
+    let mut req = command_request("pwd");
+    req.env.insert("chere_invoking".into(), "0".into());
+    let spec = spec_for(&msys, &req).unwrap();
+    let matches: Vec<_> = spec
+        .env
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("CHERE_INVOKING"))
+        .collect();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].1, "0");
+}
+
+#[test]
 fn msys_path_conversion() {
     #[cfg(windows)]
     {
@@ -346,6 +378,51 @@ async fn every_detected_shell_runs_echo() {
             info.id,
             output_text(&collected)
         );
+    }
+}
+
+#[tokio::test]
+async fn login_shells_keep_the_workspace_as_cwd() {
+    // msys2/gitbash 的登录 profile 默认 cd $HOME；注入 CHERE_INVOKING 后 pwd 必须落在给定目录。
+    // pwd 会按 /etc/fstab 挂载表化简路径（如 Temp → /tmp），用 msys 的 pwd -W 拿 Windows
+    // 形式再比较；大小写与斜杠方向归一化。注册表里 login shell 只有 msys2/gitbash（Windows）。
+    let dir = std::env::temp_dir().join(format!("rr-cwd-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let expected = dir
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    let mut tested = 0;
+    for info in shells::detect() {
+        let config = LocalConfig {
+            shell: info.id.clone(),
+            path: None,
+        };
+        let Ok(shell) = shells::resolve(&config) else {
+            continue;
+        };
+        if !shell.login {
+            continue;
+        }
+        let mut req = command_request("pwd -W");
+        req.workspace_dir = Some(dir.to_string_lossy().into_owned());
+        req.console_mode = ConsoleMode::Pipe;
+        let (outcome, collected) = run_to_finish(&config, &req).await;
+        assert_eq!(outcome.code, Some(0), "shell {}", info.id);
+        let output = output_text(&collected);
+        let actual = output.trim().replace('\\', "/").to_ascii_lowercase();
+        assert!(
+            actual.contains(&expected),
+            "shell {} lost the spawn cwd; expected {} in output: {}",
+            info.id,
+            expected,
+            output
+        );
+        tested += 1;
+    }
+    std::fs::remove_dir_all(&dir).ok();
+    if tested == 0 {
+        eprintln!("SKIP: no login shell detected");
     }
 }
 
