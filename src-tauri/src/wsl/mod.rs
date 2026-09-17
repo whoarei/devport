@@ -20,6 +20,43 @@ const HELPER: &str = include_str!("helper.py");
 const FRAME_LIMIT: usize = 128 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// helper 源码经 stdin 首行传入，而不是作为 `-c` 参数：Windows 命令行上限
+/// 32767 字符，脚本一旦变大 CreateProcess 就会失败（os error 206）。
+/// 首行必须是 base64 载荷 + `\n`，且握手完成前不得再写入任何字节。
+const BOOTSTRAP: &str = r#"import base64,os
+payload=b""
+while not payload.endswith(b"\n"):
+    payload+=os.read(0,65536)
+exec(compile(base64.b64decode(payload),"helper.py","exec"))"#;
+
+/// 启动 helper 的命令行；helper 源码随 stdin 首行下发（见 `BOOTSTRAP`）
+pub(crate) struct HelperCommand {
+    command: Command,
+    payload: Option<Vec<u8>>,
+}
+
+impl From<Command> for HelperCommand {
+    /// 不带载荷：命令行本身已经指明了要运行的程序（测试用的假 helper）
+    fn from(command: Command) -> Self {
+        Self {
+            command,
+            payload: None,
+        }
+    }
+}
+
+#[cfg(test)]
+impl HelperCommand {
+    /// 把一段 Python 源码作为载荷挂在给定命令上：用于在宿主 python 上
+    /// 直接验证「载荷先于握手」的契约，不需要 WSL 发行版
+    pub(crate) fn with_payload(command: Command, source: &str) -> Self {
+        Self {
+            command,
+            payload: Some(STANDARD.encode(source).into_bytes()),
+        }
+    }
+}
+
 use crate::process::RunState;
 pub use crate::process::{ExecutionEvent as Event, Outcome, StopReason};
 
@@ -98,7 +135,7 @@ fn wsl_command() -> Result<Command> {
     }
 }
 
-pub(crate) fn helper_command(config: &WslConfig) -> Result<Command> {
+pub(crate) fn helper_command(config: &WslConfig) -> Result<HelperCommand> {
     config.validate()?;
     let mut command = wsl_command()?;
     command.arg("--distribution").arg(&config.distribution);
@@ -107,8 +144,11 @@ pub(crate) fn helper_command(config: &WslConfig) -> Result<Command> {
     }
     command
         .args(["--cd", "~", "--exec", "python3", "-I", "-u", "-c"])
-        .arg(HELPER);
-    Ok(command)
+        .arg(BOOTSTRAP);
+    Ok(HelperCommand {
+        command,
+        payload: Some(STANDARD.encode(HELPER).into_bytes()),
+    })
 }
 
 fn decode_wsl_text(bytes: &[u8]) -> String {
@@ -165,7 +205,11 @@ impl Drop for Bridge {
 }
 
 impl Bridge {
-    pub(crate) async fn launch(mut command: Command) -> Result<Self> {
+    pub(crate) async fn launch(helper: impl Into<HelperCommand>) -> Result<Self> {
+        let HelperCommand {
+            mut command,
+            payload,
+        } = helper.into();
         let mut child = command
             .kill_on_drop(true)
             .stdin(Stdio::piped())
@@ -177,9 +221,18 @@ impl Bridge {
                     "cannot start WSL (requires an installed distribution and python3): {e}"
                 ))
             })?;
-        let stdin = child.stdin.take().unwrap();
+        let mut stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
         let mut stderr = child.stderr.take().unwrap();
+        // helper 源码必须在任何协议消息之前、并在等待握手之前写入：
+        // 引导程序按「首行即载荷」读取，握手前不会再写入其它字节
+        if let Some(mut payload) = payload {
+            payload.push(b'\n');
+            tokio::time::timeout(IO_TIMEOUT, stdin.write_all(&payload))
+                .await
+                .map_err(|_| failure("WSL helper upload timed out"))?
+                .map_err(|e| failure(format!("cannot send the WSL helper: {e}")))?;
+        }
         let diagnostics = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let captured = diagnostics.clone();
         let stderr_task = tokio::spawn(async move {
@@ -364,8 +417,8 @@ pub async fn execute(
 /// workspace 上传完成后、启动进程前的 Managed Runtime 准备钩子（00027 §13）
 pub type PrepareHook = Box<dyn FnOnce(&str) -> std::result::Result<(), RunnerError> + Send>;
 
-pub async fn execute_with_command(
-    command: Command,
+pub(crate) async fn execute_with_command(
+    command: impl Into<HelperCommand>,
     req: &RunRequest,
     remote: &str,
     in_place: bool,

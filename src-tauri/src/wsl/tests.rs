@@ -740,3 +740,89 @@ fn rust_fs_requests_use_the_names_the_helper_accepts() {
         );
     }
 }
+
+/// Windows 的命令行上限是 32767 字符：helper 源码一旦作为 `-c` 参数传递，
+/// 脚本变大就会让 CreateProcess 直接失败（os error 206，且错误信息看起来
+/// 像「没有安装发行版」）。这里锁住「脚本走 stdin、命令行保持精简」的契约。
+#[test]
+fn helper_source_travels_over_stdin_and_keeps_the_command_line_short() {
+    let config = WslConfig {
+        distribution: "Ubuntu-24.04".into(),
+        user: "root".into(),
+    };
+    let helper = helper_command(&config).unwrap();
+    let args: Vec<String> = helper
+        .command
+        .as_std()
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    let command_line = args.join(" ");
+    assert!(
+        command_line.len() < 1024,
+        "helper command line must stay far below the Windows limit: {} chars",
+        command_line.len()
+    );
+    assert!(
+        !command_line.contains("def main"),
+        "the helper source must not be passed as an argument"
+    );
+    // 载荷是完整 helper 源码的 base64：引导程序首行读到的就是它
+    let payload = helper.payload.expect("helper source payload");
+    assert_eq!(
+        String::from_utf8(STANDARD.decode(&payload).unwrap()).unwrap(),
+        HELPER
+    );
+    // 引导程序本身保持极短，且只依赖 os（-I 隔离下没有三方模块）
+    assert!(BOOTSTRAP.len() < 256, "bootstrap must stay tiny");
+    assert!(BOOTSTRAP.contains("os.read(0,65536)"));
+}
+
+/// 在宿主 python 上直接跑真实的 `BOOTSTRAP`：把一段假 helper 源码作为载荷
+/// 经 stdin 下发，验证「首行即载荷」的引导契约能被真正执行。
+/// 载荷按 helper 的量级构造（远超管道缓冲），因此也覆盖分块读取不丢字节。
+/// 没有宿主 python 时跳过（与缺 shell 时的本机测试同样的处理）。
+#[tokio::test]
+async fn bootstrap_reads_the_helper_source_from_stdin() {
+    let Some(python) = host_python() else {
+        eprintln!("skipping: no host python3 on PATH");
+        return;
+    };
+    // 真实 helper.py 的 base64 载荷约 46 KiB，超过管道缓冲：这里用同等量级
+    let padding = "x".repeat(200_000);
+    let source = format!(
+        "# {padding}
+import json,sys
+print(json.dumps({{\"type\":\"ready\",\"version\":1,\"info\":str({})}}),flush=True)
+sys.stdin.readline()
+print(json.dumps({{\"type\":\"ack\"}}),flush=True)
+",
+        padding.len()
+    );
+    let mut command = Command::new(python);
+    command.args(["-I", "-u", "-c", BOOTSTRAP]);
+    let mut bridge = Bridge::launch(HelperCommand::with_payload(command, &source))
+        .await
+        .expect("the bootstrap must hand the payload to python");
+    // 长度一致说明跨多次读取/写入后载荷仍然完整
+    assert_eq!(bridge.info, padding.len().to_string());
+    bridge.send(json!({"type": "start"})).await.unwrap();
+    assert!(matches!(bridge.next().await.unwrap(), Message::Ack));
+    assert!(bridge.wait().await.is_ok());
+}
+
+/// 宿主解释器：优先 python3，其次 python（Windows 上常只有后者）
+fn host_python() -> Option<String> {
+    ["python3", "python"]
+        .into_iter()
+        .find(|name| {
+            std::process::Command::new(name)
+                .arg("-c")
+                .arg("import sys")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        })
+        .map(str::to_string)
+}

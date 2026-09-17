@@ -25,7 +25,7 @@ pub async fn execute(
 }
 
 pub(super) async fn execute_with_command(
-    command: Command,
+    command: impl Into<HelperCommand>,
     cols: u32,
     rows: u32,
     cwd: Option<String>,

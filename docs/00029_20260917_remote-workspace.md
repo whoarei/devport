@@ -76,6 +76,8 @@ src-tauri/src/remote_workspace/stage.rs 跨设备暂存下载
 - 单控制帧上限 128 KiB，因此目录与文件内容都分块流式传输（`fs_chunk` 48 KiB）；
 - `init` 消息新增 `cwd`（终端）与 `in_place`（原地运行：走 `walk()` 打开已存在目录而不是创建 run 目录）。
 
+helper 的启动方式见 `docs/00007_20260912_wsl.md`：源码经 stdin 首行（base64）下发，命令行只保留极短的引导程序 —— 本次新增 `fs_*` 使 helper.py 从 18.6 KB 增长到 34.8 KB，超过 Windows 32767 字符的命令行上限，直接作为 `-c` 参数会让 `CreateProcess` 以 `os error 206` 失败（错误信息会被误读为「未安装发行版」）。
+
 > 协议修正：`Message` 枚举原先依赖 `#[serde(rename_all = "lowercase")]` 生成 `exec_exit`，但该规则**不会插入下划线**（实际得到 `execexit`），helper 发出的 `{"type":"exec_exit"}` 一直无法反序列化到对应分支。现已为所有多词变体显式标注 `#[serde(rename = "...")]`。
 
 ### 3.4 跨设备暂存（stage.rs）
