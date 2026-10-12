@@ -11,6 +11,7 @@ Remote Runner 是基于 Tauri 的桌面脚本运行工具，通过统一界面�
 | SFTP 工作区上传 | 已实现 |
 | 串口 Shell 第一版 | 已实现 |
 | WSL 本机发行版直接执行（无需 SSH） | 已实现 |
+| Windows USB 共享到 WSL2 / 远程 Linux | 已实现（需 usbipd-win） |
 | 本机 Shell 直接执行（pwsh / cmd / msys2 等） | 已实现 |
 | 工作区文件管理与 CodeMirror 多标签保存 | 已实现 |
 | 运行历史、原始输出持久化与导出 | 已实现 |
@@ -32,6 +33,7 @@ Remote Runner 是基于 Tauri 的桌面脚本运行工具，通过统一界面�
 - 串口支持 Windows COM 和 Unix tty 端口，可配置波特率，使用 8N1、无流控设置；通过每次命令独有的随机标记判断执行完成，支持文本工作区上传、交互输入、Ctrl+C 停止和超时报告。
 - 输出保留原始字节：Rust 后端将数据编码为 Base64 发送，前端解码后由 xterm.js 渲染。
 - WSL 通过 `wsl.exe` 直接启动本机发行版内的进程，支持 PTY、pipe、工作区上传、交互输入、缩放、停止与超时，无需 SSH 服务或认证。
+- Windows 的「文件 → USB 共享…」可将本机 USB 转交给 WSL2 或已保存的 SSH Linux 设备。支持检查、连接、断开、取消共享和访问验证；远程模式通过 IPv4 TCP 3240 直连，Linux 需 Python 3.8+、usbip、vhci_hcd 和 root / 无需密码 sudo。详见 [远程 Linux USB](docs/00032_20261012_usb-remote-linux.md)。
 - 本机 Shell 直接在本机以指定 shell 运行（Windows：pwsh、powershell、cmd、msys2、Git Bash；macOS/Linux：bash、zsh、sh），工作区原地执行，支持 PTY、pipe、交互输入、缩放、停止与超时。
 - SSH、WSL 和本机 Shell 支持与运行控制台隔离的多标签交互终端；串口暂不支持独立终端。
 - 运行历史最多保存 200 条，单次运行原始输出最多持久化 2 MiB，可导出记录与输出。

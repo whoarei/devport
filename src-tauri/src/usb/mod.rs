@@ -1,4 +1,5 @@
 //! Windows host USB ownership management, independent of workload execution.
+pub mod remote;
 #[cfg(windows)]
 mod windows;
 

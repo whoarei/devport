@@ -125,6 +125,59 @@ pub async fn usb_verify(
     crate::usb::verify(selector, config).await
 }
 
+fn usb_remote_device(
+    state: &AppState,
+    config: &crate::usb::remote::RemoteConfig,
+) -> crate::usb::Result<DeviceProfile> {
+    config.validate()?;
+    state
+        .device_store
+        .get(&config.device_id)
+        .map_err(|e| crate::usb::UsbError {
+            code: "invalid_input",
+            message: e.to_string(),
+        })
+}
+
+#[tauri::command]
+pub async fn usb_remote_probe(
+    state: tauri::State<'_, AppState>,
+    config: crate::usb::remote::RemoteConfig,
+) -> crate::usb::Result<crate::usb::remote::Probe> {
+    let device = usb_remote_device(&state, &config)?;
+    crate::usb::remote::probe(&device, config, &state.config_dir).await
+}
+
+#[tauri::command]
+pub async fn usb_remote_connect(
+    state: tauri::State<'_, AppState>,
+    selector: crate::usb::DeviceSelector,
+    config: crate::usb::remote::RemoteConfig,
+) -> crate::usb::Result<String> {
+    let device = usb_remote_device(&state, &config)?;
+    crate::usb::remote::connect(selector, &device, config, &state.config_dir).await
+}
+
+#[tauri::command]
+pub async fn usb_remote_disconnect(
+    state: tauri::State<'_, AppState>,
+    selector: crate::usb::DeviceSelector,
+    config: crate::usb::remote::RemoteConfig,
+) -> crate::usb::Result<()> {
+    let device = usb_remote_device(&state, &config)?;
+    crate::usb::remote::disconnect(selector, &device, config, &state.config_dir).await
+}
+
+#[tauri::command]
+pub async fn usb_remote_verify(
+    state: tauri::State<'_, AppState>,
+    selector: crate::usb::DeviceSelector,
+    config: crate::usb::remote::RemoteConfig,
+) -> crate::usb::Result<crate::usb::Verification> {
+    let device = usb_remote_device(&state, &config)?;
+    crate::usb::remote::verify(selector, &device, config, &state.config_dir).await
+}
+
 #[tauri::command]
 pub fn list_local_shells() -> Vec<crate::local::shells::ShellInfo> {
     crate::local::shells::detect()

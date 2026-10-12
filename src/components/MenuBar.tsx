@@ -169,7 +169,8 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
         { label: t("menu.addDevice"), onSelect: () => useAppStore.getState().openDeviceDialog({ ...emptyDevice(), is_default: devices.length === 0 }) },
         { label: t("usb.title"), disabled: !isTauri() || !/Win/i.test(navigator.platform), onSelect: () => {
           const selected = devices.find((d) => d.id === useAppStore.getState().selectedDeviceId);
-          useUsbStore.getState().show(selected?.transport === "wsl" ? selected.wsl ?? undefined : undefined);
+          if (selected?.transport === "ssh") useUsbStore.getState().showRemote(selected.id);
+          else useUsbStore.getState().show(selected?.transport === "wsl" ? selected.wsl ?? undefined : undefined);
         } },
         {
           label: t("menu.editDevice"),

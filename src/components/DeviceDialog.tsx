@@ -244,6 +244,7 @@ export function DeviceDialog() {
           </label>
         )}
         </>}
+        {editing.transport === "ssh" && editing.id && <button type="button" onClick={() => useUsbStore.getState().showRemote(editing.id)}>{t("usb.title")}</button>}
         {editing.transport !== "local" && (
         <label>
           {editing.transport === "wsl" ? t("device.workspaceRootWsl") : t("device.workspaceRootRemote")}

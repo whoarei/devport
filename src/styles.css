@@ -976,6 +976,26 @@ button:disabled {
 .usb-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .usb-section-heading h4 { display: flex; align-items: center; gap: 8px; margin: 0; color: #d4d9e4; font-size: 12px; font-weight: 600; }
 .usb-target-kind { padding: 1px 6px; border: 1px solid #424755; border-radius: 4px; color: #a4aec5; font-size: 10px; letter-spacing: 0.3px; }
+.usb-target-switch { display: inline-flex; gap: 2px; padding: 2px; background: #272b35; border: 1px solid #3c4250; border-radius: 6px; }
+.usb-dialog .usb-target-switch button { min-height: 24px; padding: 3px 9px; color: #919cb1; font-size: 11px; background: transparent; border: 0; border-radius: 4px; }
+.usb-dialog .usb-target-switch button[aria-pressed="true"] { color: #dce6ff; background: #414e6b; }
+.usb-dialog .usb-target-switch button:hover:not(:disabled):not([aria-pressed="true"]) { color: #cdd7ed; background: #333a49; }
+.usb-remote-check { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: center; gap: 14px; }
+.usb-remote-check .usb-target-hint { flex: 1; min-width: 0; }
+.usb-remote-check .usb-target-hint > span { min-width: 0; }
+.usb-remote-check > button { flex-shrink: 0; }
+.usb-remote-results { display: flex; flex-wrap: wrap; gap: 8px 14px; padding-top: 12px; margin-top: 12px; border-top: 1px solid #333945; font-size: 10.5px; }
+.usb-remote-results > span { display: inline-flex; align-items: center; gap: 4px; }
+.usb-remote-results svg { width: 12px; height: 12px; }
+.usb-check-ok { color: #98c8ac; }
+.usb-check-warning { color: #d3b28a; }
+.usb-check-neutral { color: #9caecf; }
+.usb-remote-results p { flex-basis: 100%; margin: 0; color: #c3a18d; overflow-wrap: anywhere; }
+.usb-remote-setup { margin-top: 10px; color: #8894a9; font-size: 10.5px; }
+.usb-remote-setup summary { cursor: pointer; }
+.usb-remote-setup p { margin: 8px 0; line-height: 1.7; }
+.usb-remote-setup code { display: inline-block; padding: 3px 6px; background: #292e3a; color: #a6b8d7; border-radius: 4px; }
+.usb-controls input[aria-invalid="true"] { border-color: #ad717b; }
 .usb-controls { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 14px; margin: 12px 0 10px; }
 .usb-controls label { display: flex; flex-direction: column; gap: 6px; min-width: 0; color: #989eac; font-size: 11px; }
 .usb-controls input, .usb-controls select { width: 100%; min-width: 0; height: 34px; padding: 5px 10px; color: #dce1ed; background: #272a33; border: 1px solid #444855; border-radius: 5px; font: inherit; font-size: 12px; }

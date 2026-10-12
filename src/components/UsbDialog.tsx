@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { errorMessage, type UsbDevice, type UsbError } from "../api";
-import { canUsbAction, usbDeviceState, usbHardwareId, useUsbStore } from "../usbStore";
+import { canUsbAction, isUsbHostIp, usbDeviceState, usbHardwareId, useUsbStore } from "../usbStore";
+import { useAppStore } from "../store";
 
 const INSTALL_GUIDE = "https://learn.microsoft.com/en-us/windows/wsl/connect-usb";
 
@@ -35,6 +36,8 @@ function UsbNotice({ error }: { error: unknown }) {
 export function UsbDialog() {
   const { t } = useTranslation();
   const state = useUsbStore();
+  const devices = useAppStore((s) => s.devices);
+  const sshDevices = devices.filter((d) => d.transport === "ssh");
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     if (state.open) {
@@ -44,13 +47,23 @@ export function UsbDialog() {
     else dialog.current?.close();
   }, [state.open]);
   useEffect(() => {
+    if (state.open && state.target === "remote" && !state.remoteConfig.device_id && sshDevices.length) {
+      state.setRemoteConfig({ device_id: sshDevices[0].id, host_ip: "" });
+    }
+  }, [state.open, state.target, state.remoteConfig.device_id, devices]);
+  useEffect(() => {
     if (!state.open) return;
     const timer = setInterval(() => { if (!document.hidden) void useUsbStore.getState().refresh(); }, 3000);
     return () => clearInterval(timer);
   }, [state.open]);
 
   const snapshot = state.snapshot;
-  const disabled = !!state.busy;
+  const disabled = !!state.busy || state.probing;
+  const remote = state.target === "remote";
+  const selectedSsh = sshDevices.find((d) => d.id === state.remoteConfig.device_id);
+  const remoteConfig = remote && selectedSsh ? state.remoteConfig : remote ? { device_id: "", host_ip: "" } : undefined;
+  const actionLabel = (action: "connect" | "verify" | "disconnect" | "unshare") =>
+    t(remote && action === "connect" ? "usb.remote.connect" : `usb.actions.${action}`);
   const distros = snapshot?.distributions.filter((d) => d.version === 2) ?? [];
   const connected = snapshot?.devices.filter((d) => d.bus_id)
     .sort((a, b) => Number(!!b.client_ip_address) - Number(!!a.client_ip_address)) ?? [];
@@ -78,13 +91,13 @@ export function UsbDialog() {
       </div>
       <div className="usb-device-actions">{actions.map((action) => <button key={action} type="button"
         className={action === "connect" ? "usb-connect" : action === "unshare" ? "usb-text-button" : "usb-secondary-button"}
-        disabled={disabled || !canUsbAction(action, device, snapshot, state.config.distribution)}
+        disabled={disabled || !canUsbAction(action, device, snapshot, state.config.distribution, remoteConfig)}
         onClick={() => {
           if (action === "disconnect" && !window.confirm(t("usb.disconnectConfirm"))) return;
           void state.perform(action, device);
         }}>
         {current && state.busy?.action === action ? <span className="usb-spinner" /> : action === "connect" ? <UsbIcon name="arrow" /> : null}
-        {t(`usb.actions.${action}`)}
+        {actionLabel(action)}
       </button>)}</div>
       {device.is_forced && <p className="usb-device-detail usb-muted">{t("usb.forcedHint")}</p>}
       {current && <div className="usb-device-detail usb-progress" role="status"><span className="usb-spinner" />
@@ -92,7 +105,8 @@ export function UsbDialog() {
       </div>}
       {verification && <div className={`usb-device-detail usb-verification ${verification.visible && verification.accessible ? "usb-verification-ok" : "usb-verification-warning"}`} role="status">
         <UsbIcon name={verification.visible && verification.accessible ? "check" : "info"} />
-        <div><p>{t(!verification.visible ? "usb.notVisible" : verification.accessible ? "usb.accessible" : "usb.needsPermission")}</p>
+        <div><p>{t(remote ? !verification.visible ? "usb.remote.notVisible" : verification.accessible ? "usb.remote.accessible" : "usb.remote.needsPermission"
+          : !verification.visible ? "usb.notVisible" : verification.accessible ? "usb.accessible" : "usb.needsPermission")}</p>
           {verification.nodes.length > 0 && <code>{verification.nodes.join(", ")}</code>}
         </div>
       </div>}
@@ -119,8 +133,40 @@ export function UsbDialog() {
           <button type="button" className="usb-text-button" onClick={() => void openUrl(INSTALL_GUIDE).catch((error) => useUsbStore.setState({ error }))}>{t("usb.installGuide")}<UsbIcon name="arrow" /></button>
         </div>}
         <section className="usb-target" aria-labelledby="usb-target-title">
-          <div className="usb-section-heading"><h4 id="usb-target-title">{t("usb.targetHeading")}</h4><span className="usb-target-kind">WSL 2</span></div>
-          <div className="usb-controls">
+          <div className="usb-section-heading"><h4 id="usb-target-title">{t("usb.targetHeading")}</h4>
+            <div className="usb-target-switch" role="group" aria-label={t("usb.targetHeading")}>
+              <button type="button" disabled={disabled} aria-pressed={!remote} onClick={() => state.setTarget("wsl")}>WSL 2</button>
+              <button type="button" disabled={disabled} aria-pressed={remote} onClick={() => state.setTarget("remote")}>{t("usb.remote.label")}</button>
+            </div>
+          </div>
+          {remote ? <>
+            <div className="usb-controls">
+              <label>{t("usb.remote.device")}
+                <select disabled={disabled || !sshDevices.length} value={state.remoteConfig.device_id}
+                  onChange={(e) => state.setRemoteConfig({ device_id: e.target.value, host_ip: "" })}>
+                  {!selectedSsh && <option value="">{t("usb.remote.noDevices")}</option>}
+                  {sshDevices.map((d) => <option key={d.id} value={d.id}>{d.name} · {d.username}@{d.host}</option>)}
+                </select>
+              </label>
+              <label>{t("usb.remote.hostIp")}
+                <input disabled={disabled} value={state.remoteConfig.host_ip} placeholder={t("usb.remote.hostPlaceholder")}
+                  aria-invalid={!isUsbHostIp(state.remoteConfig.host_ip)} onChange={(e) => state.setRemoteConfig({ ...state.remoteConfig, host_ip: e.target.value })} />
+              </label>
+            </div>
+            <div className="usb-remote-check">
+              <p className="usb-target-hint"><UsbIcon name="info" /><span>{t("usb.remote.targetHint")}</span></p>
+              <button type="button" className="usb-secondary-button" disabled={disabled || !selectedSsh || !!snapshot?.problem || !isUsbHostIp(state.remoteConfig.host_ip)}
+                onClick={() => void state.probeRemote()}>{state.probing && <span className="usb-spinner" />}{t(state.probing ? "usb.remote.checking" : "usb.remote.check")}</button>
+            </div>
+            {state.remoteProbe && <div className="usb-remote-results" role="status">
+              <span className={state.remoteProbe.usbip_path ? "usb-check-ok" : "usb-check-warning"}><UsbIcon name={state.remoteProbe.usbip_path ? "check" : "warning"} />usbip {t(state.remoteProbe.usbip_path ? "usb.remote.available" : "usb.remote.missing")}</span>
+              <span className={state.remoteProbe.vhci_loaded ? "usb-check-ok" : "usb-check-warning"}><UsbIcon name={state.remoteProbe.vhci_loaded ? "check" : "info"} />vhci_hcd {t(state.remoteProbe.vhci_loaded ? "usb.remote.loaded" : state.remoteProbe.can_load_module ? "usb.remote.loadOnConnect" : "usb.remote.moduleMissing")}</span>
+              <span className={state.remoteProbe.privilege === "unavailable" ? "usb-check-warning" : "usb-check-neutral"}><UsbIcon name="shield" />{t(`usb.remote.privilege.${state.remoteProbe.privilege}`)}</span>
+              <span className={state.remoteProbe.reachable ? "usb-check-ok" : "usb-check-warning"}><UsbIcon name={state.remoteProbe.reachable ? "check" : "warning"} />TCP 3240 {t(state.remoteProbe.reachable ? "usb.remote.reachable" : "usb.remote.unreachable")}</span>
+              {state.remoteProbe.network_error && <p>{state.remoteProbe.network_error}</p>}
+            </div>}
+            <details className="usb-remote-setup"><summary>{t("usb.remote.setupHeading")}</summary><p>{t("usb.remote.setupHint")}</p><code>sudo modprobe vhci_hcd</code></details>
+          </> : <><div className="usb-controls">
             <label>{t("usb.distribution")}
               <select disabled={disabled || !distros.length} value={state.config.distribution}
                 onChange={(e) => state.setConfig({ distribution: e.target.value, user: "" })}>
@@ -133,9 +179,9 @@ export function UsbDialog() {
                 onChange={(e) => state.setConfig({ ...state.config, user: e.target.value })} />
             </label>
           </div>
-          <p className="usb-target-hint"><UsbIcon name="info" />{t("usb.targetHint")}</p>
+          <p className="usb-target-hint"><UsbIcon name="info" />{t("usb.targetHint")}</p></>}
         </section>
-        {snapshot?.wsl_problem && <UsbNotice error={snapshot.wsl_problem} />}
+        {!remote && snapshot?.wsl_problem && <UsbNotice error={snapshot.wsl_problem} />}
         <section className="usb-device-section" aria-labelledby="usb-devices-title" aria-busy={!!state.busy}>
           <div className="usb-section-heading">
             <h4 id="usb-devices-title">{t("usb.devicesHeading")}<span className="usb-count">{connected.length}</span></h4>
@@ -157,11 +203,12 @@ export function UsbDialog() {
             <div className="usb-devices">{offline.map(renderDevice)}</div>
           </details>}
         </section>
-        {state.completed && state.completed !== "verify" && <div className="usb-notice usb-notice-success" role="status"><UsbIcon name="check" /><p>{t("usb.completed", { action: t(`usb.actions.${state.completed}`) })}</p></div>}
+        {state.completed && state.completed !== "verify" && <div className="usb-notice usb-notice-success" role="status"><UsbIcon name="check" /><p>{t("usb.completed", { action: actionLabel(state.completed) })}</p></div>}
         {state.error != null && <UsbNotice error={state.error} />}
         <details className="usb-help">
           <summary><UsbIcon name="shield" />{t("usb.helpHeading")}</summary>
           <div><p>{t("usb.ownershipHint")}</p><p>{t("usb.networkHint")}</p>
+            {remote && <p>{t("usb.remote.networkHint")}</p>}
             {snapshot?.version && <code>usbipd-win {snapshot.version}</code>}
           </div>
         </details>

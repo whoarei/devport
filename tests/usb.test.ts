@@ -5,8 +5,9 @@ import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import i18n from "../src/i18n";
 import { UsbDialog } from "../src/components/UsbDialog";
-import { api, type UsbDevice, type UsbSnapshot } from "../src/api";
-import { canUsbAction, usbDeviceState, usbHardwareId, useUsbStore } from "../src/usbStore";
+import { api, type UsbDevice, type UsbRemoteProbe, type UsbSnapshot } from "../src/api";
+import { canUsbAction, isUsbHostIp, usbDeviceState, usbHardwareId, useUsbStore } from "../src/usbStore";
+import { useAppStore } from "../src/store";
 
 const device: UsbDevice = {
   instance_id: "USB\\VID_1234&PID_ABCD\\test", description: "Test adapter", bus_id: "1-2",
@@ -26,6 +27,7 @@ function deferred<T>() {
 function reset() {
   useUsbStore.getState().close();
   useUsbStore.setState({ open: true, loading: false, busy: null, error: null, completed: null,
+    target: "wsl", probing: false, remoteProbe: null, remoteConfig: { device_id: "", host_ip: "" },
     verification: null, snapshot, config: { distribution: "Ubuntu", user: "tester" } });
 }
 
@@ -160,4 +162,82 @@ test("USB dialog renders offline records, client addresses, permissions, and the
   const capability = JSON.parse(readFileSync("src-tauri/capabilities/default.json", "utf8"));
   const opener = capability.permissions.find((p: { identifier?: string }) => p.identifier === "opener:allow-open-url");
   assert.ok(opener.allow.some((entry: { url: string }) => entry.url === "https://learn.microsoft.com/en-us/windows/wsl/connect-usb"));
+});
+
+const probe: UsbRemoteProbe = { host_ip: "192.168.1.5", kernel: "6.8.0", usbip_path: "/usr/sbin/usbip", vhci_loaded: true,
+  can_load_module: true, privilege: "root", reachable: true, network_error: null, exports: [] };
+test("remote USB controls require a target and routable IPv4, independently of WSL", () => {
+  for (const value of ["127.0.0.1", "0.1.2.3", "224.0.0.1", "255.255.255.255", "::1", "host;id", "192.168.1.01"]) assert.equal(isUsbHostIp(value), false);
+  assert.equal(isUsbHostIp(""), true);
+  assert.equal(isUsbHostIp("192.168.1.5"), true);
+  const noWsl = { ...snapshot, distributions: [], wsl_problem: { code: "wsl_failed", message: "no WSL" } };
+  assert.equal(canUsbAction("connect", device, noWsl, "", { device_id: "ssh", host_ip: "" }), true);
+  assert.equal(canUsbAction("connect", device, noWsl, "", { device_id: "", host_ip: "" }), false);
+  assert.equal(canUsbAction("connect", device, noWsl, "", { device_id: "ssh", host_ip: "bad" }), false);
+});
+
+test("switching target invalidates an in-flight remote probe and verification", async () => {
+  reset();
+  useUsbStore.getState().setTarget("remote");
+  useUsbStore.getState().setRemoteConfig({ device_id: "ssh", host_ip: "" });
+  const old = api.usbRemoteProbe;
+  const pending = deferred<UsbRemoteProbe>();
+  api.usbRemoteProbe = () => pending.promise;
+  try {
+    const checking = useUsbStore.getState().probeRemote();
+    useUsbStore.getState().setTarget("wsl");
+    pending.resolve(probe);
+    await checking;
+    assert.equal(useUsbStore.getState().remoteProbe, null);
+    assert.equal(useUsbStore.getState().probing, false);
+    assert.equal(useUsbStore.getState().target, "wsl");
+    assert.equal(useUsbStore.getState().remoteConfig.host_ip, "");
+  } finally { api.usbRemoteProbe = old; }
+});
+
+test("remote connect retains its resolved host for verify and detach, without using WSL commands", async () => {
+  reset();
+  useUsbStore.getState().setTarget("remote");
+  useUsbStore.getState().setRemoteConfig({ device_id: "ssh", host_ip: "" });
+  const old = { connect: api.usbRemoteConnect, verify: api.usbRemoteVerify, detach: api.usbRemoteDisconnect, snapshot: api.usbSnapshot, wsl: api.usbConnect };
+  const attached = { ...device, client_ip_address: "192.168.1.7" };
+  let imported = false;
+  const calls: string[] = [];
+  api.usbConnect = async () => { throw new Error("WSL must not be invoked"); };
+  api.usbRemoteConnect = async (selector, config) => {
+    assert.equal(selector.instance_id, device.instance_id);
+    assert.equal(config.device_id, "ssh");
+    imported = true; calls.push("connect"); return probe.host_ip;
+  };
+  api.usbRemoteVerify = async (_selector, config) => {
+    assert.equal(config.host_ip, probe.host_ip); calls.push("verify"); return { visible: true, accessible: false, nodes: ["/dev/bus/usb/001/002"] };
+  };
+  api.usbRemoteDisconnect = async (_selector, config) => { assert.equal(config.host_ip, probe.host_ip); imported = false; calls.push("disconnect"); };
+  api.usbSnapshot = async () => ({ ...snapshot, devices: [imported ? attached : device] });
+  try {
+    await useUsbStore.getState().perform("connect", device);
+    assert.equal(useUsbStore.getState().remoteConfig.host_ip, probe.host_ip);
+    await useUsbStore.getState().perform("verify", attached);
+    assert.equal(useUsbStore.getState().verification?.result.accessible, false);
+    await useUsbStore.getState().perform("disconnect", attached);
+    assert.deepEqual(calls, ["connect", "verify", "disconnect"]);
+    assert.equal(useUsbStore.getState().snapshot?.devices[0].client_ip_address, null);
+  } finally { api.usbRemoteConnect = old.connect; api.usbRemoteVerify = old.verify; api.usbRemoteDisconnect = old.detach; api.usbSnapshot = old.snapshot; api.usbConnect = old.wsl; }
+});
+
+test("remote dialog selects saved SSH profiles and displays setup/network checks", (t) => {
+  t.mock.method(React, "useSyncExternalStore", (_subscribe, getSnapshot) => getSnapshot());
+  const previous = useAppStore.getState();
+  t.after(() => useAppStore.setState(previous, true));
+  reset();
+  useAppStore.setState({ devices: [{ id: "ssh", name: "lab-linux", is_default: false, transport: "ssh", host: "192.168.1.7", port: 22, username: "root", auth: { type: "password", password: "secret" }, workspace_root: "/tmp/work" }] });
+  useUsbStore.getState().setTarget("remote");
+  useUsbStore.setState({ remoteConfig: { device_id: "ssh", host_ip: probe.host_ip }, remoteProbe: probe });
+  const markup = renderToStaticMarkup(createElement(UsbDialog));
+  assert.ok(markup.includes("lab-linux"));
+  assert.ok(markup.includes("连接到 Linux"));
+  assert.ok(markup.includes("TCP 3240"));
+  assert.ok(markup.includes("检查连接"));
+  assert.ok(markup.includes("Linux 端准备说明"));
+  assert.ok(!markup.includes("secret"));
 });

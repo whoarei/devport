@@ -47,6 +47,18 @@ export interface UsbSnapshot {
 }
 export interface UsbVerification { visible: boolean; accessible: boolean; nodes: string[] }
 export interface UsbWslConfig { distribution: string; user: string }
+export interface UsbRemoteConfig { device_id: string; host_ip: string }
+export interface UsbRemoteProbe {
+  host_ip: string;
+  kernel: string;
+  usbip_path: string | null;
+  vhci_loaded: boolean;
+  can_load_module: boolean;
+  privilege: "root" | "sudo" | "unavailable";
+  reachable: boolean;
+  network_error: string | null;
+  exports: { bus_id: string; vid: string; pid: string }[];
+}
 
 export type ScriptKind = "python" | "shell" | "command";
 export type ConsoleMode = "pty" | "pipe";
@@ -263,6 +275,10 @@ export const api = {
   usbDisconnect: (selector: UsbSelector) => invoke<void>("usb_disconnect", { selector }),
   usbUnshare: (selector: UsbSelector) => invoke<void>("usb_unshare", { selector }),
   usbVerify: (selector: UsbSelector, config: UsbWslConfig) => invoke<UsbVerification>("usb_verify", { selector, config }),
+  usbRemoteProbe: (config: UsbRemoteConfig) => invoke<UsbRemoteProbe>("usb_remote_probe", { config }),
+  usbRemoteConnect: (selector: UsbSelector, config: UsbRemoteConfig) => invoke<string>("usb_remote_connect", { selector, config }),
+  usbRemoteDisconnect: (selector: UsbSelector, config: UsbRemoteConfig) => invoke<void>("usb_remote_disconnect", { selector, config }),
+  usbRemoteVerify: (selector: UsbSelector, config: UsbRemoteConfig) => invoke<UsbVerification>("usb_remote_verify", { selector, config }),
   listLocalShells: () => invoke<LocalShellInfo[]>("list_local_shells"),
 
   listWorkspaceDir: (workspace: WorkspaceRef, subdir: string) =>
