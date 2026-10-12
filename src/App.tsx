@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { onRunEvents, api } from "./api";
 import { useAppStore } from "./store";
 import { DeviceDialog } from "./components/DeviceDialog";
+import { UsbDialog } from "./components/UsbDialog";
 import { RemoteWorkspaceDialog } from "./components/RemoteWorkspaceDialog";
 import { UnsavedDialog } from "./components/UnsavedDialog";
 import { TitleBar } from "./components/TitleBar";
@@ -238,6 +239,7 @@ export default function App() {
       <UnsavedDialog />
       <AboutDialog dialogRef={aboutDialog} autoCheckNonce={aboutAutoCheck} />
       <DeviceDialog />
+      <UsbDialog />
       <RemoteWorkspaceDialog />
       <TitleBar
         closeReady={closeReady}

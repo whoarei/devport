@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use tokio_serial::{DataBits, FlowControl, Parity, SerialPortBuilderExt, SerialStream, StopBits};
 
 static BUSY_PORTS: parking_lot::Mutex<Option<HashSet<String>>> = parking_lot::Mutex::new(None);
+const USB_TRANSFER: &str = "__remote_runner_usb_transfer__";
 
 /// Covers both connection tests and runs, including duplicate device profiles for one port.
 pub struct PortLease(String);
@@ -17,6 +18,12 @@ impl PortLease {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| port.trim().to_string());
         let mut busy = BUSY_PORTS.lock();
+        if busy
+            .as_ref()
+            .is_some_and(|ports| ports.contains(USB_TRANSFER))
+        {
+            return Err(RunnerError::Serial("USB transfer is in progress".into()));
+        }
         if !busy.get_or_insert_with(HashSet::new).insert(key.clone()) {
             return Err(RunnerError::Serial(format!(
                 "port {port} is already in use by another run or connection test"
@@ -24,6 +31,20 @@ impl PortLease {
         }
         Ok(Self(key))
     }
+}
+
+/// Conservatively exclude all serial sessions while USB ownership changes.
+/// Kept under the same lock as acquire(), so new sessions cannot race the check.
+pub(crate) fn reserve_usb_transfer() -> Result<PortLease> {
+    let mut busy = BUSY_PORTS.lock();
+    let ports = busy.get_or_insert_with(HashSet::new);
+    if !ports.is_empty() {
+        return Err(RunnerError::Serial(
+            "stop serial sessions before transferring USB".into(),
+        ));
+    }
+    ports.insert(USB_TRANSFER.into());
+    Ok(PortLease(USB_TRANSFER.into()))
 }
 
 impl Drop for PortLease {
@@ -74,6 +95,7 @@ mod tests {
         let name = format!("test-{}", uuid::Uuid::new_v4());
         let lease = PortLease::acquire(&name).unwrap();
         assert!(PortLease::acquire(&name).is_err());
+        assert!(reserve_usb_transfer().is_err());
         drop(lease);
         assert!(PortLease::acquire(&name).is_ok());
     }

@@ -26,6 +26,28 @@ export interface LocalShellInfo {
   path: string;
 }
 
+export interface UsbError { code: string; message: string }
+export interface UsbDevice {
+  instance_id: string;
+  description: string;
+  bus_id: string | null;
+  persisted_guid: string | null;
+  client_ip_address: string | null;
+  is_forced: boolean;
+}
+export type UsbSelector = Pick<UsbDevice, "instance_id" | "bus_id" | "persisted_guid">;
+export interface UsbSnapshot {
+  supported: boolean;
+  executable: string | null;
+  version: string | null;
+  problem: UsbError | null;
+  wsl_problem: UsbError | null;
+  distributions: { name: string; version: number }[];
+  devices: UsbDevice[];
+}
+export interface UsbVerification { visible: boolean; accessible: boolean; nodes: string[] }
+export interface UsbWslConfig { distribution: string; user: string }
+
 export type ScriptKind = "python" | "shell" | "command";
 export type ConsoleMode = "pty" | "pipe";
 
@@ -236,6 +258,11 @@ export const api = {
     invoke<string>("test_device", { device }),
   listSerialPorts: () => invoke<string[]>("list_serial_ports"),
   listWslDistributions: () => invoke<string[]>("list_wsl_distributions"),
+  usbSnapshot: () => invoke<UsbSnapshot>("usb_snapshot"),
+  usbConnect: (selector: UsbSelector, config: UsbWslConfig) => invoke<void>("usb_connect", { selector, config }),
+  usbDisconnect: (selector: UsbSelector) => invoke<void>("usb_disconnect", { selector }),
+  usbUnshare: (selector: UsbSelector) => invoke<void>("usb_unshare", { selector }),
+  usbVerify: (selector: UsbSelector, config: UsbWslConfig) => invoke<UsbVerification>("usb_verify", { selector, config }),
   listLocalShells: () => invoke<LocalShellInfo[]>("list_local_shells"),
 
   listWorkspaceDir: (workspace: WorkspaceRef, subdir: string) =>

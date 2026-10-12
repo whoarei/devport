@@ -95,6 +95,37 @@ pub async fn list_wsl_distributions() -> Result<Vec<String>> {
 }
 
 #[tauri::command]
+pub async fn usb_snapshot() -> crate::usb::Snapshot {
+    crate::usb::snapshot().await
+}
+
+#[tauri::command]
+pub async fn usb_connect(
+    selector: crate::usb::DeviceSelector,
+    config: crate::device::WslConfig,
+) -> crate::usb::Result<()> {
+    crate::usb::connect(selector, config).await
+}
+
+#[tauri::command]
+pub async fn usb_disconnect(selector: crate::usb::DeviceSelector) -> crate::usb::Result<()> {
+    crate::usb::disconnect(selector).await
+}
+
+#[tauri::command]
+pub async fn usb_unshare(selector: crate::usb::DeviceSelector) -> crate::usb::Result<()> {
+    crate::usb::unshare(selector).await
+}
+
+#[tauri::command]
+pub async fn usb_verify(
+    selector: crate::usb::DeviceSelector,
+    config: crate::device::WslConfig,
+) -> crate::usb::Result<crate::usb::Verification> {
+    crate::usb::verify(selector, config).await
+}
+
+#[tauri::command]
 pub fn list_local_shells() -> Vec<crate::local::shells::ShellInfo> {
     crate::local::shells::detect()
 }

@@ -19,6 +19,6 @@
     "core:event:allow-listen",
     "autostart:default",
     "dialog:default",
-    { "identifier": "opener:allow-open-url", "allow": [{ "url": "https://github.com/whoarei/remote-runner/releases/latest" }] }
+    { "identifier": "opener:allow-open-url", "allow": [{ "url": "https://github.com/whoarei/remote-runner/releases/latest" }, { "url": "https://learn.microsoft.com/en-us/windows/wsl/connect-usb" }] }
   ]
 }

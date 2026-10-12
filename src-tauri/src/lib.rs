@@ -12,6 +12,7 @@ pub mod ssh;
 pub mod terminal;
 pub mod tray;
 pub mod update;
+pub mod usb;
 pub mod verbatim;
 pub mod workspace;
 pub mod workspace_ref;
@@ -94,6 +95,11 @@ pub fn run() {
             commands::test_device,
             commands::list_serial_ports,
             commands::list_wsl_distributions,
+            commands::usb_snapshot,
+            commands::usb_connect,
+            commands::usb_disconnect,
+            commands::usb_unshare,
+            commands::usb_verify,
             commands::list_local_shells,
             commands::list_workspace_dir,
             commands::read_workspace_file,

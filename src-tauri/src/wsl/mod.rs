@@ -118,7 +118,7 @@ fn failure(message: impl Into<String>) -> RunnerError {
     RunnerError::Wsl(message.into())
 }
 
-fn wsl_command() -> Result<Command> {
+pub(crate) fn wsl_command() -> Result<Command> {
     #[cfg(windows)]
     {
         // Use the system binary, never an executable found in the workspace.
@@ -151,7 +151,7 @@ pub(crate) fn helper_command(config: &WslConfig) -> Result<HelperCommand> {
     })
 }
 
-fn decode_wsl_text(bytes: &[u8]) -> String {
+pub(crate) fn decode_wsl_text(bytes: &[u8]) -> String {
     if bytes.starts_with(&[0xff, 0xfe]) || bytes.iter().any(|&b| b == 0) {
         let bytes = bytes.strip_prefix(&[0xff, 0xfe]).unwrap_or(bytes);
         String::from_utf16_lossy(

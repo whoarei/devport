@@ -7,6 +7,7 @@ import { requestQuit } from "../appLifecycle";
 import { dirtyTab } from "../editorDocument";
 import { loadLanguagePreference, setLanguage, type LanguagePreference } from "../i18n/language";
 import { useAppStore, workspaceLabel } from "../store";
+import { useUsbStore } from "../usbStore";
 import { useTerminalStore } from "../terminalStore";
 import { panelVisibilityPatch } from "../layoutState";
 import { panelsInDock } from "../panels/registry";
@@ -166,6 +167,10 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
         },
         { type: "separator" },
         { label: t("menu.addDevice"), onSelect: () => useAppStore.getState().openDeviceDialog({ ...emptyDevice(), is_default: devices.length === 0 }) },
+        { label: t("usb.title"), disabled: !isTauri() || !/Win/i.test(navigator.platform), onSelect: () => {
+          const selected = devices.find((d) => d.id === useAppStore.getState().selectedDeviceId);
+          useUsbStore.getState().show(selected?.transport === "wsl" ? selected.wsl ?? undefined : undefined);
+        } },
         {
           label: t("menu.editDevice"),
           disabled: devices.length === 0,

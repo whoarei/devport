@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, DeviceProfile, LocalShellInfo } from "../api";
 import { useAppStore } from "../store";
+import { useUsbStore } from "../usbStore";
 
 /** 新设备模板 */
 export const emptyDevice = (): DeviceProfile => ({
@@ -141,6 +142,7 @@ export function DeviceDialog() {
               onChange={(e) => update({ wsl: { distribution: editing.wsl?.distribution ?? "", user: e.target.value } })} />
           </label>
           <p>{t("device.wslDescription")}</p>
+          <button type="button" onClick={() => useUsbStore.getState().show(editing.wsl ?? undefined)}>{t("usb.title")}</button>
         </> : editing.transport === "local" ? <>
           <label>
             {t("device.localShell")}
