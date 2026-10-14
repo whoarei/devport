@@ -97,10 +97,7 @@ export function HistoryPanel({ collapsed, onToggleCollapse }: { collapsed: boole
         aria-label={`${t("history.viewOutput", { label: entry.label })} · ${entry.device_name} · ${stateLabel}`}
         onClick={() => selectRun(entry.run_id)}>
         <span className={`history-status state-${state}`} aria-hidden="true" />
-        <span className="history-text">
-          <span className="history-label">{entry.label}</span>
-          <span className="history-meta">{entry.device_name}</span>
-        </span>
+        <span className="history-label">{entry.label}</span>
       </button>
       <span className="history-entry-actions">
         {active ? <button className="history-stop danger" aria-label={t("history.stopAria", { label: entry.label })}

@@ -729,7 +729,7 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
   align-items: center;
   gap: 4px;
   padding: 0 8px 0 12px;
-  min-height: 46px;
+  min-height: 32px;
   cursor: default;
 }
 .history-entry.selected { background: #293445; box-shadow: inset 2px 0 #93c5fd; }
@@ -742,14 +742,12 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
   gap: 8px;
   flex: 1;
   min-width: 0;
-  padding: 7px 0;
+  padding: 6px 0;
   text-align: left;
 }
 .history-open:disabled { opacity: 1; }
 .history-status { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .history-status.state-starting { color: #facc15; }
-.history-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.history-text .history-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #9298a3; }
 .history-entry-actions { display: flex; align-items: center; flex-shrink: 0; gap: 2px; }
 .history-time { font-size: 10px; font-variant-numeric: tabular-nums; color: #9298a3; }
 .history-entry .history-more, .history-entry .history-stop { width: 24px; height: 26px; padding: 0; }
