@@ -96,8 +96,8 @@ export function DeviceDialog() {
   };
 
   return (
-    <div className="modal-mask" onClick={closeDeviceDialog}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-mask">
+      <div className="modal">
         <h3>{editing.id ? t("device.editTitle") : t("device.addTitle")}</h3>
         <label>
           {t("device.name")}
@@ -255,6 +255,7 @@ export function DeviceDialog() {
         </label>
         )}
         <div className="modal-actions">
+          <button type="button" onClick={closeDeviceDialog}>{t("dialog.cancel")}</button>
           <button disabled={testing} onClick={() => test(editing)}>{t("device.testConnection")}</button>
           {editing.id && (
             <button className="danger" onClick={() => remove(editing)}>
