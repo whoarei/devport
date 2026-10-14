@@ -45,6 +45,7 @@ export const DEFAULT_LAYOUT: LayoutState = {
 
 /** v1 旧字段名 → 面板 id，用于迁移已持久化的布局数据 */
 const LEGACY_VISIBLE_KEYS: Record<PanelId, string> = {
+  transfer: "transferVisible",
   workspace: "workspaceVisible",
   commands: "commandsVisible",
   history: "historyVisible",
@@ -54,6 +55,7 @@ const LEGACY_VISIBLE_KEYS: Record<PanelId, string> = {
 };
 
 const LEGACY_COLLAPSED_KEYS: Record<PanelId, string> = {
+  transfer: "transferCollapsed",
   workspace: "workspaceCollapsed",
   commands: "commandsCollapsed",
   history: "historyCollapsed",

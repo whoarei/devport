@@ -10,6 +10,8 @@ import { installCheckedUpdate } from "../updateFlow";
 import { formatDownloadProgress, updateInstallBlocker } from "../updateStatus";
 import { useAppStore } from "../store";
 import { useTerminalStore, terminalActive } from "../terminalStore";
+import { transferActive } from "../transferApi";
+import { useTransferStore } from "../transferStore";
 
 const RELEASES_URL = "https://github.com/whoarei/remote-runner/releases/latest";
 
@@ -35,7 +37,8 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
   const mounted = useRef(true);
   const runBlocker = useAppStore(updateInstallBlocker);
   const terminalBusy = useTerminalStore((s) => s.tabs.some(terminalActive));
-  const blocker = runBlocker || (terminalBusy ? t("about.closeTerminalBlocker") : null);
+  const transferBusy = useTransferStore((s) => s.tasks.some((task) => transferActive(task.state)));
+  const blocker = runBlocker || (terminalBusy ? t("about.closeTerminalBlocker") : null) || (transferBusy ? t("transfer.updateBlocker") : null);
 
   const check = useCallback(async () => {
     if (busyRef.current) return;

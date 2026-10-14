@@ -8,6 +8,7 @@ import { dirtyTab } from "../editorDocument";
 import { loadLanguagePreference, setLanguage, type LanguagePreference } from "../i18n/language";
 import { useAppStore, workspaceLabel } from "../store";
 import { useUsbStore } from "../usbStore";
+import { revealTransferPanel, useTransferStore } from "../transferStore";
 import { useTerminalStore } from "../terminalStore";
 import { panelVisibilityPatch } from "../layoutState";
 import { panelsInDock } from "../panels/registry";
@@ -148,6 +149,12 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
       label: t("menu.file"),
       entries: [
         { label: t("menu.openWorkspace"), onSelect: () => void openWorkspace() },
+        { type: "checkbox", label: t("transfer.title"), checked: layout.panelVisible.transfer, onSelect: () => {
+          const state = useAppStore.getState();
+          if (state.layout.panelVisible.transfer) state.setLayout(panelVisibilityPatch(state.layout, "transfer", false));
+          else useTransferStore.getState().seed();
+        } },
+        { label: t("transfer.browseDevice"), children: devices.filter((d) => ["ssh", "wsl"].includes(d.transport)).map((device) => ({ label: deviceLabel(device), onSelect: () => { revealTransferPanel(); void useTransferStore.getState().openDevice(device.id); useTransferStore.getState().restore(); } })) },
         { label: t("menu.openRemoteWorkspace"), onSelect: () => useAppStore.getState().openRemoteWorkspaceDialog() },
         {
           label: t("menu.recentWorkspaces"),

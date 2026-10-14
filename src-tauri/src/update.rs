@@ -199,7 +199,9 @@ pub async fn install_app_update(
     let update = checked.as_ref().unwrap();
     // run_script holds the read side until the run is registered, closing the start/install race.
     let _gate = state.begin_install(|| {
-        !runs.run_manager.list_running().is_empty() || runs.terminal_manager.has_active()
+        !runs.run_manager.list_running().is_empty()
+            || runs.terminal_manager.has_active()
+            || runs.transfer_manager.has_active()
     })?;
     let mut downloaded = 0u64;
     let mut last_emit = Instant::now();

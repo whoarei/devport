@@ -113,8 +113,8 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
       {active?.conflict && <button disabled={locked || state.saving} onClick={() => void useAppStore.getState().reloadFile()}>{t("editor.reloadDisk")}</button>}
     </div>}
     {state.tabs.length === 0 ? <p>{state.loading ? t("editor.opening") : t("editor.placeholder")}</p> : <>
-      <div className="editor-tabs" role="tablist" aria-label={t("editor.openTabs")}>
-        <button className="editor-collapse" aria-label={collapsed ? t("editor.expand") : t("editor.collapse")} aria-expanded={!collapsed}
+      <div className="editor-tabs center-panel-header" role="tablist" aria-label={t("editor.openTabs")}>
+        <button className="editor-collapse center-panel-collapse" aria-label={collapsed ? t("editor.expand") : t("editor.collapse")} aria-expanded={!collapsed}
           title={collapsed ? t("editor.expand") : t("editor.collapse")} onClick={onToggleCollapse}>{collapsed ? "▸" : "▾"}</button>
         {state.tabs.map((tab) => (
           <div key={tab.name} role="tab" aria-selected={tab.name === state.activeFile}

@@ -128,6 +128,7 @@ def main():
     # fs_* 文件服务状态（00029）：与 run/exec 流程互斥
     fs_root = None
     fs_upload = None
+    transfer_service = None
 
     def fs_open(path):
         nonlocal fs_root
@@ -631,6 +632,16 @@ def main():
                                 raise ValueError("pending stdin exceeds 1 MiB")
                     elif kind == "resize" and process is not None:
                         resize(message["cols"], message["rows"])
+                    elif kind.startswith("tf_") and process is None and exec_proc is None:
+                        try:
+                            if transfer_service is None:
+                                transfer_service = TransferService()
+                            result = transfer_service.handle(message)
+                            if result != "__reported_error__":
+                                emit("tf_reply", result=result)
+                        except Exception as error:
+                            code, text = fs_fail(error)
+                            emit("fs_error", code=code, message=text)
                     elif kind == "fs_open" and process is None and exec_proc is None:
                         try:
                             fs_open(message["path"])
@@ -744,6 +755,8 @@ def main():
         emit("error", message=str(error))
         raise SystemExit(1)
     finally:
+        if transfer_service is not None:
+            transfer_service.close()
         if fs_upload is not None:
             try:
                 os.close(fs_upload["fd"])

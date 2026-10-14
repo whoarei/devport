@@ -5,6 +5,8 @@ import { api, errorMessage, type AppUpdateInfo } from "./api";
 import i18n from "./i18n";
 import { useAppStore } from "./store";
 import { useTerminalStore, terminalActive } from "./terminalStore";
+import { transferActive, transferApi } from "./transferApi";
+import { useTransferStore } from "./transferStore";
 import {
   directUpdateAction,
   installWithProgress,
@@ -18,6 +20,7 @@ export async function installCheckedUpdate(
   info: AppUpdateInfo,
   onPhase: (phase: UpdateButtonPhase) => void,
 ): Promise<void> {
+  if ((await transferApi.snapshot()).some((task) => transferActive(task.state))) throw new Error(i18n.t("transfer.updateBlocker"));
   useAppStore.setState({ updating: true });
   onPhase({ kind: "downloading", downloaded: 0, total: null });
   try {
@@ -35,6 +38,7 @@ export async function installCheckedUpdate(
 
 function installBlocker(): string | null {
   return updateInstallBlocker(useAppStore.getState())
+    || (useTransferStore.getState().tasks.some((task) => transferActive(task.state)) ? i18n.t("transfer.updateBlocker") : null)
     || (useTerminalStore.getState().tabs.some(terminalActive) ? i18n.t("about.closeTerminalBlocker") : null);
 }
 

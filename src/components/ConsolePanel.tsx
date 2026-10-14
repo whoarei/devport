@@ -106,8 +106,8 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
   };
   const contentVisible = visible && !collapsed;
   return <div className="console-panel">
-    <div className="console-tabs-bar">
-      <button className="console-collapse" aria-label={collapsed ? t("console.expand") : t("console.collapse")} aria-expanded={!collapsed} onClick={onToggleCollapse}>{collapsed ? "▸" : "▾"}</button>
+    <div className="console-tabs-bar center-panel-header">
+      <button className="console-collapse center-panel-collapse" aria-label={collapsed ? t("console.expand") : t("console.collapse")} aria-expanded={!collapsed} onClick={onToggleCollapse}>{collapsed ? "▸" : "▾"}</button>
       <div className="console-tabs" role="tablist" aria-label={t("console.tabsAria")} onContextMenu={openTabsBlankMenu} onKeyDown={(event) => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         if ((event.target as HTMLElement).getAttribute("role") !== "tab") return;

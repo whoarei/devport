@@ -6,6 +6,7 @@ import { errorMessage, type DeviceProfile, type WorkspaceEntry, type WorkspaceRe
 import { useAppStore, workspaceLabel } from "../store";
 import { useTerminalStore } from "../terminalStore";
 import { revealConsolePanel } from "../consoleTabs";
+import { useTransferStore } from "../transferStore";
 import { openWorkspace } from "../workspacePicker";
 import { joinPath, WORKSPACE_ROOT, WorkspacePath, WorkspaceTree } from "../workspaceTree";
 import { ConfirmDialog, ConfirmRequest } from "./ConfirmDialog";
@@ -245,6 +246,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     event.stopPropagation();
     if (!workspace) return;    const path = entry ? joinPath(dir, entry.name) : dir;
     const entries: MenuEntry[] = [];
+    entries.push({ label: t(workspace.type === "local" ? "transfer.upload" : "transfer.download"), onSelect: () => useTransferStore.getState().seed(workspace, entry ? path : undefined) });
     if (!entry) entries.push({ label: t("workspace.refresh"), onSelect: () => void useAppStore.getState().loadWorkspaceDir(dir) });
     // 新建入口只出现在目录与空白区；文件条目上只有打开/重命名/删除
     if (!entry || entry.is_dir) {

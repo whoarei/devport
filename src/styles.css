@@ -1,6 +1,10 @@
 :root {
   color-scheme: dark;
   font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  --center-header-height: 32px;
+  --center-header-font-size: 13px;
+  --center-collapse-width: 28px;
+  --center-label-inset: 8px;
 }
 
 * {
@@ -343,6 +347,46 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
   color: #777;
 }
 
+/* Center panels share a title baseline and the same text origin after the chevron. */
+.center-panel-header {
+  min-height: var(--center-header-height);
+  height: var(--center-header-height);
+  font-size: var(--center-header-font-size);
+  font-weight: 400;
+  line-height: 20px;
+  flex-shrink: 0;
+}
+
+/* Pin the actual label typography too: tabs use buttons, PanelTitle uses a span. */
+.center-panel-header .panel-heading > span:last-child,
+.center-panel-header .editor-tab-label,
+.center-panel-header .console-tabs button[role="tab"] {
+  font-family: inherit;
+  font-size: var(--center-header-font-size);
+  font-weight: 400;
+  line-height: 20px;
+  letter-spacing: normal;
+}
+
+.center-panel-header .center-panel-collapse,
+.center-panel-header .panel-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--center-collapse-width);
+  flex: 0 0 var(--center-collapse-width);
+  padding: 0;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: #888;
+}
+
+.panel-title.center-panel-header { padding: 0; text-transform: none; color: #e5eafa; }
+.panel-title.center-panel-header .panel-heading { height: 100%; gap: 0; overflow: hidden; }
+.panel-title.center-panel-header .panel-heading > span:last-child { padding-left: var(--center-label-inset); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-title.center-panel-header .panel-actions { display: flex; align-items: center; margin-right: 6px; }
+
 .workspace-panel {
   flex: 1;
   overflow: auto;
@@ -503,10 +547,10 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
   line-height: 1.5;
 }
 
-.editor-tabs { display: flex; align-items: center; gap: 2px; padding: 0 6px; border-bottom: 1px solid #2a2b30; overflow-x: auto; flex-shrink: 0; }
-.editor-tab { display: flex; align-items: center; border-radius: 4px 4px 0 0; color: #9ba4b4; font-size: 12px; white-space: nowrap; }
-.editor-tab.active { background: #17181c; color: #ddd; box-shadow: inset 0 1px 0 #4a6b9a; }
-.editor-tab-label { border: 0; background: transparent; color: inherit; padding: 6px 4px 6px 10px; font-size: 12px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.editor-tabs { display: flex; align-items: stretch; gap: 0; padding: 0; border-bottom: 1px solid #2a2b30; overflow-x: auto; flex-shrink: 0; }
+.editor-tab { display: flex; align-items: center; border-radius: 4px 4px 0 0; color: #9fa2b0; font-size: inherit; white-space: nowrap; }
+.editor-tab.active { background: #17181c; color: #e5eafa; box-shadow: inset 0 1px 0 #4a6b9a; }
+.editor-tab-label { border: 0; background: transparent; color: inherit; padding: 5px 4px 5px var(--center-label-inset); font: inherit; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 .editor-tab-label:hover { background: transparent; color: #ddd; }
 .editor-tab-close { border: 0; background: transparent; color: #777; padding: 2px 6px; margin-right: 2px; border-radius: 3px; font-size: 12px; line-height: 1.4; }
 .editor-tab-close:hover:not(:disabled) { background: #ffffff14; color: #ddd; }
@@ -570,11 +614,11 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 /* ---------- footer / console ---------- */
 [hidden] { display: none !important; }
 .console-panel, .run-page, .terminal-page { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
-.console-tabs-bar { display: flex; align-items: stretch; flex-shrink: 0; min-height: 34px; background: #1b1c21; border-bottom: 1px solid #34353d; }
+.console-tabs-bar { display: flex; align-items: stretch; flex-shrink: 0; background: #1b1c21; border-bottom: 1px solid #34353d; }
 .console-tabs { display: flex; flex: 1; min-width: 0; overflow-x: auto; }
 .console-tab { display: flex; flex-shrink: 0; }
 .console-tabs button, .console-collapse, .terminal-add, .terminal-device-picker { border: 0; border-radius: 0; background: transparent; white-space: nowrap; }
-.console-tabs button[role="tab"] { padding: 7px 12px; border-bottom: 2px solid transparent; color: #9fa2b0; }
+.console-tabs button[role="tab"] { padding: 4px var(--center-label-inset); font: inherit; border-bottom: 2px solid transparent; color: #9fa2b0; }
 .console-tabs button[aria-selected="true"] { color: #e5eafa; background: #242630; border-bottom-color: #8fa9e8; }
 .console-tabs button:focus-visible { outline: 1px solid #8fa9e8; outline-offset: -3px; }
 .terminal-tab-close { color: #999daa; padding: 3px 7px; }

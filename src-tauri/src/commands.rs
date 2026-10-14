@@ -5,6 +5,7 @@ use crate::workspace_ref::WorkspaceRef;
 use std::path::PathBuf;
 
 pub struct AppState {
+    pub transfer_manager: crate::file_transfer::TransferManager,
     pub terminal_manager: crate::terminal::TerminalManager,
     pub run_manager: RunManager,
     pub device_store: DeviceStore,
@@ -14,6 +15,98 @@ pub struct AppState {
     pub leases: std::sync::Arc<crate::runtime::manager::LeaseSet>,
     /// 远端工作区编辑会话（00029；单槽长连接）
     pub workspace_sessions: crate::remote_workspace::SessionStore,
+}
+
+#[tauri::command]
+pub async fn transfer_list_dir(
+    state: tauri::State<'_, AppState>,
+    endpoint: WorkspaceRef,
+) -> std::result::Result<crate::file_transfer::Directory, crate::workspace::FileError> {
+    state.transfer_manager.list(endpoint).await
+}
+
+#[tauri::command]
+pub async fn transfer_create_dir(
+    state: tauri::State<'_, AppState>,
+    endpoint: WorkspaceRef,
+    name: String,
+) -> std::result::Result<(), crate::workspace::FileError> {
+    state.transfer_manager.mkdir(endpoint, name).await
+}
+
+#[tauri::command]
+pub async fn transfer_plan(
+    state: tauri::State<'_, AppState>,
+    request: crate::file_transfer::Request,
+) -> std::result::Result<crate::file_transfer::Plan, crate::workspace::FileError> {
+    state.transfer_manager.plan(request).await
+}
+
+#[tauri::command]
+pub fn transfer_discard_plan(state: tauri::State<'_, AppState>, plan_id: String) {
+    state.transfer_manager.discard_plan(&plan_id);
+}
+
+#[tauri::command]
+pub fn transfer_start(
+    state: tauri::State<'_, AppState>,
+    updates: tauri::State<'_, crate::update::UpdateState>,
+    plan_id: String,
+    policy: crate::file_transfer::ConflictPolicy,
+    preserve_executable: bool,
+) -> std::result::Result<String, crate::workspace::FileError> {
+    let _gate = updates
+        .allow_run()
+        .map_err(|e| crate::workspace::FileError::new("busy", e.to_string()))?;
+    state
+        .transfer_manager
+        .start(&plan_id, policy, preserve_executable)
+}
+
+#[tauri::command]
+pub fn transfer_snapshot(
+    state: tauri::State<'_, AppState>,
+) -> Vec<crate::file_transfer::TaskSummary> {
+    state.transfer_manager.summaries()
+}
+
+#[tauri::command]
+pub fn transfer_task(
+    state: tauri::State<'_, AppState>,
+    task_id: String,
+) -> std::result::Result<crate::file_transfer::Task, crate::workspace::FileError> {
+    state.transfer_manager.task(&task_id)
+}
+
+#[tauri::command]
+pub fn transfer_cancel(
+    state: tauri::State<'_, AppState>,
+    task_id: String,
+) -> std::result::Result<(), crate::workspace::FileError> {
+    state.transfer_manager.cancel(&task_id)
+}
+
+#[tauri::command]
+pub async fn transfer_cancel_all(
+    state: tauri::State<'_, AppState>,
+) -> std::result::Result<(), crate::workspace::FileError> {
+    state.transfer_manager.cancel_all().await
+}
+
+#[tauri::command]
+pub async fn transfer_retry_failed(
+    state: tauri::State<'_, AppState>,
+    task_id: String,
+) -> std::result::Result<crate::file_transfer::Plan, crate::workspace::FileError> {
+    state.transfer_manager.retry(&task_id).await
+}
+
+#[tauri::command]
+pub async fn transfer_cleanup(
+    state: tauri::State<'_, AppState>,
+    task_id: String,
+) -> std::result::Result<(), crate::workspace::FileError> {
+    state.transfer_manager.cleanup(&task_id).await
 }
 
 #[tauri::command]

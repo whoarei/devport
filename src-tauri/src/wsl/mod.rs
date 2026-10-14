@@ -16,7 +16,11 @@ use tokio::{
     sync::mpsc,
 };
 
-const HELPER: &str = include_str!("helper.py");
+const HELPER: &str = concat!(
+    include_str!("../file_transfer/helper.py"),
+    "\n",
+    include_str!("helper.py")
+);
 const FRAME_LIMIT: usize = 128 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -111,6 +115,10 @@ pub(crate) enum Message {
     FsError {
         code: String,
         message: String,
+    },
+    #[serde(rename = "tf_reply")]
+    TransferReply {
+        result: Value,
     },
 }
 

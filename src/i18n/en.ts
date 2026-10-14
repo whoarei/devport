@@ -2,6 +2,30 @@ import type { Messages } from "./zh";
 
 /** 英文字典：key 集合与 zh 完全一致（typeof zh 约束，漏翻编译报错）。 */
 export const en: Messages = {
+  transfer: {
+    task: "Task", direction: "Direction", progressResult: "Progress / Result", unnamedTask: "File Transfer", batchName: "{{name}} ({{count}} selected entries)",
+    taskDetails: "Transfer Details: {{name}}", moreActions: "More Actions: {{name}}", progressFor: "Transfer Progress: {{name}}", retryShort: "Retry", completedHistory: "Completed ({{count}})",
+    close: "Close", source: "Source", destination: "Destination", onlyFailures: "Show failures only", loadingResults: "Reading results…", noFailures: "No failed entries", noResults: "No file results",
+    needsReview: "Needs Review", needsCleanup: "Needs Cleanup", reviewUnknown: "Some files have an unknown commit result. Check the destination files before selecting files for a new transfer.",
+    previousAttempt: "Previous Attempt", nextAttempt: "Following Attempt",
+    modified: "Modified", previousPage: "Previous Page", nextPage: "Next Page", updateBlocker: "Wait for file transfers to finish or cancel them before updating.",
+    title: "File Transfer", toggle: "Toggle File Transfer", browseDevice: "Browse Device Files", local: "Local", device: "Device",
+    selectDevice: "Select SSH / WSL Device", chooseFolder: "Choose Folder…", path: "Directory Path", localPath: "Local directory path",
+    hide: "Hide File Transfer Panel", go: "Go to Directory (Enter)", action: "Action", uploadSelected: "Upload Selected ({{count}})", downloadSelected: "Download Selected ({{count}})",
+    uploadTo: "Upload {{name}} to {{path}}", downloadTo: "Download {{name}} to {{path}}", targetDirectory: "To: {{path}}", chooseTarget: "Open the destination directory in the other pane first",
+    open: "Open", up: "Parent Directory", refresh: "Refresh", loading: "Reading directory…", selectAll: "Select All", selectEntry: "Select {{name}}",
+    name: "Name", size: "Size", unsupported: "Unsupported file type", emptyDirectory: "Empty directory", chooseDirectory: "Choose a directory",
+    newDirectory: "New directory name", create: "Create", review: "Review File Transfer", planSummary: "{{count}} entries · {{bytes}} · {{conflicts}} existing files",
+    conflictPolicy: "Existing Files", keepBoth: "Keep Both", skip: "Skip", overwrite: "Overwrite",
+    noOverwrite: "Safe overwrite is unavailable on this device. Keep both or skip.", noKeepBoth: "Safe keep-both publication is unavailable. Skip, or overwrite existing files when supported.", protectedFiles: "The destination includes open editor files. Close their tabs before overwriting.",
+    preserveExecutable: "Preserve executable bits (POSIX sources only)", copyHint: "Copies remain independent. Directories commit file by file; cancel keeps completed files.",
+    warnings: "{{count}} exclusions or warnings", cancel: "Cancel", start: "Start Transfer", taskCounts: "{{completed}} / {{count}} · {{failed}} failed · {{skipped}} skipped",
+    retry: "Retry Unfinished", cleanup: "Clean Temporary Files", residuals: "{{count}} temporary files need cleanup", details: "Result Details",
+    showHidden: "Show Hidden Files", projectFiles: "Exclude repositories and dependencies", limits: "2 GiB per file · 10 GiB per batch · 10,000 entries",
+    upload: "Upload", download: "Download", scanning: "Checking files and conflicts…", dismiss: "Dismiss", queue: "Transfer Queue", noTasks: "No transfers yet",
+    quitConfirm: "Files are still transferring. Canceling and quitting keeps completed files; unfinished files can be retried later.", cancelAndQuit: "Cancel Transfers and Quit", wait: "Keep Waiting",
+    states: { queued: "Queued", transferring: "Transferring", committing: "Committing", canceling: "Canceling", canceled: "Canceled", failed: "Failed", partial: "Partially Complete", completed: "Completed", interrupted: "Interrupted", pending: "Pending", skipped: "Skipped", unknown: "Commit Result Unknown" },
+  },
   menu: {
     ariaLabel: "Application menu",
     file: "File",

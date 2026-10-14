@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 // 前端 invoke 的载荷键必须与 Rust 命令的参数名一致（camelCase ↔ snake_case）。
 // 只对不上的后果是运行期的 “invalid args … missing required key”，报错只提命令名和键名，
 // 前端 / 后端各自的测试都覆盖不到，所以这里直接对两侧源码做契约检查。
-const api = readFileSync(resolve("src/api.ts"), "utf8");
+const api = readFileSync(resolve("src/api.ts"), "utf8") + "\n" + readFileSync(resolve("src/transferApi.ts"), "utf8");
 const commands = rustSources(resolve("src-tauri/src"));
 
 /** 递归读取后端源码：命令分散在 commands.rs 与 update.rs 等模块里 */

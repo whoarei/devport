@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
  * 本文件只含元数据（不 import 组件实现），保证 layoutState.ts 可以安全引用。
  */
 
-export type PanelId = "workspace" | "commands" | "history" | "runtime" | "editor" | "console";
+export type PanelId = "workspace" | "commands" | "history" | "runtime" | "editor" | "console" | "transfer";
 
 /** dock 槽位：sidebar 由 sidebarPosition 决定占据左/右，center 居中默认占主宽度 */
 export type DockId = "sidebar" | "center";
@@ -49,6 +49,8 @@ export const PANELS: PanelDef[] = [
       </svg>
     ),
   },
+  { id: "transfer", dock: "center", titleKey: "transfer.title", toggleKey: "transfer.toggle", defaultVisible: false,
+    icon: <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M1 3h9M8 1l2 2-2 2M11 9H2m2-2L2 9l2 2" stroke="currentColor" /></svg> },
 ];
 
 export function panelsInDock(dock: DockId): PanelDef[] {

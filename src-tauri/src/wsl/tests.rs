@@ -110,6 +110,12 @@ fn python(code: &str) -> Command {
     command
 }
 
+fn real_helper() -> HelperCommand {
+    // Exercise the same stdin delivery as production, including Windows' 32767
+    // character command-line limit. Only small probes use python(code) directly.
+    HelperCommand::with_payload(python(BOOTSTRAP), HELPER)
+}
+
 async fn terminal_output(
     rx: &mut mpsc::UnboundedReceiver<crate::terminal::Event>,
     expected: &str,
@@ -142,7 +148,7 @@ async fn terminal_shell_preserves_state_ctrl_c_resize_and_exit() {
     let (events, mut rx) = mpsc::unbounded_channel();
     let task = tokio::spawn(async move {
         terminal::execute_with_command(
-            python(HELPER),
+            real_helper(),
             80,
             24,
             None,
@@ -214,7 +220,7 @@ async fn terminal_close_cleans_job_control_groups_and_other_sessions_survive() {
     let (events, mut rx) = mpsc::unbounded_channel();
     let task = tokio::spawn(async move {
         terminal::execute_with_command(
-            python(HELPER),
+            real_helper(),
             80,
             24,
             None,
@@ -240,7 +246,7 @@ async fn terminal_close_cleans_job_control_groups_and_other_sessions_survive() {
     .unwrap();
     terminal_output(&mut rx, "__RR_ready__").await;
     // A second helper is a separate session and must remain usable.
-    let mut other = Bridge::launch(python(HELPER)).await.unwrap();
+    let mut other = Bridge::launch(real_helper()).await.unwrap();
     other
         .request(
             json!({"type":"init", "terminal":true, "mode":"pty", "cols":80,"rows":24,"timeout":0}),
@@ -338,7 +344,7 @@ async fn run(
     tokio::time::timeout(
         Duration::from_secs(20),
         execute_with_command(
-            python(HELPER),
+            real_helper(),
             req,
             "/unused",
             false,
@@ -478,7 +484,7 @@ async fn upload_is_literal_and_rejects_existing_or_redirected_destinations() {
     let (_tx, mut rx) = mpsc::unbounded_channel();
     let mut output = Vec::new();
     let result = execute_with_command(
-        python(HELPER),
+        real_helper(),
         &req,
         &remote,
         false,
@@ -501,7 +507,7 @@ async fn upload_is_literal_and_rejects_existing_or_redirected_destinations() {
     assert!(String::from_utf8_lossy(&output).contains("True"));
     // Reusing an existing run directory is forbidden.
     assert!(execute_with_command(
-        python(HELPER),
+        real_helper(),
         &req,
         &remote,
         false,
@@ -516,7 +522,7 @@ async fn upload_is_literal_and_rejects_existing_or_redirected_destinations() {
     let setup = format!("import os; os.mkdir({anchor:?}); os.mkdir({anchor:?} + '/target'); os.symlink('target', {anchor:?} + '/link')");
     assert!(python(&setup).status().await.unwrap().success());
     assert!(execute_with_command(
-        python(HELPER),
+        real_helper(),
         &req,
         &format!("{anchor}/link/run"),
         false,
@@ -572,7 +578,7 @@ async fn eof_without_completion_is_failure_and_prelaunch_stop_executes_nothing()
     ignore = "requires an explicitly selected local WSL distribution"
 )]
 async fn dropping_connection_kills_its_workload() {
-    let mut bridge = Bridge::launch(python(HELPER)).await.unwrap();
+    let mut bridge = Bridge::launch(real_helper()).await.unwrap();
     bridge
         .request(
             json!({"type":"init", "remote":null, "mode":"pipe", "cols":80, "rows":24, "timeout":0,
@@ -668,6 +674,7 @@ fn helper_message_names_round_trip_through_the_rust_protocol() {
             Message::FsDone => "fs_done",
             Message::FsSaved { .. } => "fs_saved",
             Message::FsError { .. } => "fs_error",
+            Message::TransferReply { .. } => "tf_reply",
         }
     }
     let cases = [

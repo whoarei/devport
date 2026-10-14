@@ -8,8 +8,8 @@
 
 | 类别 | 位置 | 说明 |
 | --- | --- | --- |
-| 应用配置目录 | Tauri `app_config_dir`（Windows：`%APPDATA%\com.devrunner.remote-runner`） | 设备列表、运行历史、SSH 主机密钥信任库 |
-| 浏览器 localStorage | WebView 内 | 界面布局、最近打开的工作区（本机目录或设备目录，见 00029） |
+| 应用配置目录 | Tauri `app_config_dir`（Windows：`%APPDATA%\com.devrunner.remote-runner`） | 设备列表、运行历史、文件传输历史与检查点、SSH 主机密钥信任库 |
+| 浏览器 localStorage | WebView 内 | 界面布局、最近打开的工作区（本机目录或设备目录，见 00029）、本机与各设备上次打开的文件传输目录 |
 | 用户自选工作区目录 | 本地磁盘任意位置（目录选择对话框），或某台 SSH/WSL 设备上的目录（00029） | 脚本文件本体，应用不复制、不索引 |
 | 运行时内存状态 | 进程内存（Zustand store / Rust 状态） | 运行草稿、输出缓冲、终端会话等，不持久化 |
 
@@ -58,6 +58,14 @@
 
 每次运行的输出（原始字节，stdout/stderr 按到达顺序合并）在推送前端事件的同时追加写入 `run_logs/<run_id>.log`，单个 run 上限 2 MiB，超限截断并在 `output_truncated` 中标记；写入失败仅放弃该 run 的落盘，不影响运行。日志随历史淘汰删除（`finish()` 淘汰、启动截断、孤儿文件清理），最坏磁盘占用约 200 × 2 MiB = 400 MB。历史面板右键可将记录元数据导出为 JSON、将输出日志原样复制到用户选择的路径。
 
+### transfers.json / transfer-journal/ — 文件传输历史与检查点
+
+文件传输（`src-tauri/src/file_transfer/`，方案 `00033_20261012_file-transfer-plan.md`）独立保存任务端点、选择、同名策略、条目结果、统计、错误与准确的待清理临时名称，不保存文件内容或认证凭据。
+
+`transfers.json` 在注册和终态时通过临时文件替换写入；活动任务的逐文件结果、提交前状态和清理变化追加到 `transfer-journal/<task_id>.jsonl` 并同步到磁盘，避免大批量小文件逐次重写全部历史。启动时回放更新的检查点，忽略已被主文件合并的旧序号及不完整尾行；未结束任务恢复为「已中断」，提交确认不明的条目标记 `unknown`，不自动续传。
+
+历史最多保留最近 100 个任务，启动时筛掉 7 天以前的普通记录，未清理记录不按普通历史淘汰；在活动 / 残留占满预算时拒绝新的任务。本机与各 SSH / WSL 设备上次成功打开的浏览目录分别保存到 localStorage，选中项只保留于会话；面板显隐 / 折叠沿用 `remote-runner.layout.v1`。
+
 ### known_hosts.json — SSH 主机密钥信任库
 
 简化版 known_hosts，TOFU 语义（`src-tauri/src/ssh/client.rs`）：内容为 `HashMap<"host:port", SHA256 指纹>` 的 JSON 对象。
@@ -79,14 +87,17 @@ WebView 的 localStorage 使用带版本后缀的键保存界面偏好：
 | `remote-runner.recent-workspaces.v2` | 最近打开的工作区（`WorkspaceRef` 对象数组：`{type:"local",dir}` 或 `{type:"device",device_id,path}`，去重、保留首次出现顺序） | 10 条 |
 | `remote-runner.recent-workspaces.v1` | v2 之前的旧键（裸路径字符串数组）；读取时迁移到 v2 并删除本键 | 迁移后不再写入 |
 | `remote-runner.ui-zoom.v1` | 整个 WebView 的界面缩放百分比；允许 70%–200% 的预设档位 | 单个数值 |
+| `remote-runner.transfer-directories.v1` | 文件传输目录：本机目录 `local`，按设备 ID 保存的目录映射 `devices`；只记录成功打开后的返回路径，不保存文件选择或凭据 | 本机一条，每设备一条 |
 
-这些偏好都有防御性读取：坏数据、缺字段、越界值会回落到默认值；写入失败不会中断应用。localStorage 属于 WebView 数据目录，与应用配置目录不是同一位置，清除 WebView 数据不影响设备配置与运行历史。
+这些偏好都有防御性读取：坏数据、缺字段、越界值会回落到默认值；写入失败不会中断应用。文件传输切换设备时恢复对应目录，首次使用设备回落到其工作区根目录；设备改名保留记忆，新设备 ID 不复用旧目录。从工作区右键进入时优先采用指定工作区和条目位置。恢复目录失败时保留地址供修改，不覆盖此前成功打开的记忆。localStorage 属于 WebView 数据目录，与应用配置目录不是同一位置，清除 WebView 数据不影响设备配置与运行历史。
 
 ## 用户工作区目录
 
 脚本文件本体存储在用户选定的目录中：本机任意目录（目录选择对话框），或某台 SSH/WSL 设备上的目录（「打开设备工作区…」，见 `docs/00029_20260917_remote-workspace.md`）。应用**不在配置目录里保存副本**。
 
 本机工作区的约束在 `src-tauri/src/workspace.rs`：
+
+以下约束针对编辑器的工作区命令；独立文件传输和外部进程不共享编辑器互斥锁，也不提供运行源目录的原子快照。传输中的源文件 / 目标文件变化检查及并发边界见 `00033_20261012_file-transfer-plan.md`。
 
 - 仅 UTF-8 文本、单文件上限 1 MiB；记录 `revision`（内容 SHA-256 摘要）、`eol`（lf/crlf）、`bom` 用于乐观并发保存；
 - 拒绝符号链接/重解析点路径（含工作区根的祖先目录），只允许普通文件与目录；
@@ -119,5 +130,5 @@ WebView 的 localStorage 使用带版本后缀的键保存界面偏好：
 当前没有应用内的数据清理入口。需要重置时：
 
 - 删除配置目录（`%APPDATA%\com.devrunner.remote-runner`）即清除设备、历史与主机密钥信任；
-- 清除 WebView 数据即重置布局与最近工作区；
+- 清除 WebView 数据即重置布局、最近工作区与文件传输目录记忆；
 - 远端 `/tmp/devrunner/workspaces/` 下的历次运行目录需手动清理（跨设备运行的本地暂存目录会自动清理）。

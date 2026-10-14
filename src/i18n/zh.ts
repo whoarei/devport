@@ -3,6 +3,30 @@
  * en.ts 通过 typeof zh 约束保持 key 集合一致，漏翻会编译报错。
  */
 export const zh = {
+  transfer: {
+    task: "任务", direction: "方向", progressResult: "进度 / 结果", unnamedTask: "文件传输", batchName: "{{name}} 等 {{count}} 项",
+    taskDetails: "{{name}} 的传输详情", moreActions: "{{name}} 的更多操作", progressFor: "{{name}} 的传输进度", retryShort: "重试", completedHistory: "已完成（{{count}}）",
+    close: "关闭", source: "来源", destination: "目标", onlyFailures: "仅显示失败项", loadingResults: "正在读取结果…", noFailures: "暂无失败项", noResults: "暂无文件结果",
+    needsReview: "待核对", needsCleanup: "待清理", reviewUnknown: "部分文件的提交结果未知，请先核对目标文件，再重新选择需要传输的文件。",
+    previousAttempt: "查看上次记录", nextAttempt: "查看后续任务",
+    modified: "修改时间", previousPage: "上一页", nextPage: "下一页", updateBlocker: "请等待文件传输完成，或取消传输后再更新。",
+    title: "文件传输", toggle: "切换文件传输面板", browseDevice: "浏览设备文件", local: "本机", device: "设备",
+    selectDevice: "选择 SSH / WSL 设备", chooseFolder: "选择目录…", path: "目录路径", localPath: "本机目录路径",
+    hide: "隐藏文件传输面板", go: "前往目录（Enter）", action: "操作", uploadSelected: "上传所选（{{count}}）", downloadSelected: "下载所选（{{count}}）",
+    uploadTo: "将 {{name}} 上传到 {{path}}", downloadTo: "将 {{name}} 下载到 {{path}}", targetDirectory: "目标：{{path}}", chooseTarget: "请先打开另一侧的目标目录",
+    open: "打开", up: "上级目录", refresh: "刷新", loading: "正在读取目录…", selectAll: "全选", selectEntry: "选择 {{name}}",
+    name: "名称", size: "大小", unsupported: "不支持传输此类型", emptyDirectory: "目录为空", chooseDirectory: "请选择目录",
+    newDirectory: "新目录名称", create: "新建", review: "确认文件传输", planSummary: "{{count}} 个条目 · {{bytes}} · {{conflicts}} 个同名文件",
+    conflictPolicy: "同名文件处理", keepBoth: "保留两份", skip: "跳过", overwrite: "覆盖",
+    noOverwrite: "设备不支持安全覆盖，请保留两份或跳过。", noKeepBoth: "设备不支持安全保留两份，可跳过，或在支持时覆盖已有文件。", protectedFiles: "目标包含编辑器已打开的文件，关闭标签后才可覆盖。",
+    preserveExecutable: "保留可执行位（仅支持 POSIX 权限的来源）", copyHint: "复制后两端独立。目录逐文件提交，取消不会撤回已经完成的文件。",
+    warnings: "{{count}} 条跳过或警告", cancel: "取消", start: "开始传输", taskCounts: "{{completed}} / {{count}} · 失败 {{failed}} · 跳过 {{skipped}}",
+    retry: "重试未完成项", cleanup: "清理临时文件", residuals: "{{count}} 个临时文件待核对清理", details: "结果详情",
+    showHidden: "显示隐藏文件", projectFiles: "排除版本库与依赖目录", limits: "单文件 2 GiB · 单批 10 GiB · 10,000 条目",
+    upload: "上传", download: "下载", scanning: "正在预检文件和冲突…", dismiss: "关闭提示", queue: "传输队列", noTasks: "暂无传输任务",
+    quitConfirm: "还有文件正在传输。取消后退出会保留已完成的文件；未完成项可稍后重试。", cancelAndQuit: "取消传输并退出", wait: "继续等待",
+    states: { queued: "排队中", transferring: "传输中", committing: "正在提交", canceling: "正在取消", canceled: "已取消", failed: "失败", partial: "部分完成", completed: "已完成", interrupted: "已中断", pending: "未开始", skipped: "已跳过", unknown: "提交结果未知" },
+  },
   menu: {
     ariaLabel: "应用菜单",
     file: "文件",

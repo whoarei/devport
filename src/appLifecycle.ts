@@ -2,6 +2,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { errorMessage } from "./api";
 import { useAppStore } from "./store";
 import { useTerminalStore } from "./terminalStore";
+import { transferActive, transferApi } from "./transferApi";
+import i18n from "./i18n";
 
 let quitting = false;
 
@@ -23,6 +25,12 @@ export async function requestQuit(): Promise<void> {
   quitting = true;
   try {
     if (await state.confirmAllUnsaved()) {
+      const transfers = await transferApi.snapshot();
+      if (transfers.some((task) => transferActive(task.state))) {
+        const { ask } = await import("@tauri-apps/plugin-dialog");
+        if (!await ask(i18n.t("transfer.quitConfirm"), { title: i18n.t("transfer.title"), kind: "warning", okLabel: i18n.t("transfer.cancelAndQuit"), cancelLabel: i18n.t("transfer.wait") })) return;
+        await transferApi.cancelAll();
+      }
       await useTerminalStore.getState().closeAll();
       await appWindow.destroy();
     }

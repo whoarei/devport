@@ -15,7 +15,7 @@ import {
   loadLayout,
   saveLayout,
 } from "../src/layoutState";
-import { PANELS } from "../src/panels/registry";
+import { PANELS, panelsInDock } from "../src/panels/registry";
 import { useAppStore } from "../src/store";
 
 function mockLocalStorage(t: test.TestContext) {
@@ -49,6 +49,7 @@ test("panel flags cover every registered panel and default to visible", () => {
     assert.equal(DEFAULT_LAYOUT.panelCollapsed[panel.id], false);
   }
   assert.deepEqual(Object.keys(DEFAULT_LAYOUT.splits), ["sidebar", "center"]);
+  assert.deepEqual(panelsInDock("center").map((panel) => panel.id), ["editor", "console", "transfer"]);
 });
 
 test("normalizeLayout keeps valid fields and fills missing ones", () => {

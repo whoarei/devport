@@ -2,6 +2,7 @@ pub mod commands;
 pub mod device;
 pub mod error;
 pub mod events;
+pub mod file_transfer;
 pub mod local;
 pub mod process;
 pub mod remote_workspace;
@@ -66,6 +67,7 @@ pub fn run() {
             run_manager.attach_leases(leases.clone());
 
             let state = AppState {
+                transfer_manager: file_transfer::TransferManager::new(&config_dir),
                 terminal_manager: terminal::TerminalManager::default(),
                 run_manager,
                 device_store: DeviceStore::new(&config_dir),
@@ -89,6 +91,17 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::transfer_list_dir,
+            commands::transfer_create_dir,
+            commands::transfer_plan,
+            commands::transfer_discard_plan,
+            commands::transfer_start,
+            commands::transfer_snapshot,
+            commands::transfer_task,
+            commands::transfer_cancel,
+            commands::transfer_cancel_all,
+            commands::transfer_retry_failed,
+            commands::transfer_cleanup,
             commands::list_devices,
             commands::save_device,
             commands::delete_device,

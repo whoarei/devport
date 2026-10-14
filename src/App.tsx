@@ -16,6 +16,7 @@ import { anyDirty } from "./editorDocument";
 import { errorMessage } from "./api";
 import i18n from "./i18n";
 import { requestQuit } from "./appLifecycle";
+import { pollTransfers } from "./transferStore";
 import { clampSidebarWidth, clampSplit, panelCollapsePatch, DEFAULT_LAYOUT } from "./layoutState";
 import { panelsInDock, type PanelId } from "./panels/registry";
 import { PANEL_COMPONENTS } from "./panels/components";
@@ -34,6 +35,7 @@ export default function App() {
   const initialUiZoom = useRef(loadUiZoom());
   const uiZoomRef = useRef(initialUiZoom.current);
   const [uiZoom, setUiZoom] = useState(initialUiZoom.current);
+  useEffect(() => pollTransfers(), []);
 
   const updateUiZoom = useCallback((action: UiZoomAction) => {
     const next = changeUiZoom(uiZoomRef.current, action);
@@ -190,25 +192,27 @@ export default function App() {
     </>
   );
 
-  // ---- 中间 dock：文件编辑区与控制面板区为平等结构，按 splits.center 分配高度 ----
-  // 两区都允许隐藏：dock 以 hidden 属性隐藏（不卸载），编辑器与终端实例保持存活。
+  // ---- 中间 dock：编辑器 → 控制台 → 文件传输；两区展开时按 splits.center 分配，三区展开时均分 ----
+  // 各区都允许隐藏：dock 以 hidden 属性隐藏（不卸载），编辑器与终端实例保持存活。
   const centerPanels = panelsInDock("center");
   const centerShown = centerPanels.some((panel) => visible(panel.id));
-  const bothCenterExpanded = visible("editor") && visible("console") && !collapsed("editor") && !collapsed("console");
+  const expandedCenter = centerPanels.filter((panel) => visible(panel.id) && !collapsed(panel.id));
+  const bothCenterExpanded = expandedCenter.length === 2;
 
   const centerSectionStyle = (id: PanelId): CSSProperties | undefined => {
     if (collapsed(id)) return { flex: "0 0 auto" };
-    if (bothCenterExpanded) return { flexGrow: id === "editor" ? layout.splits.center : 1 - layout.splits.center, flexBasis: 0 };
+    if (bothCenterExpanded) return { flexGrow: id === expandedCenter[0].id ? layout.splits.center : 1 - layout.splits.center, flexBasis: 0 };
+    if (expandedCenter.length > 2) return { flexGrow: 1, flexBasis: 0 };
     return undefined;
   };
 
   const centerDock = (
     <div className="dock dock-center" ref={centerRef} hidden={!centerShown}>
-      {centerPanels.map((panel, index) => {
+      {centerPanels.map((panel) => {
         const Component = PANEL_COMPONENTS[panel.id];
         return (
           <Fragment key={panel.id}>
-            {index > 0 && bothCenterExpanded && (
+            {bothCenterExpanded && panel.id === expandedCenter[1].id && (
               <SplitHandle
                 direction="horizontal"
                 label={t("app.resizeCenter")}

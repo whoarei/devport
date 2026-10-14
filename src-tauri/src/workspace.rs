@@ -87,7 +87,7 @@ pub struct Entry {
     pub is_dir: bool,
 }
 
-fn redirected(meta: &Metadata) -> bool {
+pub(crate) fn redirected(meta: &Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -107,7 +107,7 @@ fn invalid_path() -> FileError {
 }
 
 /// Canonicalize the selected root, rejecting redirected roots and ancestors.
-fn canonical_root(dir: &str) -> Result<PathBuf> {
+pub(crate) fn canonical_root(dir: &str) -> Result<PathBuf> {
     let absolute_root = std::path::absolute(dir)?;
     // Check the selected root and its ancestors too (not just the final entry).
     for ancestor in absolute_root.ancestors() {
