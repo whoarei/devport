@@ -18,6 +18,8 @@ export interface PanelDef {
   dock: DockId;
   /** 菜单 / 面板标题的 i18n key */
   titleKey: string;
+  /** 是否生成视图菜单项和标题栏显隐按钮，默认 true */
+  manualVisibility?: boolean;
   /** 标题栏切换按钮的 i18n key（center 面板使用） */
   toggleKey?: string;
   /** 标题栏切换按钮图标（center 面板使用） */
@@ -31,21 +33,13 @@ export const PANELS: PanelDef[] = [
   { id: "commands", dock: "sidebar", titleKey: "menu.commandsPanel", defaultVisible: true },
   { id: "history", dock: "sidebar", titleKey: "menu.historyPanel", defaultVisible: true },
   { id: "runtime", dock: "sidebar", titleKey: "menu.runtimePanel", defaultVisible: false },
-  {
-    id: "editor", dock: "center", titleKey: "menu.editorPanel", toggleKey: "titlebar.toggleEditor", defaultVisible: false,
-    icon: (
-      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-        <rect x="1" y="1.5" width="10" height="9" rx="1.5" stroke="currentColor" />
-        <rect x="2.2" y="2.7" width="7.6" height="2.9" rx="0.6" fill="currentColor" />
-      </svg>
-    ),
-  },
+  { id: "editor", dock: "center", titleKey: "menu.editorPanel", manualVisibility: false, defaultVisible: false },
   {
     id: "console", dock: "center", titleKey: "menu.consolePanel", toggleKey: "titlebar.toggleConsole", defaultVisible: true,
     icon: (
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
         <rect x="1" y="1.5" width="10" height="9" rx="1.5" stroke="currentColor" />
-        <rect x="2.2" y="7" width="7.6" height="2.3" rx="0.6" fill="currentColor" />
+        <path d="m3 4 2 2-2 2m3.5 0H9" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
   },

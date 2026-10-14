@@ -106,7 +106,7 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
             <rect x="2.2" y="2.7" width="2.6" height="6.6" rx="0.6" fill="currentColor" />
           </svg>
         </button>
-        {panelsInDock("center").map((panel) => (
+        {panelsInDock("center").filter((panel) => panel.manualVisibility !== false).map((panel) => (
           <button
             key={panel.id}
             type="button"

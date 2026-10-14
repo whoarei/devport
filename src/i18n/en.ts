@@ -73,7 +73,6 @@ export const en: Messages = {
     windowControls: "Window controls",
     updateAvailable: "New version {{version}} available. Click to download and install; the app will restart.",
     toggleLeftSidebar: "Toggle left sidebar",
-    toggleEditor: "Toggle file editor",
     toggleConsole: "Toggle control panel",
     toggleRightSidebar: "Toggle right sidebar",
     minimize: "Minimize",

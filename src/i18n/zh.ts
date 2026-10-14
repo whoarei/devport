@@ -74,7 +74,6 @@ export const zh = {
     windowControls: "窗口控制",
     updateAvailable: "发现新版本 {{version}}，点击下载并安装，应用将重启",
     toggleLeftSidebar: "切换左侧栏",
-    toggleEditor: "切换文件编辑区",
     toggleConsole: "切换控制面板区",
     toggleRightSidebar: "切换右侧栏",
     minimize: "最小化",

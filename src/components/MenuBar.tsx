@@ -207,13 +207,13 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
       entries: [
         { type: "checkbox", label: t("menu.sidebar"), checked: layout.sidebarVisible, onSelect: () => setLayout({ sidebarVisible: !layout.sidebarVisible }) },
         // 面板勾选项由注册表生成：侧栏面板勾选时顺带保证侧栏 dock 可见
-        ...panelsInDock("sidebar").map((panel): MenuEntry => ({
+        ...panelsInDock("sidebar").filter((panel) => panel.manualVisibility !== false).map((panel): MenuEntry => ({
           type: "checkbox",
           label: t(panel.titleKey),
           checked: layout.panelVisible[panel.id],
           onSelect: () => setLayout({ ...panelVisibilityPatch(layout, panel.id, !layout.panelVisible[panel.id]), sidebarVisible: true }),
         })),
-        ...panelsInDock("center").map((panel): MenuEntry => ({
+        ...panelsInDock("center").filter((panel) => panel.manualVisibility !== false).map((panel): MenuEntry => ({
           type: "checkbox",
           label: t(panel.titleKey),
           checked: layout.panelVisible[panel.id],
