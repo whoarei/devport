@@ -172,6 +172,12 @@ export const zh = {
   },
   history: {
     title: "运行历史",
+    actions: "历史操作",
+    dismissError: "关闭历史操作提示",
+    entryActions: "{{label}} 的更多操作",
+    viewOutput: "查看 {{label}} 的输出",
+    outputUnavailable: "本次会话无法回看此记录的输出，可通过更多操作导出记录或已有日志",
+    exitCode: "退出码 {{code}}",
     exportJson: "导出记录 (JSON)",
     stopLabel: "停止",
     exportLog: "导出输出日志 (.log)",

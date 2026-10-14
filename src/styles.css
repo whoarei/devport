@@ -723,6 +723,44 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
   font-size: 11px;
 }
 
+.history-panel .history-list { flex-shrink: 0; }
+.history-panel .history-list li.history-entry {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 0 12px;
+  min-height: 46px;
+  cursor: default;
+}
+.history-entry.selected { background: #293445; box-shadow: inset 2px 0 #93c5fd; }
+.history-panel .history-entry.selected:hover { background: #303d50; }
+.history-completed.has-running { border-top: 1px solid #2a2b30; }
+.history-entry button { border: 0; background: transparent; border-radius: 4px; }
+.history-entry .history-open {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 0;
+  text-align: left;
+}
+.history-open:disabled { opacity: 1; }
+.history-status { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.history-status.state-starting { color: #facc15; }
+.history-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.history-text .history-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #9298a3; }
+.history-entry-actions { display: flex; align-items: center; flex-shrink: 0; gap: 2px; }
+.history-time { font-size: 10px; font-variant-numeric: tabular-nums; color: #9298a3; }
+.history-entry .history-more, .history-entry .history-stop { width: 24px; height: 26px; padding: 0; }
+.history-entry .history-stop { background: transparent; color: #f87171; }
+.history-more { color: #9298a3; }
+.history-entry button:hover:not(:disabled) { background: #ffffff0c; }
+.history-entry button:focus-visible { outline: 1px solid #93c5fd; outline-offset: 1px; }
+.history-error { display: flex; align-items: flex-start; gap: 4px; padding: 6px 12px; color: #f87171; font-size: 11px; overflow-wrap: anywhere; }
+.history-error span { flex: 1; min-width: 0; }
+.history-error button { border: 0; background: transparent; color: #9298a3; padding: 0 4px; }
+
 /* ---------- preset commands ---------- */
 .commands-section {
   flex: 0 1 auto;

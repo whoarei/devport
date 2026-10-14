@@ -5,20 +5,39 @@ import { useShallow } from "zustand/react/shallow";
 import { api, errorMessage, RunStatus } from "../api";
 import { canExportOutput, exportOutput, exportRecord } from "../historyExport";
 import { isActiveRun, runStateLabel } from "../runState";
+import { panelCollapsePatch, panelVisibilityPatch } from "../layoutState";
 import { useAppStore } from "../store";
 import { ConfirmDialog, ConfirmRequest } from "./ConfirmDialog";
 import { ContextMenu, contextMenuPosition, MenuState } from "./ContextMenu";
 import { PanelTitle } from "./PanelTitle";
 
 export function HistoryPanel({ collapsed, onToggleCollapse }: { collapsed: boolean; onToggleCollapse: () => void }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const i18nLanguage = i18n.resolvedLanguage ?? "en";
   const { history, setActiveRun, runs, activeRunId } = useAppStore(useShallow((s) => ({
     history: s.history, setActiveRun: s.setActiveRun, runs: s.runs, activeRunId: s.activeRunId,
   })));
   const running = Object.values(runs).filter(isActiveRun);
-  const report = (e: unknown) => useAppStore.setState({ editorError: errorMessage(e) });
+  const [error, setError] = useState<string | null>(null);
+  const report = (e: unknown) => setError(errorMessage(e));
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+
+  const selectRun = (id: string) => {
+    setActiveRun(id);
+    const { layout, setLayout } = useAppStore.getState();
+    if (!layout.panelVisible.console || layout.panelCollapsed.console) {
+      setLayout({ ...panelVisibilityPatch(layout, "console", true), ...panelCollapsePatch(layout, "console", false) });
+    }
+  };
+
+  // 鼠标右键按指针定位；点击「更多」（含键盘激活）按按钮位置定位。
+  const menuPosition = (event: MouseEvent, count: number) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return event.type === "contextmenu"
+      ? contextMenuPosition(event.clientX, event.clientY, count)
+      : contextMenuPosition(rect.left, rect.bottom, count);
+  };
 
   const openEntryMenu = (event: MouseEvent, entry: RunStatus) => {
     event.preventDefault();
@@ -30,14 +49,14 @@ export function HistoryPanel({ collapsed, onToggleCollapse }: { collapsed: boole
       },
       {
         label: t("history.exportLog"),
-        // 只有本会话起持久化了输出的 run 有日志可导出
+        // 持久化过输出的记录才有日志可导出（含旧会话）。
         disabled: !canExportOutput(entry),
         onSelect: () => void exportOutput(entry)
           .then((warning) => { if (warning) report(new Error(warning)); })
           .catch(report),
       },
     ];
-    setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
+    setMenu({ ...menuPosition(event, entries.length), entries });
   };
 
   // 面板空白区右键：清空全部历史
@@ -51,7 +70,48 @@ export function HistoryPanel({ collapsed, onToggleCollapse }: { collapsed: boole
         onSelect: () => setConfirmClear(true),
       },
     ];
-    setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
+    setMenu({ ...menuPosition(event, entries.length), entries });
+  };
+
+  const renderEntry = (entry: RunStatus) => {
+    const active = isActiveRun(entry);
+    const viewable = runs[entry.run_id] != null;
+    const nonzeroExit = entry.exit_code != null && entry.exit_code !== 0;
+    const state = nonzeroExit && entry.state === "exited" ? "failed" : entry.state;
+    const stateLabel = nonzeroExit && entry.state === "exited"
+      ? t("history.exitCode", { code: entry.exit_code }) : runStateLabel(entry.state);
+    const date = new Date(entry.started_at);
+    const validDate = Number.isFinite(date.getTime());
+    const time = validDate ? date.toLocaleTimeString(i18nLanguage, { hour: "2-digit", minute: "2-digit", hour12: false }) : "";
+    const details = [entry.label, `${entry.device_name} · ${runStateLabel(entry.state)}`,
+      validDate ? date.toLocaleString(i18nLanguage) : entry.started_at,
+      entry.exit_code != null && t("history.exitCode", { code: entry.exit_code }), entry.error,
+      entry.environment_id && t("history.managed", {
+        uv: entry.uv_version ?? "?", python: entry.python_version ?? "?", env: entry.environment_id,
+      }),
+      !viewable && t("history.outputUnavailable"),
+    ].filter(Boolean).join("\n");
+    return <li key={entry.run_id} className={`history-entry${activeRunId === entry.run_id ? " selected" : ""}`}
+      title={details} onContextMenu={(event) => openEntryMenu(event, entry)}>
+      <button className="history-open" disabled={!viewable} aria-pressed={activeRunId === entry.run_id}
+        aria-label={`${t("history.viewOutput", { label: entry.label })} · ${entry.device_name} · ${stateLabel}`}
+        onClick={() => selectRun(entry.run_id)}>
+        <span className={`history-status state-${state}`} aria-hidden="true" />
+        <span className="history-text">
+          <span className="history-label">{entry.label}</span>
+          <span className="history-meta">{entry.device_name}</span>
+        </span>
+      </button>
+      <span className="history-entry-actions">
+        {active ? <button className="history-stop danger" aria-label={t("history.stopAria", { label: entry.label })}
+          title={t("history.stopAria", { label: entry.label })} disabled={entry.state === "stopping"}
+          onClick={() => void api.stopRun(entry.run_id).catch(report)}><span aria-hidden="true">■</span></button>
+          : <time className="history-time" dateTime={validDate ? date.toISOString() : undefined}>{time}</time>}
+        <button className="history-more" aria-label={t("history.entryActions", { label: entry.label })}
+          title={t("history.entryActions", { label: entry.label })} aria-haspopup="menu"
+          onClick={(event) => openEntryMenu(event, entry)}>⋯</button>
+      </span>
+    </li>;
   };
 
   const confirmRequest: ConfirmRequest | null = useMemo(() => confirmClear ? {
@@ -68,44 +128,19 @@ export function HistoryPanel({ collapsed, onToggleCollapse }: { collapsed: boole
 
   return (
     <div className="history-panel" onContextMenu={openPanelMenu}>
-      <PanelTitle title={t("history.title")} collapsed={collapsed} onToggle={onToggleCollapse} />
+      <PanelTitle title={t("history.title")} collapsed={collapsed} onToggle={onToggleCollapse}>
+        <button aria-label={t("history.actions")} title={t("history.actions")} aria-haspopup="menu" onClick={openPanelMenu}>⋯</button>
+      </PanelTitle>
+      {error && <div className="history-error" role="alert"><span>{error}</span>
+        <button aria-label={t("history.dismissError")} title={t("history.dismissError")} onClick={() => setError(null)}>×</button>
+      </div>}
       {running.length > 0 && <ul className="history-list" aria-label={t("history.running")}>
-        {running.map((run) => <li key={run.run_id}>
-          <button aria-pressed={activeRunId === run.run_id} onClick={() => setActiveRun(run.run_id)}>
-            {run.label} · {run.device_name} · {runStateLabel(run.state)}
-          </button>
-          <button className="danger" aria-label={t("history.stopAria", { label: run.label })} disabled={run.state === "stopping"}
-            onClick={() => void api.stopRun(run.run_id).catch(report)}>{t("history.stopLabel")}</button>
-        </li>)}
+        {running.map(renderEntry)}
       </ul>}
       {!collapsed && (
-        <ul className="history-list">
-          {history.map((h) => {
-            // 只有本次会话内的 run 有输出缓冲可回看
-            const viewable =
-              runs[h.run_id] != null;
-            return (
-              <li key={h.run_id} onClick={() => viewable && setActiveRun(h.run_id)}
-                onContextMenu={(event) => openEntryMenu(event, h)}>
-                <span className={`run-state state-${h.state}`}>{runStateLabel(h.state)}</span>
-                <span className="history-label">{h.label}</span>
-                <span className="history-meta">
-                  {h.device_name} · exit={h.exit_code ?? "-"} ·{" "}
-                  {new Date(h.started_at).toLocaleTimeString()}
-                </span>
-                {h.environment_id && (
-                  <span className="history-meta managed" title={h.environment_id}>
-                    {t("history.managed", {
-                      uv: h.uv_version ?? "?",
-                      python: h.python_version ?? "?",
-                      env: h.environment_id.slice(0, 8),
-                    })}
-                  </span>
-                )}
-              </li>
-            );
-          })}
-          {history.length === 0 && <li className="empty">{t("history.empty")}</li>}
+        <ul className={`history-list history-completed${running.length > 0 ? " has-running" : ""}`} aria-label={t("history.title")}>
+          {history.map(renderEntry)}
+          {history.length === 0 && running.length === 0 && <li className="empty">{t("history.empty")}</li>}
         </ul>
       )}
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />

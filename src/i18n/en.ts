@@ -171,6 +171,12 @@ export const en: Messages = {
   },
   history: {
     title: "Run History",
+    actions: "History actions",
+    dismissError: "Dismiss history notification",
+    entryActions: "More actions for {{label}}",
+    viewOutput: "View output for {{label}}",
+    outputUnavailable: "Output cannot be replayed in this session. Use More actions to export the record or any saved log.",
+    exitCode: "Exit code {{code}}",
     exportJson: "Export Record (JSON)",
     stopLabel: "Stop",
     exportLog: "Export Output Log (.log)",

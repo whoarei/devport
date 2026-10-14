@@ -46,7 +46,19 @@
   - 「导出记录 (JSON)」始终可用；
   - 「导出输出日志 (.log)」仅 `output_bytes > 0` 可用，否则置灰（旧会话条目自然置灰）。
 - 面板空白区右键提供「清空历史记录」（危险项，历史为空时置灰），经 `ConfirmDialog` 二次确认后调 `clear_run_history`，前端同步清空历史列表并裁剪已完成 run 的内存状态与输出缓冲。
-- 新增 `src/historyExport.ts`：`defaultExportName`（清洗 Windows 非法文件名字符、拼时间戳）、`buildRecordJson`、`exportRecord`/`exportOutput` 流程函数；失败走现有 `editorError` 上报，`output_truncated` 时提示日志为截断部分。
+- 新增 `src/historyExport.ts`：`defaultExportName`（清洗 Windows 非法文件名字符、拼时间戳）、`buildRecordJson`、`exportRecord`/`exportOutput` 流程函数；失败在历史面板内提示，`output_truncated` 时提示日志为截断部分。
+
+### 2026-10-14 界面简化
+
+- 运行中与已完成记录统一为两行：任务名、设备；已完成记录右侧显示时分。
+  状态只通过起始色点区分，非零退出码使用错误颜色，不在列表中展示状态或退出码文字。
+  完整状态、退出码、时间、错误、uv / Python 版本和环境 ID 保留在悬停提示及 JSON
+  导出中；回看按钮的无障碍标签保留设备及状态信息。
+- 当前选中记录高亮；点击可回看的记录自动显示并展开控制台。旧会话记录不显示
+  可点击的回看交互，但仍可导出记录及已有日志。
+- 条目「更多」按钮提供导出，标题栏「更多」按钮提供清空；原有右键菜单保留，
+  清空仍需确认。运行中的任务始终保留停止入口，包括面板折叠时。
+- 历史操作错误直接显示在历史面板内，避免编辑区隐藏时看不到反馈。
 
 ## 6. 测试与验证
 
