@@ -32,7 +32,7 @@ export const PANELS: PanelDef[] = [
   { id: "history", dock: "sidebar", titleKey: "menu.historyPanel", defaultVisible: true },
   { id: "runtime", dock: "sidebar", titleKey: "menu.runtimePanel", defaultVisible: false },
   {
-    id: "editor", dock: "center", titleKey: "menu.editorPanel", toggleKey: "titlebar.toggleEditor", defaultVisible: true,
+    id: "editor", dock: "center", titleKey: "menu.editorPanel", toggleKey: "titlebar.toggleEditor", defaultVisible: false,
     icon: (
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
         <rect x="1" y="1.5" width="10" height="9" rx="1.5" stroke="currentColor" />

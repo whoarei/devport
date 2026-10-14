@@ -134,6 +134,14 @@ function revealEditor(get: () => AppState) {
   }
 }
 
+/** 关闭 / 删除文件或切换工作区后，没有标签的编辑区自动隐藏。 */
+function hideEmptyEditor(get: () => AppState) {
+  const state = get();
+  if (state.openTabs.length === 0 && state.layout.panelVisible.editor) {
+    state.setLayout(panelVisibilityPatch(state.layout, "editor", false));
+  }
+}
+
 /** Retain live runs and the selected history entry; bound output across all runs. */
 function pruneRuns(state: Pick<AppState, "runs" | "history" | "outputBuffers" | "activeRunId">, pending: string[] = []) {
   const keep = new Set(state.history.map((h) => h.run_id));
@@ -156,6 +164,9 @@ function pruneRuns(state: Pick<AppState, "runs" | "history" | "outputBuffers" | 
   }
   return { runs, outputBuffers };
 }
+
+// 文件标签不持久化，启动时即使上次编辑区可见，也从隐藏状态开始。
+const initialLayout = loadLayout();
 
 export const useAppStore = create<AppState>((set, get) => ({
   updating: false,
@@ -190,7 +201,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   runDraft: { ...DEFAULT_RUN_DRAFT },
   setRunDraft: (patch) => set((s) => ({ runDraft: { ...s.runDraft, ...patch } })),
 
-  layout: loadLayout(),
+  layout: { ...initialLayout, ...panelVisibilityPatch(initialLayout, "editor", false) },
 
   setLayout: (patch) => {
     const layout = normalizeLayout({ ...get().layout, ...patch });
@@ -237,6 +248,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set((s) => ({ workspace, workspaceTree, recentWorkspaces,
         openTabs: [], activeFile: null,
         runDraft: { ...s.runDraft, entry: "" } }));
+      hideEmptyEditor(get);
     } catch (error) {
       if (sequence === loadSequence) set({ editorError: errorMessage(error) });
       throw error;
@@ -372,6 +384,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           activeFile: activeRemoved ? openTabs[0]?.name ?? null : s.activeFile,
           ...(activeRemoved ? { editorError: null } : {}) };
       });
+      hideEmptyEditor(get);
       await get().loadWorkspaceDir(dir);
       return true;
     } catch (error) {
@@ -520,6 +533,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { openTabs, editorError: null,
         activeFile: s.activeFile === tab.name ? neighborAfterClose(s.openTabs, tab.name, openTabs) : s.activeFile };
     });
+    hideEmptyEditor(get);
   },
 
   startRun: async (request) => {
