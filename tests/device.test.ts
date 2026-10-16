@@ -25,6 +25,7 @@ test("new device template carries a local shell placeholder", () => {
   assert.deepEqual(device.local, { shell: "", path: null, no_profile: false });
   assert.equal(device.transport, "ssh");
   assert.equal(device.is_default, false);
+  assert.equal(device.workspace_root, "~/devrunner/workspaces");
 });
 
 test("local shell profile switch round-trips through the device payload", () => {

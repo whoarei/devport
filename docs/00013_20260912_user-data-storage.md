@@ -30,9 +30,11 @@
 | `auth` | SSH 认证：`{ "type": "password", "password": ... }` 或 `{ "type": "key", "key_path": ... }`（`key_path` 为空时依次尝试 `~/.ssh/id_ed25519`、`id_rsa`） |
 | `serial` | `{ "port": "COM8", "baud_rate": 115200 }`，波特率缺省 115200，合法范围 1–4000000 |
 | `wsl` | `{ "distribution": "Ubuntu-24.04", "user": "" }`，`user` 为空表示发行版默认用户 |
-| `workspace_root` | 远端工作区根目录，缺省 `/tmp/devrunner/workspaces`，必须是绝对 Linux 路径且不含 `.`/`..` 分量 |
+| `workspace_root` | 远端工作区根目录，缺省 `~/devrunner/workspaces`，支持绝对 Linux 路径或 `~/` 前缀，均不可含 `.`/`..` 分量；已有配置中的显式路径保持不变 |
 
 写入路径上的校验在 Rust 边界完成（`DeviceProfile::validate`）：所有保存（包括前端命令和 CLI）都经过同一校验；`write_all` 先确保父目录存在再整体重写文件（非原子写，失败可能截断——当前可接受，文件极小）。
+
+`~/` 表示目标设备当前用户的主目录，不按用户名猜测 `/home/<user>`：SSH 通过 SFTP 初始目录解析，WSL 由所选发行版和用户的 helper 握手提供，串口在已登录的 shell 中通过 nonce 标记协议读取 `$HOME`。运行上传、托管环境重建和文件传输在访问文件前将其展开为绝对路径；设备工作区本身仍只接受绝对路径。
 
 > **安全注意（已知 TODO）**：`AuthMethod::Password` 目前以**明文**保存在 `devices.json` 中（代码注释中标注为安全设计 TODO）。`known_hosts.json` 与设备配置均无加密、无系统钥匙串集成。
 
@@ -109,7 +111,7 @@ WebView 的 localStorage 使用带版本后缀的键保存界面偏好：
 运行时的文件放置分三种情况：
 
 - 运行目标为工作区所在设备 → **原地运行**，不复制任何文件，产物留在工作区；
-- 运行目标为其他设备（含本机）→ 先把源工作区下载到本机暂存目录 `%TEMP%\remote-runner-stage-<run_id>`，再按传输方式上传到远端 `{workspace_root}/{run_id}`（如 `/tmp/devrunner/workspaces/<uuid>`）；**暂存目录在运行结束（无论成败）时清理**；
+- 运行目标为其他设备（含本机）→ 先把源工作区下载到本机暂存目录 `%TEMP%\remote-runner-stage-<run_id>`，再按传输方式上传到远端 `{workspace_root}/{run_id}`（默认如 `/home/user/devrunner/workspaces/<uuid>`）；**暂存目录在运行结束（无论成败）时清理**；
 - 远端 `{workspace_root}/{run_id}` **在运行结束后不清理**，保留在设备上，由设备默认 `workspace_root` 集中存放。
 
 ## 不持久化的运行时状态
@@ -131,4 +133,4 @@ WebView 的 localStorage 使用带版本后缀的键保存界面偏好：
 
 - 删除配置目录（`%APPDATA%\com.devrunner.remote-runner`）即清除设备、历史与主机密钥信任；
 - 清除 WebView 数据即重置布局、最近工作区与文件传输目录记忆；
-- 远端 `/tmp/devrunner/workspaces/` 下的历次运行目录需手动清理（跨设备运行的本地暂存目录会自动清理）。
+- 远端工作区根目录（默认 `~/devrunner/workspaces/`）下的历次运行目录需手动清理（跨设备运行的本地暂存目录会自动清理）。

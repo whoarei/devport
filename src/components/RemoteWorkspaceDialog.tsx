@@ -5,6 +5,7 @@ import {
   api,
 } from "../api";
 import { useAppStore } from "../store";
+import { transferApi } from "../transferApi";
 
 /** 设备路径的父目录（根目录的上级仍是根目录） */
 export function parentDevicePath(path: string): string {
@@ -21,6 +22,13 @@ export function joinDevicePath(path: string, name: string): string {
 /** 与后端 validate_device_path 同规则：绝对路径、无 . / .. 组件、无换行 */
 export function isDevicePath(path: string): boolean {
   return path.startsWith("/") && !/[\0\r\n]/.test(path) && !path.split("/").some((part) => part === "." || part === "..");
+}
+
+/** Resolve device-setting shorthand before creating an absolute WorkspaceRef. */
+export async function resolveDeviceWorkspacePath(id: string, path: string): Promise<string> {
+  if (!path.startsWith("~/")) return path;
+  const directory = await transferApi.list(deviceWorkspace(id, path));
+  return directory.endpoint.type === "device" ? directory.endpoint.path : path;
 }
 
 /**
@@ -57,13 +65,20 @@ export function RemoteWorkspaceDialog() {
   }, [open, hosts]);
 
   const valid = isDevicePath(path);
+  const canBrowse = valid || (path.startsWith("~/") && isDevicePath(path.slice(1)));
 
   const refresh = useCallback(async (id: string, dir: string) => {
     const current = ++sequence.current;
     setLoading(true);
     setError(null);
     try {
-      const list = await api.listWorkspaceDir(deviceWorkspace(id, dir), "");
+      const resolved = await resolveDeviceWorkspacePath(id, dir);
+      if (current !== sequence.current) return;
+      if (resolved !== dir) {
+        setPath(resolved);
+        return;
+      }
+      const list = await api.listWorkspaceDir(deviceWorkspace(id, resolved), "");
       if (current !== sequence.current) return;
       setEntries(list.filter((entry) => entry.is_dir));
     } catch (e) {
@@ -76,13 +91,14 @@ export function RemoteWorkspaceDialog() {
 
   // 路径或设备变化后短暂防抖再列目录，避免逐字符建连
   useEffect(() => {
-    if (!open || !deviceId || !valid) {
+    ++sequence.current;
+    if (!open || !deviceId || !canBrowse) {
       setEntries([]);
       return;
     }
     const timer = setTimeout(() => void refresh(deviceId, path), 400);
-    return () => clearTimeout(timer);
-  }, [open, deviceId, path, valid, refresh]);
+    return () => { clearTimeout(timer); ++sequence.current; };
+  }, [open, deviceId, path, canBrowse, refresh]);
 
   if (!open) return null;
 
@@ -133,10 +149,10 @@ export function RemoteWorkspaceDialog() {
           <div className="remote-browser">
             <div className="remote-browser-bar">
               <span className="remote-browser-title">{t("workspace.remoteBrowse")}</span>
-              <button type="button" disabled={path === "/"} onClick={() => setPath(parentDevicePath(path))}>
+              <button type="button" disabled={!valid || path === "/"} onClick={() => setPath(parentDevicePath(path))}>
                 {t("workspace.remoteUp")}
               </button>
-              <button type="button" disabled={!valid || loading} onClick={() => void refresh(deviceId, path)}>
+              <button type="button" disabled={!canBrowse || loading} onClick={() => void refresh(deviceId, path)}>
                 {t("workspace.remoteRefresh")}
               </button>
             </div>

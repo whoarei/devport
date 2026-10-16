@@ -70,6 +70,8 @@ pub(crate) enum Message {
     Ready {
         version: u32,
         info: String,
+        #[serde(default)]
+        home: String,
     },
     Ack,
     Started,
@@ -204,6 +206,7 @@ pub(crate) struct Bridge {
     diagnostics: Arc<parking_lot::Mutex<Vec<u8>>>,
     stderr_task: tokio::task::JoinHandle<()>,
     info: String,
+    home: String,
 }
 
 impl Drop for Bridge {
@@ -262,15 +265,27 @@ impl Bridge {
             diagnostics,
             stderr_task,
             info: String::new(),
+            home: String::new(),
         };
         match tokio::time::timeout(IO_TIMEOUT, bridge.next())
             .await
             .map_err(|_| failure("WSL startup timed out"))??
         {
-            Message::Ready { version: 1, info } => bridge.info = info,
+            Message::Ready {
+                version: 1,
+                info,
+                home,
+            } => {
+                bridge.info = info;
+                bridge.home = home;
+            }
             _ => return Err(failure("unsupported WSL helper handshake")),
         }
         Ok(bridge)
+    }
+
+    pub(crate) fn resolve_path(&self, path: &str) -> Result<String> {
+        crate::device::expand_home_path(path, &self.home)
     }
 
     pub(crate) async fn send(&mut self, value: Value) -> Result<()> {
@@ -448,6 +463,8 @@ pub(crate) async fn execute_with_command(
             result = &mut launch => break result?,
         }
     };
+    let resolved_remote = bridge.resolve_path(remote)?;
+    let remote = resolved_remote.as_str();
     if req.workspace.is_some() {
         emit(Event::State(RunState::Syncing));
     }

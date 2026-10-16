@@ -51,7 +51,7 @@ impl WorkspaceRef {
     }
 }
 
-/// 远端工作区路径校验：与 DeviceProfile.workspace_root 同规则
+/// 远端工作区路径校验：设备配置中的 ~/ 简写必须先展开
 /// （绝对路径、无 . / .. 组件、无 NUL/CR/LF）。
 pub fn validate_device_path(path: &str) -> std::result::Result<(), String> {
     if !path.starts_with('/')

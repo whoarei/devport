@@ -92,6 +92,11 @@ impl russh_sftp::server::Handler for Sftp {
         Ok(version)
     }
     async fn realpath(&mut self, id: u32, path: String) -> Result<p::Name, StatusCode> {
+        let path = if path == "." {
+            "/data".to_string()
+        } else {
+            path
+        };
         let actual = self.path(&path)?;
         fs::metadata(actual).map_err(io)?;
         Ok(p::Name {
@@ -538,6 +543,29 @@ async fn ssh_binary_directories_and_all_conflict_modes_round_trip() {
     assert!(!fs::read_to_string(fixture.config.join("transfers.json"))
         .unwrap()
         .contains("test-only-password"));
+}
+
+#[tokio::test]
+async fn home_roots_resolve_to_the_sftp_login_directory() {
+    let fixture = Fixture::new(Behavior::default()).await;
+    fs::create_dir_all(fixture.remote.join("devrunner/workspaces")).unwrap();
+    fs::write(
+        fixture.remote.join("devrunner/workspaces/data.bin"),
+        b"hello",
+    )
+    .unwrap();
+    let directory = TransferManager::new(&fixture.config)
+        .list(WorkspaceRef::device("test", "~/devrunner/workspaces"))
+        .await
+        .unwrap();
+    assert_eq!(
+        directory.endpoint,
+        WorkspaceRef::device("test", "/data/devrunner/workspaces")
+    );
+    assert!(directory
+        .entries
+        .iter()
+        .any(|entry| entry.name == "data.bin"));
 }
 
 #[tokio::test]

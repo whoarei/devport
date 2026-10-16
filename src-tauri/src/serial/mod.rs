@@ -119,6 +119,35 @@ pub async fn execute<T: AsyncRead + AsyncWrite + Unpin>(
         ));
     }
 
+    let resolved_remote = if req.workspace.is_some() && remote.starts_with("~/") {
+        let mut home = Vec::new();
+        let result = session
+            .execute(
+                "printf '%s' \"$HOME\"",
+                None,
+                Some(Duration::from_secs(5)),
+                controls,
+                |data| home.extend(data.into_iter().take(8193_usize.saturating_sub(home.len()))),
+                |_| {},
+            )
+            .await?;
+        if result.stopped == Some(StopReason::Timeout) {
+            return Err(RunnerError::Serial("home directory probe timed out".into()));
+        }
+        if result.stopped.is_some() {
+            return Ok(result.into());
+        }
+        if result.code != 0 || home.len() > 8192 {
+            return Err(RunnerError::Serial("cannot resolve home directory".into()));
+        }
+        let home = String::from_utf8(home)
+            .map_err(|_| RunnerError::Serial("home directory is not UTF-8".into()))?;
+        crate::device::expand_home_path(remote, &home)?
+    } else {
+        remote.to_string()
+    };
+    let remote = resolved_remote.as_str();
+    preflight(req, remote, &files)?;
     if req.workspace.is_some() {
         events(Event::State(RunState::Syncing));
         let mkdir = session

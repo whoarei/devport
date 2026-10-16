@@ -863,7 +863,18 @@ impl RunManager {
                     result = check => result?,
                 }
             }
-            None => format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id),
+            None => {
+                let remote = format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id);
+                if req.workspace.is_some() {
+                    tokio::select! {
+                        biased;
+                        _ = stop_rx.recv() => return Ok(RunOutcome::Canceled { code: None }),
+                        result = filesync::resolve_path(&conn, &remote) => result?,
+                    }
+                } else {
+                    remote
+                }
+            }
         };
         if in_place_workspace.is_none() {
             if let Some(local_dir) = req.workspace.as_ref().and_then(|w| w.local_dir()) {
@@ -1078,7 +1089,7 @@ impl RunManager {
             return Ok(RunOutcome::Canceled { code: None });
         }
         // 同设备原地运行（00029）：remote 即工作区本身，零文件上传
-        let remote = in_place_workspace.clone().unwrap_or_else(|| {
+        let mut remote = in_place_workspace.clone().unwrap_or_else(|| {
             format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id)
         });
         let mut _env_lease = None;
@@ -1095,13 +1106,13 @@ impl RunManager {
                     RunnerError::InvalidInput("managed python requires a workspace".into())
                 })?;
             let project = crate::runtime::project::inspect(std::path::Path::new(&workspace))?;
-            let host: Arc<dyn RuntimeHost + Send + Sync> = Arc::new(
-                crate::runtime::hosts::wsl::WslHost::open(
-                    device.wsl.clone().unwrap(),
-                    &crate::runtime::manage::remote_root(),
-                )
-                .await?,
-            );
+            let wsl_host = crate::runtime::hosts::wsl::WslHost::open(
+                device.wsl.clone().unwrap(),
+                &crate::runtime::manage::remote_root(),
+            )
+            .await?;
+            remote = wsl_host.resolve_path(&remote).await?;
+            let host: Arc<dyn RuntimeHost + Send + Sync> = Arc::new(wsl_host);
             self.set_state(run_id, RunState::Syncing);
             crate::runtime::manage::upload_wsl_workspace(&host, &workspace, &remote).await?;
             if stop_rx.try_recv().is_ok() {

@@ -128,7 +128,10 @@ impl Host {
         match endpoint {
             WorkspaceRef::Local { dir } => Ok(Self::Local(crate::workspace::canonical_root(dir)?)),
             WorkspaceRef::Device { path, .. } => {
-                crate::workspace_ref::validate_device_path(path).map_err(|e| error("path", e))?;
+                // Browsing accepts the home shorthand from device settings;
+                // hosts resolve it before returning an absolute endpoint.
+                crate::device::validate_workspace_root(path)
+                    .map_err(|e| error("path", e.to_string()))?;
                 let device = device.ok_or_else(|| error("device", "Device not found"))?;
                 device
                     .validate()

@@ -19,9 +19,12 @@ impl WslHost {
             Bridge::launch(helper_command(config).map_err(|e| error("io", e.to_string()))?)
                 .await
                 .map_err(|e| error("io", e.to_string()))?;
+        let path = bridge
+            .resolve_path(path)
+            .map_err(|e| error("path", e.to_string()))?;
         let mut host = Self {
             bridge,
-            root: path.into(),
+            root: path.clone(),
             local_alias: None,
         };
         let response = host.call(json!({"type":"tf_open", "path":path})).await?;

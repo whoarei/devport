@@ -32,6 +32,10 @@ impl WslHost {
         &self.config.distribution
     }
 
+    pub(crate) async fn resolve_path(&self, path: &str) -> Result<String> {
+        self.bridge.lock().await.resolve_path(path)
+    }
+
     async fn exec_inner(
         &self,
         argv: &[String],

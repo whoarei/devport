@@ -11,6 +11,15 @@ pub async fn open_sftp(conn: &SshConnection) -> Result<SftpSession> {
     Ok(sftp)
 }
 
+pub(crate) async fn resolve_path(conn: &SshConnection, path: &str) -> Result<String> {
+    crate::device::validate_workspace_root(path)?;
+    if path.starts_with("~/") {
+        let home = open_sftp(conn).await?.canonicalize(".").await?;
+        return crate::device::expand_home_path(path, &home);
+    }
+    Ok(path.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

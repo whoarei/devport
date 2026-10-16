@@ -293,6 +293,63 @@ async fn interactive_input_reaches_process_without_shell_commands() {
 }
 
 #[tokio::test]
+async fn home_workspace_is_resolved_before_upload_and_execution() {
+    let (client, mut device) = tokio::io::duplex(4096);
+    let fake = tokio::spawn(async move {
+        for index in 0..5 {
+            let (command, nonce) = read_command(&mut device).await;
+            if index == 1 {
+                assert!(command.contains("$HOME"));
+            }
+            if index >= 2 {
+                assert!(
+                    command.contains("/srv/custom home/devrunner/workspaces/run"),
+                    "{command}"
+                );
+                assert!(!command.contains("~/devrunner"));
+            }
+            begin(&mut device, &nonce).await;
+            if index == 1 {
+                device.write_all(b"/srv/custom home").await.unwrap();
+            }
+            if index == 4 {
+                device.write_all(b"done").await.unwrap();
+            }
+            end(&mut device, &nonce, 0).await;
+        }
+    });
+    let req: RunRequest = serde_json::from_value(serde_json::json!({
+        "device_id":"serial", "kind":"python", "entry":"test.py", "workspace":"."
+    }))
+    .unwrap();
+    let (_tx, mut rx) = mpsc::unbounded_channel();
+    let output = Mutex::new(Vec::new());
+    let result = serial::execute(
+        client,
+        115200,
+        &req,
+        "~/devrunner/workspaces/run",
+        vec![serial::filesync::UploadEntry::File(
+            serial::filesync::TextFile {
+                relative: "test.py".into(),
+                data: b"print('done')".to_vec(),
+            },
+        )],
+        &mut rx,
+        |event| {
+            if let serial::Event::Output { data, .. } = event {
+                output.lock().unwrap().extend(data);
+            }
+        },
+    )
+    .await
+    .unwrap();
+    fake.await.unwrap();
+    assert_eq!(result.code, Some(0));
+    assert_eq!(*output.lock().unwrap(), b"done");
+}
+
+#[tokio::test]
 async fn input_arriving_with_the_start_marker_is_queued_until_the_process_is_ready() {
     let (client, mut device) = tokio::io::duplex(128);
     let (tx, mut rx) = mpsc::unbounded_channel();

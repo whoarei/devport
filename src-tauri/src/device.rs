@@ -52,6 +52,53 @@ impl WslConfig {
 mod tests {
     use super::*;
     #[test]
+    fn workspace_defaults_use_target_home_and_preserve_explicit_paths() {
+        let profile = |root: Option<&str>| -> DeviceProfile {
+            let mut value = serde_json::json!({
+                "id": "ssh", "name": "host", "host": "localhost", "username": "custom"
+            });
+            if let Some(root) = root {
+                value["workspace_root"] = root.into();
+            }
+            serde_json::from_value(value).unwrap()
+        };
+        let default = profile(None);
+        assert_eq!(default.workspace_root, "~/devrunner/workspaces");
+        default.validate().unwrap();
+        for home in ["/root", "/home/alice", "/srv/custom user/", "/"] {
+            assert_eq!(
+                expand_home_path(&default.workspace_root, home).unwrap(),
+                format!("{}/devrunner/workspaces", home.trim_end_matches('/'))
+            );
+        }
+        let old = profile(Some("/tmp/devrunner/workspaces"));
+        assert_eq!(old.workspace_root, "/tmp/devrunner/workspaces");
+        old.validate().unwrap();
+        assert_eq!(
+            expand_home_path(&old.workspace_root, "").unwrap(),
+            old.workspace_root
+        );
+        for bad in [
+            "relative/path",
+            "~alice/path",
+            "$HOME/path",
+            "~/../escape",
+            "~/a/./b",
+            "~/bad\npath",
+            "~/bad\0path",
+        ] {
+            assert!(profile(Some(bad)).validate().is_err(), "{bad:?}");
+            assert!(expand_home_path(bad, "/home/alice").is_err(), "{bad:?}");
+        }
+        for home in ["", "relative", "/home/../escape", "/home/bad\npath"] {
+            assert!(
+                expand_home_path(&default.workspace_root, home).is_err(),
+                "{home:?}"
+            );
+        }
+    }
+
+    #[test]
     fn old_ssh_profiles_remain_compatible_and_serial_defaults_are_validated() {
         let ssh: DeviceProfile = serde_json::from_value(serde_json::json!({
             "id": "old", "name": "old board", "host": "localhost", "username": "root"
@@ -262,8 +309,28 @@ fn default_port() -> u16 {
     22
 }
 
-fn default_workspace_root() -> String {
-    "/tmp/devrunner/workspaces".to_string()
+pub fn default_workspace_root() -> String {
+    "~/devrunner/workspaces".to_string()
+}
+
+/// Device settings may use ~/; actual workspace and transfer roots are resolved
+/// to absolute paths on the target before filesystem access.
+pub(crate) fn validate_workspace_root(path: &str) -> Result<()> {
+    let absolute = if path.starts_with("~/") {
+        &path[1..]
+    } else {
+        path
+    };
+    crate::workspace_ref::validate_device_path(absolute).map_err(RunnerError::InvalidInput)
+}
+
+pub(crate) fn expand_home_path(path: &str, home: &str) -> Result<String> {
+    validate_workspace_root(path)?;
+    if let Some(relative) = path.strip_prefix("~/") {
+        crate::workspace_ref::validate_device_path(home).map_err(RunnerError::InvalidInput)?;
+        return Ok(format!("{}/{relative}", home.trim_end_matches('/')));
+    }
+    Ok(path.to_string())
 }
 
 impl DeviceProfile {
@@ -273,17 +340,8 @@ impl DeviceProfile {
             return Err(invalid("device name is required"));
         }
         // 本机设备原地运行，不使用远程工作区根目录
-        if self.transport != TransportKind::Local
-            && (!self.workspace_root.starts_with('/')
-                || self.workspace_root.contains(['\0', '\r', '\n'])
-                || self
-                    .workspace_root
-                    .split('/')
-                    .any(|p| p == ".." || p == "."))
-        {
-            return Err(invalid(
-                "workspace root must be an absolute Linux path without dot components",
-            ));
+        if self.transport != TransportKind::Local {
+            validate_workspace_root(&self.workspace_root)?;
         }
         match self.transport {
             TransportKind::Local => self

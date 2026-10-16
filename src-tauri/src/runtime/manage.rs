@@ -128,7 +128,7 @@ pub async fn rebuild_on_device(
         }
         TransportKind::Ssh => {
             let conn = crate::ssh::client::SshConnection::connect(device, config_dir).await?;
-            let remote = temp_workspace(device);
+            let remote = crate::ssh::filesync::resolve_path(&conn, &temp_workspace(device)).await?;
             let host: Arc<dyn RuntimeHost + Send + Sync> =
                 Arc::new(SshHost::from_arc(conn.handle.clone(), remote_root()));
             let result = match upload_ssh_workspace(&conn, workspace_dir, &remote).await {
@@ -156,9 +156,9 @@ pub async fn rebuild_on_device(
                 .wsl
                 .clone()
                 .ok_or_else(|| RunnerError::InvalidInput("WSL configuration is required".into()))?;
-            let host: Arc<dyn RuntimeHost + Send + Sync> =
-                Arc::new(WslHost::open(config, &remote_root()).await?);
-            let remote = temp_workspace(device);
+            let wsl_host = WslHost::open(config, &remote_root()).await?;
+            let remote = wsl_host.resolve_path(&temp_workspace(device)).await?;
+            let host: Arc<dyn RuntimeHost + Send + Sync> = Arc::new(wsl_host);
             let result = match upload_wsl_workspace(&host, workspace_dir, &remote).await {
                 Ok(()) => {
                     rebuild_prepared(

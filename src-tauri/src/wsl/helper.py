@@ -417,7 +417,8 @@ def main():
 
     try:
         os.umask(0o077)
-        emit("ready", version=1, info="%s; Python %s; user %s" % (platform.platform(), platform.python_version(), os.getuid()))
+        emit("ready", version=1, home=os.path.expanduser("~"),
+             info="%s; Python %s; user %s" % (platform.platform(), platform.python_version(), os.getuid()))
         while True:
             now = time.monotonic()
             if exec_proc is not None and not exec_reported:

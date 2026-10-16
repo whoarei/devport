@@ -183,6 +183,20 @@ impl SshHost {
             return Err(error("unsupported", "SFTP version 3 required"));
         }
         let has = |name: &str| version.extensions.get(name).is_some_and(|v| v == "1");
+        let path = if path.starts_with("~/") {
+            let home = monitored(&closed, session.realpath("."))
+                .await
+                .map_err(map)?
+                .files
+                .first()
+                .ok_or_else(|| error("io", "Missing home directory"))?
+                .filename
+                .clone();
+            crate::device::expand_home_path(path, &home)
+                .map_err(|e| error("path", e.to_string()))?
+        } else {
+            path.to_string()
+        };
         let root = monitored(&closed, session.realpath(path))
             .await
             .map_err(map)?

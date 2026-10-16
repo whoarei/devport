@@ -14,8 +14,9 @@ import i18n from "../src/i18n";
 test.before(async () => { await i18n.changeLanguage("zh"); });
 import { managedPythonBlocked } from "../src/components/RunToolbar";
 import {
-  RemoteWorkspaceDialog, isDevicePath, joinDevicePath, parentDevicePath,
+  RemoteWorkspaceDialog, isDevicePath, joinDevicePath, parentDevicePath, resolveDeviceWorkspacePath,
 } from "../src/components/RemoteWorkspaceDialog";
+import { transferApi } from "../src/transferApi";
 
 const sshDevice = (id: string, extra: Partial<DeviceProfile> = {}): DeviceProfile => ({
   id, name: id, is_default: false, transport: "ssh",
@@ -74,6 +75,20 @@ test("device path helpers mirror the backend path rules", () => {
   assert.equal(joinDevicePath("/srv", "app"), "/srv/app");
   assert.equal(joinDevicePath("/", "app"), "/app");
   assert.equal(joinDevicePath("/srv/", "app"), "/srv/app");
+});
+
+test("workspace picker resolves home defaults before using absolute workspace paths", async (t) => {
+  const calls: unknown[] = [];
+  t.mock.method(transferApi, "list", async (endpoint) => {
+    calls.push(endpoint);
+    return { endpoint: deviceWorkspace("d1", "/srv/custom user/devrunner/workspaces"), entries: [], overwrite: true };
+  });
+  const resolved = await resolveDeviceWorkspacePath("d1", "~/devrunner/workspaces");
+  assert.equal(resolved, "/srv/custom user/devrunner/workspaces");
+  assert.ok(isDevicePath(resolved));
+  assert.deepEqual(calls, [deviceWorkspace("d1", "~/devrunner/workspaces")]);
+  assert.equal(await resolveDeviceWorkspacePath("d1", "/tmp/devrunner/workspaces"), "/tmp/devrunner/workspaces");
+  assert.equal(calls.length, 1);
 });
 
 test("opening a device workspace releases the previous remote session", async (t) => {

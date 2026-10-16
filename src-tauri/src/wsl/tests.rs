@@ -471,6 +471,73 @@ async fn stop_and_timeout_escalate_for_uncooperative_process_groups() {
     windows,
     ignore = "requires an explicitly selected local WSL distribution"
 )]
+async fn home_workspace_upload_and_transfer_browsing_resolve_the_target_user() {
+    let local = temporary();
+    let suffix = format!("rr-home-test-{}", uuid::Uuid::new_v4());
+    let remote = format!("~/devrunner/workspaces/{suffix}");
+    let bridge = Bridge::launch(real_helper()).await.unwrap();
+    let absolute = bridge.resolve_path(&remote).unwrap();
+    assert!(absolute.starts_with('/'));
+    assert!(absolute.ends_with(&format!("/devrunner/workspaces/{suffix}")));
+    drop(bridge);
+    std::fs::write(local.join("payload.txt"), b"HOME_WORKSPACE_OK").unwrap();
+    let mut req = request(&format!(
+        "test \"$(pwd)\" = \"$HOME/devrunner/workspaces/{suffix}\" && cat payload.txt"
+    ));
+    req.workspace = Some(crate::workspace_ref::WorkspaceRef::local(
+        local.to_string_lossy(),
+    ));
+    let (_tx, mut rx) = mpsc::unbounded_channel();
+    let mut output = Vec::new();
+    let result = execute_with_command(
+        real_helper(),
+        &req,
+        &remote,
+        false,
+        filesync::collect(&local).unwrap(),
+        &mut rx,
+        |event| {
+            if let Event::Output { data, .. } = event {
+                output.extend(data);
+            }
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.code, Some(0));
+    assert_eq!(output, b"HOME_WORKSPACE_OK");
+    #[cfg(windows)]
+    {
+        let distribution = std::env::var("REMOTE_RUNNER_TEST_WSL").unwrap();
+        let device: DeviceProfile = serde_json::from_value(json!({
+            "id":"home-test", "name":"home", "transport":"wsl", "wsl":{"distribution":distribution}
+        }))
+        .unwrap();
+        crate::device::DeviceStore::new(&local)
+            .save(device)
+            .unwrap();
+        let listing = crate::file_transfer::TransferManager::new(&local)
+            .list(crate::workspace_ref::WorkspaceRef::device(
+                "home-test",
+                &remote,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(listing.endpoint.device_ref().unwrap().1, absolute);
+        assert!(listing.entries.iter().any(|e| e.name == "payload.txt"));
+    }
+    let mut cleanup = python("import shutil,sys; shutil.rmtree(sys.argv[1])");
+    cleanup.arg(&absolute);
+    assert!(cleanup.status().await.unwrap().success());
+    std::fs::remove_dir_all(local).unwrap();
+}
+
+#[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "requires an explicitly selected local WSL distribution"
+)]
 async fn upload_is_literal_and_rejects_existing_or_redirected_destinations() {
     let remote = format!("/tmp/rr-wsl-test-{}", uuid::Uuid::new_v4());
     let root = temporary();

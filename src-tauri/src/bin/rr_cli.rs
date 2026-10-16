@@ -76,7 +76,7 @@ async fn main() {
             port: 22,
             username: user.clone(),
             auth: AuthMethod::Key { key_path: None },
-            workspace_root: "/tmp/devrunner/workspaces".to_string(),
+            workspace_root: remote_runner::device::default_workspace_root(),
         };
 
         let (event_tx, mut event_rx) = remote_runner::events::channel();
@@ -232,7 +232,7 @@ async fn main() {
         port: 22,
         username: user,
         auth: AuthMethod::Key { key_path: None },
-        workspace_root: "/tmp/devrunner/workspaces".to_string(),
+        workspace_root: remote_runner::device::default_workspace_root(),
     };
 
     let (event_tx, mut event_rx) = remote_runner::events::channel();
