@@ -636,23 +636,95 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .terminal-error { color: #eda4a4; background: #302328; padding: 6px 12px; font-size: 12px; overflow-wrap: anywhere; max-height: 72px; overflow: auto; }
 .run-toolbar {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-width: 0;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 10px 12px 8px;
   background: #1e1f24;
   border-bottom: 1px solid #2a2b30;
 }
 
-.command-input {
-  flex: 1;
+.run-toolbar-main, .run-toolbar-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 8px;
 }
 
-.args-input {
-  width: 220px;
+.run-toolbar-main > input, .run-toolbar-main > select {
+  height: 32px;
+  min-width: 0;
+  max-width: 100%;
+  border-radius: 6px;
+  background: #25262d;
+  text-overflow: ellipsis;
 }
 
-.timeout-input {
-  width: 70px;
+.run-toolbar-main > .run-device-select { flex: 1 1 200px; }
+.run-toolbar-main > .run-mode-select { flex: 0 0 90px; }
+.run-toolbar-main > .run-entry-select, .run-toolbar-main > .command-input { flex: 2 1 240px; }
+.run-toolbar-main > .args-input { flex: 1 1 150px; }
+
+.run-toolbar-main > .run-action {
+  flex: 0 0 auto;
+  min-height: 32px;
+  margin-left: auto;
+  padding: 4px 16px;
+  border-radius: 6px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.run-toolbar-main > .run-start {
+  background: #293b32;
+  border-color: #3e5b49;
+  color: #a4d8b0;
+}
+
+.run-toolbar-main > .run-start:hover:not(:disabled) {
+  background: #324a3d;
+  border-color: #648b70;
+  color: #c3edcc;
+}
+
+.run-toolbar-options { column-gap: 16px; row-gap: 6px; }
+.run-option-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #969baa;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.run-toolbar-options select, .run-toolbar-options .timeout-input {
+  height: 26px;
+  padding: 2px 6px;
+  border-color: #34363f;
+  border-radius: 5px;
+  background: #23242b;
+  font-size: 12px;
+}
+
+.run-toolbar-options .timeout-input { width: 66px; }
+.run-toolbar-options .managed-toggle { gap: 6px; }
+.run-toolbar-options .managed-toggle input { margin: 0; accent-color: #8fa9e8; }
+.run-toolbar-options .run-task-select { width: 200px; max-width: 100%; }
+.run-toolbar-options .run-state {
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: #272a32;
+  overflow-wrap: anywhere;
+}
+
+.run-toolbar input:focus-visible, .run-toolbar select:focus-visible, .run-toolbar button:focus-visible {
+  outline: 2px solid #8fa9e8;
+  outline-offset: 2px;
 }
 
 /* ---------- run console ---------- */
@@ -904,16 +976,6 @@ button.danger {
   background: #b91c1c;
   border-color: #b91c1c;
   color: #fff;
-}
-
-/* 低调的运行按钮：与工具栏默认按钮一致，仅用绿色文字作语义提示 */
-button.run-start {
-  color: #7fbf7f;
-}
-
-button.run-start:hover:not(:disabled) {
-  color: #9fd89f;
-  border-color: #4a6b4a;
 }
 
 button:disabled {

@@ -129,102 +129,116 @@ export function RunToolbar() {
 
   return (
     <div className="run-toolbar" onContextMenu={openMenu}>
-      {Object.values(runs).some(isActiveRun) && <select aria-label={t("run.runningTasksAria")} value={activeRun && isActiveRun(activeRun) ? activeRunId! : ""}
-        onChange={(e) => { if (e.target.value) useAppStore.getState().setActiveRun(e.target.value); }}>
-        <option value="">{t("run.runningTasks")}</option>
-        {Object.values(runs).filter(isActiveRun).map((r) => <option key={r.run_id} value={r.run_id}>{r.label} @ {r.device_name}</option>)}
-      </select>}
-      <select aria-label={t("run.selectDeviceAria")} value={selectedDeviceId ?? ""} onChange={(e) => selectDevice(e.target.value || null)}>
-        {devices.length === 0 && <option value="">{t("run.noDevicesHint")}</option>}
-        {devices.map((d) => (
-          <option key={d.id} value={d.id}>{deviceLabel(d)}{d.is_default ? t("device.defaultSuffix") : ""}</option>
-        ))}
-      </select>
-      <select value={mode} onChange={(e) => setDraft({ mode: e.target.value as "script" | "command" })}>
-        <option value="script">{t("run.modeScript")}</option>
-        <option value="command">{t("run.modeCommand")}</option>
-      </select>
-
-      {mode === "script" ? (
-        <select value={effectiveEntry} onChange={(e) => setDraft({ entry: e.target.value })}>
-          <option value="">{t("run.selectEntryPlaceholder")}</option>
-          {scriptFiles.map((path) => (
-            <option key={path} value={path}>
-              {path}
-            </option>
+      <div className="run-toolbar-main">
+        <select className="run-device-select" aria-label={t("run.selectDeviceAria")} value={selectedDeviceId ?? ""} onChange={(e) => selectDevice(e.target.value || null)}>
+          {devices.length === 0 && <option value="">{t("run.noDevicesHint")}</option>}
+          {devices.map((d) => (
+            <option key={d.id} value={d.id}>{deviceLabel(d)}{d.is_default ? t("device.defaultSuffix") : ""}</option>
           ))}
         </select>
-      ) : (
-        <input
-          className="command-input"
-          placeholder={t("run.commandPlaceholder")}
-          value={command}
-          onChange={(e) => setDraft({ command: e.target.value })}
-        />
-      )}
+        <select className="run-mode-select" aria-label={t("run.modeAria")} value={mode} onChange={(e) => setDraft({ mode: e.target.value as "script" | "command" })}>
+          <option value="script">{t("run.modeScript")}</option>
+          <option value="command">{t("run.modeCommand")}</option>
+        </select>
 
-      {mode === "script" && (
-        <input
-          className="args-input"
-          placeholder={t("run.argsPlaceholder")}
-          value={argsText}
-          onChange={(e) => setDraft({ argsText: e.target.value })}
-        />
-      )}
-
-      {mode === "script" && isPythonEntry && (
-        <label
-          className={`managed-toggle${isSerial || inPlace ? " disabled" : ""}`}
-          title={inPlace ? t("run.managedInPlaceTitle") : isSerial ? t("run.managedSerialTitle") : t("run.managedTitle")}
-        >
+        {mode === "script" ? (
+          <select className="run-entry-select" aria-label={t("run.selectEntry")} title={effectiveEntry || t("run.selectEntryPlaceholder")} value={effectiveEntry} onChange={(e) => setDraft({ entry: e.target.value })}>
+            <option value="">{t("run.selectEntryPlaceholder")}</option>
+            {scriptFiles.map((path) => (
+              <option key={path} value={path}>
+                {path}
+              </option>
+            ))}
+          </select>
+        ) : (
           <input
-            type="checkbox"
-            checked={managed && !isSerial && !inPlace}
-            disabled={isSerial || inPlace}
-            onChange={(e) => setDraft({ managed: e.target.checked })}
+            className="command-input"
+            aria-label={t("run.modeCommand")}
+            placeholder={t("run.commandPlaceholder")}
+            value={command}
+            onChange={(e) => setDraft({ command: e.target.value })}
           />
-          {t("run.managedLabel")}
+        )}
+
+        {mode === "script" && (
+          <input
+            className="args-input"
+            aria-label={t("run.argsPlaceholder")}
+            placeholder={t("run.argsPlaceholder")}
+            value={argsText}
+            onChange={(e) => setDraft({ argsText: e.target.value })}
+          />
+        )}
+
+        {running ? (
+          <button className="run-action danger" onClick={stop}>
+            {t("run.stop")}
+          </button>
+        ) : (
+          <button className="run-action run-start" disabled={busy || editorBusy || !selectedDeviceId} onClick={run}>
+            {dirty ? t("run.saveAndRun") : t("run.run")}
+          </button>
+        )}
+      </div>
+
+      <div className="run-toolbar-options">
+        {mode === "script" && isPythonEntry && (
+          <label
+            className={`managed-toggle${isSerial || inPlace ? " disabled" : ""}`}
+            title={inPlace ? t("run.managedInPlaceTitle") : isSerial ? t("run.managedSerialTitle") : t("run.managedTitle")}
+          >
+            <input
+              type="checkbox"
+              checked={managed && !isSerial && !inPlace}
+              disabled={isSerial || inPlace}
+              onChange={(e) => setDraft({ managed: e.target.checked })}
+            />
+            <span>{t("run.managedLabel")}</span>
+          </label>
+        )}
+
+        <label className="run-option-field">
+          <span>{t("run.consoleModeLabel")}</span>
+          <select
+            value={effectiveConsoleMode}
+            disabled={isSerial}
+            title={isSerial ? t("run.serialConsoleTitle") : t("run.consoleModeTitle")}
+            onChange={(e) => setDraft({ consoleMode: e.target.value as "pty" | "pipe" })}
+          >
+            <option value="pty">{isSerial ? t("run.serialConsole") : "pty"}</option>
+            {!isSerial && <option value="pipe">pipe</option>}
+          </select>
         </label>
-      )}
 
-      <select
-        value={effectiveConsoleMode}
-        disabled={isSerial}
-        title={isSerial ? t("run.serialConsoleTitle") : t("run.consoleModeTitle")}
-        onChange={(e) => setDraft({ consoleMode: e.target.value as "pty" | "pipe" })}
-      >
-        <option value="pty">{isSerial ? t("run.serialConsole") : "pty"}</option>
-        {!isSerial && <option value="pipe">pipe</option>}
-      </select>
+        <label className="run-option-field" title={t("run.timeoutTitle")}>
+          <span>{t("run.timeoutLabel")}</span>
+          <input
+            className="timeout-input"
+            type="number"
+            min={0}
+            title={t("run.timeoutTitle")}
+            value={timeoutSecs}
+            onChange={(e) => setDraft({ timeoutSecs: Number(e.target.value) || 0 })}
+          />
+          <span>{t("run.secondsUnit")}</span>
+        </label>
 
-      <input
-        className="timeout-input"
-        type="number"
-        min={0}
-        title={t("run.timeoutTitle")}
-        value={timeoutSecs}
-        onChange={(e) => setDraft({ timeoutSecs: Number(e.target.value) || 0 })}
-      />
+        {Object.values(runs).some(isActiveRun) && <select className="run-task-select" aria-label={t("run.runningTasksAria")} value={activeRun && isActiveRun(activeRun) ? activeRunId! : ""}
+          onChange={(e) => { if (e.target.value) useAppStore.getState().setActiveRun(e.target.value); }}>
+          <option value="">{t("run.runningTasks")}</option>
+          {Object.values(runs).filter(isActiveRun).map((r) => <option key={r.run_id} value={r.run_id}>{r.label} @ {r.device_name}</option>)}
+        </select>}
 
-      {running ? (
-        <button className="danger" onClick={stop}>
-          {t("run.stop")}
-        </button>
-      ) : (
-        <button className="run-start" disabled={busy || editorBusy || !selectedDeviceId} onClick={run}>
-          {dirty ? t("run.saveAndRun") : t("run.run")}
-        </button>
-      )}
-
-      {activeRun && (
-        <span className={`run-state state-${activeRun.state}`}>
-          {runStateLabel(activeRun.state)}
-          {activeRun.phase && ` · ${runPhaseLabel(activeRun.phase)}`}
-          {progress && ` · ${progress}`}
-          {activeRun.exit_code != null && ` (${activeRun.exit_code})`}
-          {activeRun.error && ` — ${activeRun.error}`}
-        </span>
-      )}
+        {activeRun && activeRun.state !== "exited" && (
+          <span className={`run-state state-${activeRun.state}`} role="status">
+            {runStateLabel(activeRun.state)}
+            {activeRun.phase && ` · ${runPhaseLabel(activeRun.phase)}`}
+            {progress && ` · ${progress}`}
+            {activeRun.exit_code != null && ` (${activeRun.exit_code})`}
+            {activeRun.error && ` — ${activeRun.error}`}
+          </span>
+        )}
+      </div>
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
     </div>
   );

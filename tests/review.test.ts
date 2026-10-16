@@ -84,6 +84,22 @@ test("run drafts survive panel remount and layout reset; workspace switch clears
   assert.equal(useAppStore.getState().runDraft.command, "echo retained");
 });
 
+test("toolbar hides completed status while preserving live progress and failure details", (t) => {
+  const s = setup(t);
+  s.handleRunEvents([{ type: "status", status: status("task") }]);
+  s.setActiveRun("task");
+  assert.doesNotMatch(renderToStaticMarkup(createElement(RunToolbar)), /已退出|state-exited/);
+
+  s.handleRunEvents([{ type: "status", status: { ...status("live", "preparing"), phase: "syncing_dependencies" } }]);
+  s.setActiveRun("live");
+  const preparing = renderToStaticMarkup(createElement(RunToolbar));
+  assert.match(preparing, /准备中/);
+  assert.match(preparing, /同步依赖/);
+
+  s.handleRunEvents([{ type: "status", status: { ...status("live", "failed"), error: "connection lost" } }]);
+  assert.match(renderToStaticMarkup(createElement(RunToolbar)), /connection lost/);
+});
+
 test("history eviction frees caches and global byte budget preserves selected output first", (t) => {
   const s = setup(t);
   for (let i = 0; i < 201; i++) s.handleRunEvents([
