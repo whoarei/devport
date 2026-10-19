@@ -48,6 +48,7 @@ pub struct Entry {
     pub source_bytes: usize,
 }
 
+#[derive(Clone)]
 pub struct Source {
     pub relative: String,
     pub path: PathBuf,

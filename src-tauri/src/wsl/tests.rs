@@ -1065,6 +1065,7 @@ async fn workspace_run_manager_stages_scripts_and_records_the_actual_cwd() {
         "workspace_root":remote_root, "wsl":{"distribution":std::env::var("REMOTE_RUNNER_TEST_WSL").unwrap()}})).unwrap();
     let (tx, mut events) = crate::events::channel();
     let manager = RunManager::new(&root, tx);
+    let mut execution_workspace = None;
     for (kind, entry_type, entry) in [
         ("python", "python_script", "main.py"),
         ("shell", "bash_script", "main.sh"),
@@ -1109,9 +1110,16 @@ async fn workspace_run_manager_stages_scripts_and_records_the_actual_cwd() {
         .await
         .unwrap();
         assert!(String::from_utf8_lossy(&output).contains("WORKSPACE_RUN_OK"));
+        let sync = manager.status(&id).unwrap().workspace_sync.unwrap();
+        assert_eq!(sync.destination, format!("{remote_root}/source/workspace"));
+        if let Some(previous) = &execution_workspace {
+            assert_eq!(&sync.destination, previous);
+            assert_eq!(sync.uploaded_bytes, 0);
+        }
+        execution_workspace = Some(sync.destination.clone());
         assert_eq!(
             manager.workspace_session(&id).unwrap()["launch"]["cwd"],
-            format!("{remote_root}/{id}/data")
+            format!("{}/data", sync.destination)
         );
     }
     tokio::time::timeout(Duration::from_secs(5), async {

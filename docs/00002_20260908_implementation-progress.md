@@ -16,7 +16,7 @@
 | 脚本类型 | **已实现** Python、Shell、自定义命令 | 没有 Node / Binary 专用 `ScriptKind`；可由命令模式显式调用 |
 | Python 托管运行时 | **已实现** uv-only Managed Runtime：固定 uv 0.12.13 + 固定 CPython patch + `uv.lock` 内容寻址环境，SSH / WSL / Local 全链路，含 phase 进度、取消、lease/GC、管理面板 | Serial 明确不支持；运行入口固定 direct 网络模式（mirror/offline 已有 Rust 边界）；真实硬件/公网集成为发布前验证项，见 [00027](00027_20260916_uv-managed-python-runtime.md) / [00028](00028_20260916_uv-runtime-implementation-progress.md) |
 | 控制台 | **已实现** xterm.js、stdin、Stop、超时 | SSH / WSL / Local 支持 pipe、PTY、resize；Serial 为合并输出的 PTY-like 模式且不能运行中 resize |
-| 工作区同步 | **已实现** SSH SFTP、Serial 文本上传、WSL 二进制快照、Local 原地执行 | 每次运行全量处理；没有 hash / 增量同步；远端运行目录不自动回收 |
+| 工作区同步 | **已实现** SSH / WSL 固定目录与 SHA-256 增量同步、Serial 文本上传、Local 原地执行 | 同目录运行串行；Serial 保持全量上传；旧 UUID 目录不清理；见 00036 |
 | 工作区文件管理 | **已实现** 递归目录树、读写、新建、重命名、删除和路径边界校验 | 仅编辑 UTF-8 普通文件，单文件上限 1 MiB；运行同步敏感阶段阻止变更 |
 | 编辑器 | **已实现** CodeMirror 6、Python / Shell / text 高亮、保存、revision 冲突检测、多标签和未保存保护 | 无另存为、自动保存、草稿恢复、格式化、LSP、诊断和调试器 |
 | 运行状态与历史 | **已实现** 活动任务、200 条历史、原始输出日志、记录/输出导出和清空 | 单次持久化输出上限 2 MiB；不恢复应用退出前仍在远端运行的进程 |

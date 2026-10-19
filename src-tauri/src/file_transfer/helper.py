@@ -53,7 +53,8 @@ class TransferService:
             self.close()
             anchor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
             try:
-                self.root = walk(anchor, parts(path[1:]) if path != "/" else [])
+                names = parts(path[1:]) if path != "/" else []
+                self.root = directory(anchor, names) if message.get("create") else walk(anchor, names)
             finally:
                 os.close(anchor)
             root_path = os.path.realpath("/proc/self/fd/%s" % self.root)
@@ -104,6 +105,47 @@ class TransferService:
                     os.close(fd)
                 return None
             finally:
+                os.close(parent)
+        if kind in ("tf_hash", "tf_chmod", "tf_unlink", "tf_rmdir"):
+            parent, name = self.parent(path)
+            fd = None
+            try:
+                if kind == "tf_rmdir":
+                    os.rmdir(name, dir_fd=parent)  # empty directories only
+                    return None
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+                before = os.fstat(fd)
+                if not stat.S_ISREG(before.st_mode):
+                    raise ValueError("expected a regular managed file")
+                if kind == "tf_hash":
+                    limit = int(message["limit"])
+                    if limit < 0 or limit > 64 * 1024 * 1024 or before.st_size > limit:
+                        raise ValueError("managed file exceeds hash limit")
+                    digest = hashlib.sha256()
+                    total = 0
+                    while True:
+                        data = os.read(fd, TF_CHUNK)
+                        if not data:
+                            break
+                        total += len(data)
+                        if total > limit:
+                            raise ValueError("managed file grew beyond hash limit")
+                        digest.update(data)
+                    if transfer_attrs(os.fstat(fd)) != transfer_attrs(before):
+                        raise ValueError("managed file changed while hashing")
+                    return digest.hexdigest()
+                current = transfer_attrs(os.stat(name, dir_fd=parent, follow_symlinks=False))
+                if current != message["expected"] or current != transfer_attrs(before):
+                    emit("fs_error", code="conflict", message="Managed file changed")
+                    return "__reported_error__"
+                if kind == "tf_chmod":
+                    os.fchmod(fd, int(message["mode"]) & 0o777)
+                else:
+                    os.unlink(name, dir_fd=parent)
+                return None
+            finally:
+                if fd is not None:
+                    os.close(fd)
                 os.close(parent)
         if kind == "tf_file":
             if len(self.handles) >= 2:

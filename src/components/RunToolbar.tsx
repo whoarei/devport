@@ -44,7 +44,7 @@ export function RunToolbar() {
         <option value="">{t("workspaceRun.hint")}</option>
         {Object.values(runs).map((r) => <option key={r.run_id} value={r.run_id}>{r.label} @ {r.device_name}</option>)}
       </select>
-      {active && <span className={`run-state state-${active.state}`} role="status">{runStateLabel(active.state)}{active.phase ? ` · ${runPhaseLabel(active.phase)}` : ""}{progress ? ` · ${progress}` : ""}{active.exit_code != null ? ` (${active.exit_code})` : ""}</span>}
+      {active && <span className={`run-state state-${active.state}`} role="status">{active.waiting_workspace ? t("workspaceSync.waiting") : runStateLabel(active.state)}{active.phase ? ` · ${runPhaseLabel(active.phase)}` : ""}{progress ? ` · ${progress}` : ""}{active.exit_code != null ? ` (${active.exit_code})` : ""}</span>}
       <button className="danger" disabled={!active || !isActiveRun(active)} onClick={() => activeRunId && void api.stopRun(activeRunId).catch((e) => feature.reportError(e))}>{t("run.stop")}</button>
       <button disabled={!matching || starting || !selectedDeviceId || !!active && isActiveRun(active) || session?.request?.operation === "prepare" || session?.request?.operation === "rebuild"} title={known && !matching ? t("workspaceRun.workspaceMismatch") : !known ? t("workspaceRun.unknownSource") : undefined} onClick={() => activeRunId && feature.rerun(activeRunId)}>{t("workspaceRun.rerun")}</button>
     </div>

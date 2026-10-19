@@ -67,7 +67,7 @@ function PreparationStatus() {
     <strong>{t(p.rebuild ? "runtime.rebuild" : "workspaceRun.prepare")}</strong>
     <div className="runner-location">{workspaceLabel(p.workspace, devices)} · {p.deviceName}</div>
     <div role="status" className={`run-state state-${error ? "failed" : status?.state ?? "preparing"}`}>
-      {ready ? t("workspaceRun.preparationReady") : status ? runStateLabel(status.state) : error ? runStateLabel("failed") : t("workspaceRun.preparationSubmitting")}
+      {ready ? t("workspaceRun.preparationReady") : status?.waiting_workspace ? t("workspaceSync.waiting") : status ? runStateLabel(status.state) : error ? runStateLabel("failed") : t("workspaceRun.preparationSubmitting")}
       {(active || status?.state === "failed") && status?.phase && ` · ${runPhaseLabel(status.phase)}`}
     </div>
     {active && <progress aria-label={t("workspaceRun.preparationStatus")} />}

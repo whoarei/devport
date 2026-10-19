@@ -122,6 +122,7 @@ pub(crate) struct SshHost {
     pub overwrite: bool,
     pub hardlink: bool,
     fsync: bool,
+    hash_acceleration: Option<bool>,
 }
 
 fn map(e: Error) -> crate::workspace::FileError {
@@ -163,6 +164,17 @@ fn attrs(a: &FileAttributes) -> Attributes {
 
 impl SshHost {
     pub async fn open(device: &DeviceProfile, config: &Path, path: &str) -> Result<Self> {
+        Self::open_root(device, config, path, false).await
+    }
+    pub async fn open_create(device: &DeviceProfile, config: &Path, path: &str) -> Result<Self> {
+        Self::open_root(device, config, path, true).await
+    }
+    async fn open_root(
+        device: &DeviceProfile,
+        config: &Path,
+        path: &str,
+        create: bool,
+    ) -> Result<Self> {
         let connection = SshConnection::connect(device, config)
             .await
             .map_err(|e| error("io", e.to_string()))?;
@@ -197,6 +209,38 @@ impl SshHost {
         } else {
             path.to_string()
         };
+        if create {
+            crate::workspace_ref::validate_device_path(&path).map_err(|e| error("path", e))?;
+            let mut current = String::new();
+            for part in path.split('/').filter(|p| !p.is_empty()) {
+                current.push('/');
+                current.push_str(part);
+                match monitored(&closed, session.lstat(&current)).await {
+                    Ok(a) if a.attrs.is_dir() && !a.attrs.is_symlink() => {}
+                    Ok(_) => {
+                        return Err(error(
+                            "path",
+                            "Workspace root contains a link or non-directory",
+                        ))
+                    }
+                    Err(Error::Status(s)) if s.status_code == StatusCode::NoSuchFile => {
+                        let mut attrs = FileAttributes::empty();
+                        attrs.permissions = Some(0o700);
+                        // Another run may create the common root concurrently.
+                        let created = monitored(&closed, session.mkdir(&current, attrs)).await;
+                        let checked = monitored(&closed, session.lstat(&current))
+                            .await
+                            .map_err(map)?
+                            .attrs;
+                        if checked.is_symlink() || !checked.is_dir() {
+                            return Err(error("path", "Workspace root changed during creation"));
+                        }
+                        let _ = created;
+                    }
+                    Err(e) => return Err(map(e)),
+                }
+            }
+        }
         let root = monitored(&closed, session.realpath(path))
             .await
             .map_err(map)?
@@ -213,6 +257,7 @@ impl SshHost {
             overwrite: has("posix-rename@openssh.com"),
             hardlink: has("hardlink@openssh.com"),
             fsync: has("fsync@openssh.com"),
+            hash_acceleration: None,
         };
         if host.stat("").await?.is_none_or(|a| a.kind != "dir") {
             return Err(error("path", "Root is not a directory"));
@@ -444,6 +489,86 @@ impl SshHost {
         .await
         .map_err(map)?;
         Ok(())
+    }
+
+    pub async fn rmdir(&self, path: &str) -> Result<()> {
+        monitored(
+            &self.closed,
+            self.session.rmdir(self.path(path, false).await?),
+        )
+        .await
+        .map_err(map)?;
+        Ok(())
+    }
+    pub async fn chmod(&self, path: &str, mode: u32) -> Result<()> {
+        let (handle, _) = self.open_file(path, false).await?;
+        let Handle::Remote(handle) = handle else {
+            unreachable!()
+        };
+        let mut attrs = FileAttributes::empty();
+        attrs.permissions = Some(mode & 0o777);
+        let result = monitored(&self.closed, self.session.fsetstat(&handle, attrs))
+            .await
+            .map_err(map);
+        let close = self.close(handle, false, None).await;
+        result?;
+        close?;
+        Ok(())
+    }
+    /// Optional remote acceleration. Servers without exec/sha256sum use the
+    /// bounded SFTP reader in workspace_sync instead (no Python dependency).
+    pub async fn digest(&mut self, path: &str) -> Result<Option<String>> {
+        if self.hash_acceleration == Some(false) {
+            return Ok(None);
+        }
+        let path = self.path(path, false).await?;
+        let mut channel = match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            self._connection.handle.channel_open_session(),
+        )
+        .await
+        {
+            Ok(Ok(channel)) => channel,
+            _ => {
+                self.hash_acceleration = Some(false);
+                return Ok(None);
+            }
+        };
+        let attempt = async {
+            let command = format!(
+                "LC_ALL=C sha256sum < {} 2>/dev/null",
+                crate::runner::sh_quote(&path)
+            );
+            channel.exec(true, command).await.ok()?;
+            let mut bytes = Vec::new();
+            let mut success = false;
+            while let Some(message) = channel.wait().await {
+                match message {
+                    russh::ChannelMsg::Data { data } => {
+                        if bytes.len() + data.len() > 256 {
+                            return None;
+                        }
+                        bytes.extend_from_slice(&data);
+                    }
+                    russh::ChannelMsg::ExitStatus { exit_status } => success = exit_status == 0,
+                    russh::ChannelMsg::Failure => return None,
+                    _ => {}
+                }
+            }
+            let digest = std::str::from_utf8(&bytes)
+                .ok()?
+                .split_whitespace()
+                .next()?;
+            (success && digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()))
+                .then(|| digest.to_ascii_lowercase())
+        };
+        let hash = tokio::time::timeout(std::time::Duration::from_secs(10), attempt)
+            .await
+            .ok()
+            .flatten();
+        let _ = channel.close().await;
+        self.hash_acceleration = Some(hash.is_some());
+        Ok(hash)
     }
 }
 

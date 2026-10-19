@@ -10,7 +10,6 @@ use crate::runtime::prepare::{self, NetworkConfig, PrepareEvents};
 use crate::runtime::project::{EntryMode, PythonProject};
 use crate::runtime::{code, PreparedEnvironment, RuntimePhase, RuntimeReady};
 use crate::ssh::client::SshConnection;
-use crate::ssh::filesync;
 use crate::ssh::session::{self, SpawnSpec};
 use crate::workspace_ref::WorkspaceRef;
 use chrono::Local;
@@ -128,6 +127,10 @@ pub struct RunStatus {
     pub python_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lock_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_sync: Option<crate::workspace_sync::Report>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub waiting_workspace: bool,
 }
 
 impl RunStatus {
@@ -148,6 +151,8 @@ impl RunStatus {
             uv_version: None,
             python_version: None,
             lock_sha256: None,
+            workspace_sync: None,
+            waiting_workspace: false,
         }
     }
 }
@@ -889,7 +894,8 @@ impl RunManager {
         workspace_source: Option<DeviceProfile>,
         stop_rx: mpsc::UnboundedReceiver<StopKind>,
     ) {
-        match self
+        let mut workspace_lease = None;
+        let outcome = self
             .execute_inner(
                 &run_id,
                 req,
@@ -897,9 +903,33 @@ impl RunManager {
                 &config_dir,
                 workspace_source,
                 stop_rx,
+                &mut workspace_lease,
             )
-            .await
-        {
+            .await;
+        if let Some(lease) = workspace_lease {
+            if !lease.process_started || lease.process_finished {
+                if let Err(error) = lease.release().await {
+                    tracing::warn!("run {run_id}: {error}");
+                    self.emit_output(
+                        &run_id,
+                        OutputStream::Stderr,
+                        format!("\r\n{error}\r\n").as_bytes(),
+                    );
+                }
+            } else {
+                let warning = format!(
+                    "workspace lease retained because process termination is unconfirmed: {}",
+                    lease.destination
+                );
+                tracing::warn!("run {run_id}: {warning}");
+                self.emit_output(
+                    &run_id,
+                    OutputStream::Stderr,
+                    format!("\r\n{warning}\r\n").as_bytes(),
+                );
+            }
+        }
+        match outcome {
             Ok(outcome) => match outcome {
                 RunOutcome::Exited { code } => self.finish(&run_id, RunState::Exited, code, None),
                 RunOutcome::Canceled { code } => {
@@ -932,6 +962,7 @@ impl RunManager {
         config_dir: &std::path::Path,
         workspace_source: Option<DeviceProfile>,
         mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
+        workspace_lease: &mut Option<crate::workspace_sync::Lease>,
     ) -> Result<RunOutcome> {
         if req.managed_python {
             let mut events = self.prepare_events(run_id);
@@ -974,6 +1005,38 @@ impl RunManager {
             req.managed_pythonpath = inputs.python_path.clone();
             req.project_inputs = Some(inputs);
         }
+        // Use the source identity BEFORE staging rewrites a device workspace to
+        // a run-specific local temporary directory. The lease lives in execute.
+        if matches!(device.transport, TransportKind::Ssh | TransportKind::Wsl) {
+            if let Some(source) = req
+                .workspace
+                .as_ref()
+                .filter(|source| !source.is_on_device(&device.id))
+            {
+                if let Some(handle) = self.handles.lock().get_mut(run_id) {
+                    handle.status.waiting_workspace = true;
+                    let _ = self.event_tx.send(RunEvent::Status {
+                        status: handle.status.clone(),
+                    });
+                }
+                let acquired = crate::workspace_sync::Lease::acquire(
+                    source,
+                    workspace_source.as_ref(),
+                    device,
+                    config_dir,
+                    run_id,
+                    &self.runtime_cancel(run_id),
+                )
+                .await;
+                if let Some(handle) = self.handles.lock().get_mut(run_id) {
+                    handle.status.waiting_workspace = false;
+                    let _ = self.event_tx.send(RunEvent::Status {
+                        status: handle.status.clone(),
+                    });
+                }
+                *workspace_lease = Some(acquired?);
+            }
+        }
         let mut in_place_workspace: Option<String> = None;
         let _staging = match req.workspace.as_ref().and_then(|w| w.device_ref()) {
             Some((source_id, path)) if source_id == device.id => {
@@ -995,9 +1058,43 @@ impl RunManager {
             }
             None => None,
         };
+        let synced_workspace = if let Some(lease) = workspace_lease.as_mut() {
+            self.set_state(run_id, RunState::Syncing);
+            let local = req.workspace.as_ref().and_then(|w| w.local_dir()).unwrap();
+            let policy = if device.transport == TransportKind::Wsl {
+                crate::workspace_upload::WSL
+            } else {
+                crate::workspace_upload::SSH
+            };
+            let report = lease
+                .synchronize(
+                    std::path::Path::new(local),
+                    policy,
+                    self.runtime_cancel(run_id),
+                )
+                .await?;
+            tracing::info!("run {run_id}: workspace sync: {report:?}");
+            if let Some(handle) = self.handles.lock().get_mut(run_id) {
+                handle.status.workspace_sync = Some(report);
+                let _ = self.event_tx.send(RunEvent::Status {
+                    status: handle.status.clone(),
+                });
+            }
+            Some(lease.destination.clone())
+        } else {
+            None
+        };
         if device.transport == TransportKind::Wsl {
             return self
-                .execute_wsl(run_id, req, device, config_dir, in_place_workspace, stop_rx)
+                .execute_wsl(
+                    run_id,
+                    req,
+                    device,
+                    config_dir,
+                    in_place_workspace.or(synced_workspace),
+                    stop_rx,
+                    workspace_lease,
+                )
                 .await;
         }
         if device.transport == TransportKind::Serial {
@@ -1074,44 +1171,10 @@ impl RunManager {
                     result = check => result?,
                 }
             }
-            None => {
-                let remote = format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id);
-                if req.workspace.is_some() {
-                    tokio::select! {
-                        biased;
-                        _ = stop_rx.recv() => return Ok(RunOutcome::Canceled { code: None }),
-                        result = filesync::resolve_path(&conn, &remote) => result?,
-                    }
-                } else {
-                    remote
-                }
-            }
+            None => synced_workspace.clone().unwrap_or_else(|| {
+                format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id)
+            }),
         };
-        if in_place_workspace.is_none() {
-            if let Some(local_dir) = req.workspace.as_ref().and_then(|w| w.local_dir()) {
-                self.set_state(run_id, RunState::Syncing);
-                if req.managed_python {
-                    self.prepare_events(run_id).log(format!(
-                        "uploading workspace: source={local_dir:?}; SSH destination={remote_dir:?}"
-                    ));
-                }
-                let sync = async {
-                    let sftp = filesync::open_sftp(&conn).await?;
-                    filesync::upload_dir(&sftp, std::path::Path::new(local_dir), &remote_dir).await
-                };
-                let n = tokio::select! {
-                    biased;
-                    _ = stop_rx.recv() => return Ok(RunOutcome::Canceled { code: None }),
-                    result = sync => result?,
-                };
-                tracing::info!("run {run_id}: uploaded {n} files to {remote_dir}");
-                if req.managed_python {
-                    self.prepare_events(run_id).log(format!(
-                        "workspace upload complete: {n} files; destination={remote_dir:?}"
-                    ));
-                }
-            }
-        }
         if stop_rx.try_recv().is_ok() {
             return Ok(RunOutcome::Canceled { code: None });
         }
@@ -1161,6 +1224,9 @@ impl RunManager {
 
         // 4. 启动进程
         self.set_state(run_id, RunState::Starting);
+        if let Some(lease) = workspace_lease.as_mut() {
+            lease.process_started = true;
+        }
         if req.kind == ScriptKind::Command {
             self.publish_launch(
                 run_id,
@@ -1345,6 +1411,11 @@ impl RunManager {
             ));
         }
 
+        if received_exit {
+            if let Some(lease) = workspace_lease.as_mut() {
+                lease.process_finished = true;
+            }
+        }
         Ok(match stop_kind {
             None => RunOutcome::Exited { code: exit_code },
             Some(StopKind::User) => RunOutcome::Canceled { code: exit_code },
@@ -1360,40 +1431,19 @@ impl RunManager {
         config_dir: &std::path::Path,
         in_place_workspace: Option<String>,
         mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
+        workspace_lease: &mut Option<crate::workspace_sync::Lease>,
     ) -> Result<RunOutcome> {
         use crate::wsl::{self, Event};
         if stop_rx.try_recv().is_ok() {
             return Ok(RunOutcome::Canceled { code: None });
         }
-        // 同设备原地运行（00029）：remote 即工作区本身，零文件上传
+        // 原地来源或已经增量同步的目录：运行 helper 不再上传文件。
         let mut remote = in_place_workspace.clone().unwrap_or_else(|| {
             format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id)
         });
-        if in_place_workspace.is_none() {
-            if let Some(dir) = req.workspace.as_ref().and_then(|w| w.local_dir()) {
-                self.set_state(run_id, RunState::Syncing);
-                if req.managed_python {
-                    self.prepare_events(run_id).log(format!(
-                        "uploading workspace: source={dir:?}; WSL destination={remote:?}"
-                    ));
-                }
-                remote = wsl::upload_workspace(
-                    device.wsl.as_ref().unwrap(),
-                    std::path::Path::new(dir),
-                    &remote,
-                    &self.runtime_cancel(run_id),
-                )
-                .await?;
-                if req.managed_python {
-                    self.prepare_events(run_id)
-                        .log(format!("workspace upload complete: destination={remote:?}"));
-                }
-            }
-        }
         let mut _env_lease = None;
         if req.managed_python {
-            // Managed Runtime：独立 helper 会话上传 workspace 并完成准备（00027 §13）；
-            // 运行会话（bridge A）随后零文件上传、直接 cd 到已就绪目录
+            // Managed Runtime 准备复用上层同步完成的工作区；运行会话零文件上传。
             let workspace = req
                 .workspace
                 .as_ref()
@@ -1455,6 +1505,9 @@ impl RunManager {
         if let Some(handle) = self.handles.lock().get_mut(run_id) {
             handle.control = control.clone();
         }
+        if let Some(lease) = workspace_lease.as_mut() {
+            lease.process_started = true;
+        }
         let execution = wsl::execute(
             device.wsl.as_ref().unwrap(),
             &req,
@@ -1470,7 +1523,13 @@ impl RunManager {
                 }
             },
         );
-        await_transport(execution, control, stop_rx, req.timeout_secs).await
+        let result = await_transport(execution, control, stop_rx, req.timeout_secs).await;
+        if result.is_ok() {
+            if let Some(lease) = workspace_lease.as_mut() {
+                lease.process_finished = true;
+            }
+        }
+        result
     }
 
     async fn execute_serial(

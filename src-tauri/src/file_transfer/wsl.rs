@@ -15,6 +15,12 @@ pub(crate) struct WslHost {
 
 impl WslHost {
     pub async fn open(config: &WslConfig, path: &str) -> Result<Self> {
+        Self::open_root(config, path, false).await
+    }
+    pub async fn open_create(config: &WslConfig, path: &str) -> Result<Self> {
+        Self::open_root(config, path, true).await
+    }
+    async fn open_root(config: &WslConfig, path: &str, create: bool) -> Result<Self> {
         let bridge =
             Bridge::launch(helper_command(config).map_err(|e| error("io", e.to_string()))?)
                 .await
@@ -27,7 +33,9 @@ impl WslHost {
             root: path.clone(),
             local_alias: None,
         };
-        let response = host.call(json!({"type":"tf_open", "path":path})).await?;
+        let response = host
+            .call(json!({"type":"tf_open", "path":path,"create":create}))
+            .await?;
         host.root = response["root"]
             .as_str()
             .ok_or_else(|| error("io", "Missing WSL root"))?
@@ -160,6 +168,11 @@ impl WslHost {
     }
     pub async fn remove(&mut self, path: &str) -> Result<()> {
         self.call(json!({"type":"tf_remove","path":path})).await?;
+        Ok(())
+    }
+    pub async fn unlink(&mut self, path: &str, expected: &Attributes) -> Result<()> {
+        self.call(json!({"type":"tf_unlink","path":path,"expected":expected}))
+            .await?;
         Ok(())
     }
 }

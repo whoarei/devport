@@ -462,3 +462,28 @@ test("a device workspace still defaults to its source when devices arrive after 
   await useWorkspaceRunStore.getState().load();
   assert.equal(useAppStore.getState().selectedDeviceId, "b");
 });
+
+test("a queued workspace run remains active and exposes a cancellable waiting status", (t) => {
+  setup(t);
+  t.mock.method(React, "useSyncExternalStore", (_subscribe, snapshot) => snapshot());
+  const waiting = { ...preparationStatus(), phase: undefined, waiting_workspace: true };
+  useAppStore.getState().handleRunEvents([{ type: "status", status: waiting }]);
+  useAppStore.setState({ activeRunId: waiting.run_id });
+  const html = renderToStaticMarkup(createElement(RunToolbar));
+  assert.ok(html.includes(i18n.t("workspaceSync.waiting")));
+  assert.ok(html.includes(`<button class="danger">${i18n.t("run.stop")}</button>`));
+  assert.equal(useAppStore.getState().history.length, 0);
+});
+
+test("sync reports survive terminal status, history and event snapshot recovery", (t) => {
+  setup(t);
+  const report = { destination: "/home/user/work/workspace", added: 0, updated: 0, deleted: 0, skipped: 42, permissions: 0, uploaded_bytes: 0 };
+  const status = { ...preparationStatus("running"), phase: undefined, waiting_workspace: false, workspace_sync: report };
+  useAppStore.getState().handleRunEvents([{ type: "status", status }]);
+  const finished = { ...status, state: "exited", exit_code: 0, ended_at: "done" };
+  useAppStore.getState().handleRunEvents([{ type: "status", status: finished }]);
+  assert.deepEqual(useAppStore.getState().history[0].workspace_sync, report);
+  useAppStore.getState().handleRunEvents([{ type: "resync", statuses: [finished] }]);
+  assert.deepEqual(useAppStore.getState().runs.id.workspace_sync, report);
+  assert.equal(useAppStore.getState().history[0].workspace_sync?.uploaded_bytes, 0);
+});

@@ -20,6 +20,7 @@ pub mod workspace_commands;
 pub mod workspace_probe;
 pub mod workspace_ref;
 pub mod workspace_run;
+pub mod workspace_sync;
 pub mod workspace_upload;
 pub mod wsl;
 

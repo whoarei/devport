@@ -127,6 +127,11 @@ export interface RunStatus {
   uv_version?: string;
   python_version?: string;
   lock_sha256?: string;
+  waiting_workspace?: boolean;
+  workspace_sync?: {
+    destination: string; added: number; updated: number; deleted: number;
+    skipped: number; permissions: number; uploaded_bytes: number;
+  };
 }
 
 export interface TerminalStatus {

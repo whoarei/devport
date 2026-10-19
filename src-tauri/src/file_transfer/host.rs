@@ -120,6 +120,28 @@ fn open_local(path: &Path, create: bool) -> Result<tokio::fs::File> {
 }
 
 impl Host {
+    /// Run synchronization creates its configured root without following links.
+    pub(crate) async fn open_create(
+        endpoint: &WorkspaceRef,
+        device: &DeviceProfile,
+        config: &Path,
+    ) -> Result<Self> {
+        let path = endpoint
+            .device_ref()
+            .ok_or_else(|| error("path", "Expected device root"))?
+            .1;
+        match device.transport {
+            TransportKind::Ssh => Ok(Self::Ssh(SshHost::open_create(device, config, path).await?)),
+            TransportKind::Wsl => Ok(Self::Wsl(
+                WslHost::open_create(device.wsl.as_ref().unwrap(), path).await?,
+            )),
+            _ => Err(error(
+                "unsupported",
+                "Workspace synchronization requires SSH or WSL",
+            )),
+        }
+    }
+
     pub async fn open(
         endpoint: &WorkspaceRef,
         device: Option<&DeviceProfile>,
@@ -361,6 +383,87 @@ impl Host {
             }
             Self::Ssh(host) => host.remove(path).await,
             Self::Wsl(host) => host.remove(path).await,
+        }
+    }
+
+    /// Unlike transfer cleanup, these operations are used only with a validated
+    /// synchronization manifest and an immediately rechecked precondition.
+    pub(crate) async fn unlink(&mut self, path: &str, expected: &Attributes) -> Result<()> {
+        if expected.kind != "file" || self.stat(path).await?.as_ref() != Some(expected) {
+            return Err(error("conflict", "Managed file changed before deletion"));
+        }
+        match self {
+            Self::Local(root) => {
+                tokio::fs::remove_file(local_path(root, path, false)?).await?;
+                Ok(())
+            }
+            Self::Ssh(host) => host.remove(path).await,
+            Self::Wsl(host) => host.unlink(path, expected).await,
+        }
+    }
+
+    pub(crate) async fn rmdir(&mut self, path: &str) -> Result<()> {
+        match self {
+            Self::Local(root) => {
+                tokio::fs::remove_dir(local_path(root, path, false)?).await?;
+                Ok(())
+            }
+            Self::Ssh(host) => host.rmdir(path).await,
+            Self::Wsl(host) => {
+                host.call(serde_json::json!({"type":"tf_rmdir", "path":path}))
+                    .await?;
+                Ok(())
+            }
+        }
+    }
+
+    pub(crate) async fn chmod(
+        &mut self,
+        path: &str,
+        mode: u32,
+        expected: &Attributes,
+    ) -> Result<()> {
+        if expected.kind != "file" || self.stat(path).await?.as_ref() != Some(expected) {
+            return Err(error("conflict", "Managed file changed before chmod"));
+        }
+        match self {
+            Self::Local(root) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    tokio::fs::set_permissions(
+                        local_path(root, path, false)?,
+                        fs::Permissions::from_mode(mode & 0o777),
+                    )
+                    .await?;
+                }
+                #[cfg(not(unix))]
+                let _ = (root, path, mode);
+                Ok(())
+            }
+            Self::Ssh(host) => host.chmod(path, mode).await,
+            Self::Wsl(host) => {
+                host.call(serde_json::json!({"type":"tf_chmod", "path":path,"mode":mode,"expected":expected})).await?;
+                Ok(())
+            }
+        }
+    }
+
+    pub(crate) async fn remote_digest(&mut self, path: &str, limit: u64) -> Result<Option<String>> {
+        match self {
+            Self::Wsl(host) => {
+                let value = host
+                    .call(serde_json::json!({"type":"tf_hash","path":path,"limit":limit}))
+                    .await?;
+                Ok(Some(
+                    value
+                        .as_str()
+                        .ok_or_else(|| error("io", "Invalid hash reply"))?
+                        .into(),
+                ))
+            }
+            Self::Ssh(host) => host.digest(path).await,
+            Self::Local(_) => Ok(None),
         }
     }
 }

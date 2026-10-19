@@ -38,6 +38,10 @@
 
 > **安全注意（已知 TODO）**：`AuthMethod::Password` 目前以**明文**保存在 `devices.json` 中（代码注释中标注为安全设计 TODO）。`known_hosts.json` 与设备配置均无加密、无系统钥匙串集成。
 
+### workspace-client-id — 工作区同步客户端身份
+
+首次同步 SSH / WSL 工作区时创建持久化 UUID，与规范化来源共同派生来源身份；应用重启不重新生成。远端目录直接按工作区目录名命名，身份仅用于隐藏元数据中的同名冲突保护。删除或换用配置目录会形成新身份，不能自动接管同名旧目录。来源身份、同步清单、恢复记录和运行期目录锁存放在目标的 `<工作区目录名>/.sync/`，与 `workspace/` 执行文件分开，见 `00036_20261019_incremental-workspace-sync.md`。
+
 ### history.json — 运行历史
 
 由 `RunManager`（`src-tauri/src/runner.rs`）管理。每次运行进入终态（exited/failed/stopped/timeout）时：
@@ -55,6 +59,7 @@
 - `exit_code`、`error`：终态结果；
 - `started_at` / `ended_at`：本地时区 RFC 3339 时间戳；
 - `output_bytes` / `output_truncated`：已持久化输出的字节数与截断标记（0.4.x 之前的历史条目缺省为 0/false）。
+- `workspace_sync`：可选的固定目录路径与本次同步统计，含上传字节数；`waiting_workspace` 表示当前正在等待目录占用释放。旧历史缺省为空/false。
 
 ### run_logs/ — 运行输出日志
 

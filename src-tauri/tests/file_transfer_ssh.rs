@@ -22,6 +22,8 @@ struct Behavior {
     fail_write: bool,
     disconnect_commit: bool,
     slow: bool,
+    fail_workspace_commit_once: Option<Arc<std::sync::atomic::AtomicBool>>,
+    hash_exec: bool,
 }
 
 struct Sftp {
@@ -109,6 +111,9 @@ impl russh_sftp::server::Handler for Sftp {
             id,
             attrs: attributes(&fs::symlink_metadata(self.path(&path)?).map_err(io)?),
         })
+    }
+    async fn stat(&mut self, id: u32, path: String) -> Result<p::Attrs, StatusCode> {
+        self.lstat(id, path).await
     }
     async fn opendir(&mut self, id: u32, path: String) -> Result<p::Handle, StatusCode> {
         let actual = self.path(&path)?;
@@ -226,6 +231,10 @@ impl russh_sftp::server::Handler for Sftp {
         fs::remove_file(self.path(&path)?).map_err(io)?;
         Ok(status(id))
     }
+    async fn rmdir(&mut self, id: u32, path: String) -> Result<p::Status, StatusCode> {
+        fs::remove_dir(self.path(&path)?).map_err(io)?;
+        Ok(status(id))
+    }
     async fn extended(
         &mut self,
         id: u32,
@@ -248,6 +257,15 @@ impl russh_sftp::server::Handler for Sftp {
         };
         let source = self.path(&string()?)?;
         let target = self.path(&string()?)?;
+        if target.ends_with("workspace/b.py")
+            && self
+                .behavior
+                .fail_workspace_commit_once
+                .as_ref()
+                .is_some_and(|flag| flag.swap(false, std::sync::atomic::Ordering::Relaxed))
+        {
+            return Err(StatusCode::PermissionDenied);
+        }
         match request.as_str() {
             "hardlink@openssh.com" if !self.behavior.no_hardlink => {
                 fs::hard_link(source, target).map_err(io)?
@@ -265,6 +283,327 @@ impl russh_sftp::server::Handler for Sftp {
     }
 }
 
+#[tokio::test]
+async fn workspace_sync_reuses_directory_recovers_interruption_and_preserves_results() {
+    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    use std::sync::atomic::AtomicBool;
+    let fixture = Fixture::new(Behavior {
+        fail_workspace_commit_once: Some(Arc::new(AtomicBool::new(true))),
+        ..Default::default()
+    })
+    .await;
+    let mut device = DeviceStore::new(&fixture.config).get("test").unwrap();
+    device.workspace_root = "/data/new/nested".into();
+    let source = WorkspaceRef::local(fixture.local.to_string_lossy());
+    let cancel = Arc::new(AtomicBool::new(false));
+    fs::write(fixture.local.join("a.py"), b"first\r\n").unwrap();
+    fs::write(fixture.local.join("b.py"), b"second").unwrap();
+    let mut lease = Lease::acquire(
+        &source,
+        None,
+        &device,
+        &fixture.config,
+        "first-run",
+        &cancel,
+    )
+    .await
+    .unwrap();
+    let destination = lease.destination.clone();
+    assert_eq!(destination, "/data/new/nested/local/workspace");
+    let remote = fixture
+        .remote
+        .join(destination.trim_start_matches("/data/"));
+    assert!(lease
+        .synchronize(&fixture.local, SSH, cancel.clone())
+        .await
+        .is_err());
+    assert_eq!(fs::read(remote.join("a.py")).unwrap(), b"first\n");
+    assert!(!remote.join("b.py").exists());
+    lease.release().await.unwrap();
+    let mut lease = Lease::acquire(
+        &source,
+        None,
+        &device,
+        &fixture.config,
+        "second-run",
+        &cancel,
+    )
+    .await
+    .unwrap();
+    assert_eq!(lease.destination, destination);
+    let report = lease
+        .synchronize(&fixture.local, SSH, cancel.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        (report.added, report.skipped, report.uploaded_bytes),
+        (1, 1, 6)
+    );
+    lease.release().await.unwrap();
+    fs::write(remote.join("results.log"), b"keep").unwrap();
+    let mut lease = Lease::acquire(
+        &source,
+        None,
+        &device,
+        &fixture.config,
+        "third-run",
+        &cancel,
+    )
+    .await
+    .unwrap();
+    assert_eq!(lease.destination, destination);
+    let report = lease
+        .synchronize(&fixture.local, SSH, cancel.clone())
+        .await
+        .unwrap();
+    assert_eq!((report.uploaded_bytes, report.skipped), (0, 2));
+    fs::write(fixture.local.join("a.py"), b"new").unwrap();
+    fs::remove_file(fixture.local.join("b.py")).unwrap();
+    let report = lease
+        .synchronize(&fixture.local, SSH, cancel.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        (report.updated, report.deleted, report.uploaded_bytes),
+        (1, 1, 3)
+    );
+    assert_eq!(fs::read(remote.join("results.log")).unwrap(), b"keep");
+    assert!(!remote.join("b.py").exists());
+    lease.release().await.unwrap();
+    assert_eq!(
+        fs::read_dir(fixture.remote.join("new/nested"))
+            .unwrap()
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn workspace_sync_lease_queues_until_release_and_is_not_stolen_after_disconnect() {
+    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let f = Fixture::new(Behavior::default()).await;
+    let device = DeviceStore::new(&f.config).get("test").unwrap();
+    let source = WorkspaceRef::local(f.local.to_string_lossy());
+    let cancel = Arc::new(AtomicBool::new(false));
+    let first = Lease::acquire(&source, None, &device, &f.config, "first", &cancel)
+        .await
+        .unwrap();
+    let (s, d, c, flag) = (
+        source.clone(),
+        device.clone(),
+        f.config.clone(),
+        cancel.clone(),
+    );
+    let waiting =
+        tokio::spawn(async move { Lease::acquire(&s, None, &d, &c, "waiting", &flag).await });
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    assert!(!waiting.is_finished());
+    cancel.store(true, Ordering::Relaxed);
+    assert!(waiting.await.unwrap().is_err());
+    cancel.store(false, Ordering::Relaxed);
+    let mut alias = device.clone();
+    alias.workspace_root = "/data/".into();
+    assert!(
+        Lease::acquire(&source, None, &alias, &f.config, "alias", &cancel)
+            .await
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("leased")
+    );
+    let destination = first.destination.clone();
+    drop(first); // simulate loss without a confirmed process exit
+    let error = Lease::acquire(&source, None, &device, &f.config, "later", &cancel)
+        .await
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("leased"));
+    let remote = f.remote.join(destination.trim_start_matches("/data/"));
+    assert!(remote.parent().unwrap().join(".sync/lease.json").exists());
+    // Test-only recovery, after we know no workload was started.
+    fs::remove_file(remote.parent().unwrap().join(".sync/lease.json")).unwrap();
+    let mut second = Lease::acquire(&source, None, &device, &f.config, "second", &cancel)
+        .await
+        .unwrap();
+    second.synchronize(&f.local, SSH, cancel).await.unwrap();
+    second.release().await.unwrap();
+}
+
+#[tokio::test]
+async fn workspace_sync_hash_acceleration_preserves_literal_paths_and_detects_remote_edits() {
+    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    let f = Fixture::new(Behavior {
+        hash_exec: true,
+        ..Default::default()
+    })
+    .await;
+    let device = DeviceStore::new(&f.config).get("test").unwrap();
+    let source = WorkspaceRef::local(f.local.to_string_lossy());
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    fs::write(f.local.join("a' $.py"), b"good").unwrap();
+    let mut lease = Lease::acquire(&source, None, &device, &f.config, "hash", &cancel)
+        .await
+        .unwrap();
+    lease
+        .synchronize(&f.local, SSH, cancel.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        lease
+            .synchronize(&f.local, SSH, cancel.clone())
+            .await
+            .unwrap()
+            .uploaded_bytes,
+        0
+    );
+    let file = f
+        .remote
+        .join(lease.destination.trim_start_matches("/data/"))
+        .join("a' $.py");
+    fs::write(&file, b"evil").unwrap();
+    assert_eq!(
+        lease
+            .synchronize(&f.local, SSH, cancel)
+            .await
+            .unwrap()
+            .updated,
+        1
+    );
+    assert_eq!(fs::read(file).unwrap(), b"good");
+    lease.release().await.unwrap();
+}
+
+#[tokio::test]
+async fn cross_device_workspace_identity_is_independent_of_local_staging_paths() {
+    use remote_runner::{remote_workspace::stage, workspace_sync::Lease, workspace_upload::SSH};
+    let f = Fixture::new(Behavior::default()).await;
+    fs::create_dir(f.remote.join("source")).unwrap();
+    fs::write(f.remote.join("source/a.py"), b"first").unwrap();
+    let mut target = DeviceStore::new(&f.config).get("test").unwrap();
+    target.workspace_root = "/data/targets".into();
+    let mut source_device = target.clone();
+    source_device.id = "source-device".into();
+    let source = WorkspaceRef::device("source-device", "/data/source");
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut first = Lease::acquire(
+        &source,
+        Some(&source_device),
+        &target,
+        &f.config,
+        "stage-first",
+        &cancel,
+    )
+    .await
+    .unwrap();
+    let a = stage::download(
+        &source_device,
+        &f.config,
+        "/data/source",
+        &uuid::Uuid::new_v4().to_string(),
+    )
+    .await
+    .unwrap();
+    first
+        .synchronize(a.path(), SSH, cancel.clone())
+        .await
+        .unwrap();
+    let destination = first.destination.clone();
+    assert_eq!(destination, "/data/targets/source/workspace");
+    first.release().await.unwrap();
+    let mut second = Lease::acquire(
+        &source,
+        Some(&source_device),
+        &target,
+        &f.config,
+        "stage-second",
+        &cancel,
+    )
+    .await
+    .unwrap();
+    let b = stage::download(
+        &source_device,
+        &f.config,
+        "/data/source",
+        &uuid::Uuid::new_v4().to_string(),
+    )
+    .await
+    .unwrap();
+    assert_ne!(a.path(), b.path());
+    assert_eq!(second.destination, destination);
+    assert_eq!(
+        second
+            .synchronize(b.path(), SSH, cancel)
+            .await
+            .unwrap()
+            .uploaded_bytes,
+        0
+    );
+    second.release().await.unwrap();
+}
+
+#[tokio::test]
+async fn named_workspaces_never_merge_same_named_sources_or_existing_remote_directories() {
+    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    let f = Fixture::new(Behavior::default()).await;
+    let device = DeviceStore::new(&f.config).get("test").unwrap();
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let a = f.local.join("a/work");
+    let b = f.local.join("b/work");
+    fs::create_dir_all(&a).unwrap();
+    fs::create_dir_all(&b).unwrap();
+    fs::write(a.join("main.py"), b"source a").unwrap();
+    fs::write(b.join("main.py"), b"source b").unwrap();
+    let mut first = Lease::acquire(
+        &WorkspaceRef::local(a.to_string_lossy()),
+        None,
+        &device,
+        &f.config,
+        "first",
+        &cancel,
+    )
+    .await
+    .unwrap();
+    assert_eq!(first.destination, "/data/work/workspace");
+    first.synchronize(&a, SSH, cancel.clone()).await.unwrap();
+    first.release().await.unwrap();
+    let error = Lease::acquire(
+        &WorkspaceRef::local(b.to_string_lossy()),
+        None,
+        &device,
+        &f.config,
+        "second",
+        &cancel,
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(error.to_string().contains("name conflict"));
+    assert_eq!(
+        fs::read(f.remote.join("work/workspace/main.py")).unwrap(),
+        b"source a"
+    );
+    let occupied = f.local.join("existing");
+    fs::create_dir_all(&occupied).unwrap();
+    fs::create_dir(f.remote.join("existing")).unwrap();
+    fs::write(f.remote.join("existing/important"), b"keep").unwrap();
+    assert!(Lease::acquire(
+        &WorkspaceRef::local(occupied.to_string_lossy()),
+        None,
+        &device,
+        &f.config,
+        "existing",
+        &cancel
+    )
+    .await
+    .is_err());
+    assert_eq!(
+        fs::read(f.remote.join("existing/important")).unwrap(),
+        b"keep"
+    );
+    assert!(!f.remote.join("existing/workspace").exists());
+}
+
 struct Ssh {
     root: PathBuf,
     behavior: Behavior,
@@ -272,6 +611,40 @@ struct Ssh {
 }
 impl server::Handler for Ssh {
     type Error = russh::Error;
+    async fn exec_request(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut server::Session,
+    ) -> Result<(), Self::Error> {
+        if !self.behavior.hash_exec {
+            session.channel_failure(channel)?;
+            return Ok(());
+        }
+        let command = std::str::from_utf8(data).unwrap();
+        let quoted = command
+            .strip_prefix("LC_ALL=C sha256sum < ")
+            .unwrap()
+            .strip_suffix(" 2>/dev/null")
+            .unwrap();
+        let path = quoted
+            .strip_prefix('\'')
+            .unwrap()
+            .strip_suffix('\'')
+            .unwrap()
+            .replace("'\\''", "'");
+        assert!(path.starts_with("/data/") && !path.contains(".."));
+        use sha2::{Digest, Sha256};
+        let bytes = fs::read(self.root.join(path.trim_start_matches("/data/"))).unwrap();
+        let reply = format!("{:x}  -\n", Sha256::digest(bytes));
+        session.channel_success(channel)?;
+        session.data(channel, reply.into_bytes())?;
+        session.exit_status_request(channel, 0)?;
+        session.eof(channel)?;
+        session.close(channel)?;
+        self.channels.remove(&channel);
+        Ok(())
+    }
     async fn auth_password(&mut self, _: &str, _: &str) -> Result<server::Auth, Self::Error> {
         Ok(server::Auth::Accept)
     }

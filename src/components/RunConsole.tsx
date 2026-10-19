@@ -150,11 +150,15 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
       {!embedded && <PanelTitle className="console-header" title={t("console.runTab")} collapsed={collapsed} onToggle={onToggleCollapse}>
         {activeRun && (
           <span className={`run-state state-${activeRun.state}`}>
-            {activeRun.run_id} · {runStateLabel(activeRun.state)}
+            {activeRun.run_id} · {activeRun.waiting_workspace ? t("workspaceSync.waiting") : runStateLabel(activeRun.state)}
             {activeRun.exit_code != null && ` · exit=${activeRun.exit_code}`}
           </span>
         )}
       </PanelTitle>}
+      {!collapsed && activeRun?.workspace_sync && <div className="run-launch" role="status">
+        <span>{t("workspaceSync.summary", { ...activeRun.workspace_sync, bytes: activeRun.workspace_sync.uploaded_bytes.toLocaleString() })}</span>
+        <code>{activeRun.workspace_sync.destination}</code>
+      </div>}
       {inputError?.runId === activeRunId && <div className="terminal-error" role="alert">{t("console.inputFailed", { error: inputError.message })}</div>}
       <div ref={containerRef} className={`console-body${collapsed ? " collapsed" : ""}`} onContextMenu={openMenu} />
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
