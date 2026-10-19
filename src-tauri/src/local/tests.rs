@@ -273,6 +273,7 @@ async fn run_to_finish(config: &LocalConfig, req: &RunRequest) -> (Outcome, Coll
         .events
         .iter()
         .map(|event| match event {
+            Event::Launch(launch) => Event::Launch(launch.clone()),
             Event::State(state) => Event::State(*state),
             Event::Output { stream, data } => Event::Output {
                 stream: *stream,

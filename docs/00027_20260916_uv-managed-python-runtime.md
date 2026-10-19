@@ -3,13 +3,15 @@
 日期：2026-09-16  
 状态：已实现（2026-09-16，实施记录见 `00028_20260916_uv-runtime-implementation-progress.md`）
 
+后续交互与环境模型的重新设计见 [运行控制台与工作区脚本运行重构](00034_20261017_run-console-redesign.md)，已实施的结构及验证记录见 [00035 实施记录](00035_20261018_run-console-implementation.md)。本文已同步 2026-10-19 的 Python 次版本请求规则。
+
 ## 0. 实施状态与偏差
 
 第 21 节的 8 个阶段已全部落地，验证基线：`cargo test --offline --all-targets` 142 通过 / 0 失败（10 ignored 为 WSL opt-in）、`npm test` 91 通过、`npm run build`、`cargo fmt --all -- --check`、`git diff --check` 全部通过。实现与本设计的偏差如下：
 
 1. **Python build identity**：用 sha256(implementation|version|soabi|platform) 前 16 位摘要替代 python-build-standalone 官方 build id（uv 版本间接固定解释器清单，摘要足以作为 Environment ID 输入）。
 2. **Runtime Catalog `size: 0`**：表示下载前不断言资产大小，一律以 sha256 为准。
-3. **WSL 双 helper 会话**：prepare 使用独立的第二个 helper 会话（`WslHost::open`），未使用 `wsl::PrepareHook`（同步签名无法 await，且 build_script 在 init 时就需要 env python 路径）；PrepareHook 机制保留未用。
+3. **WSL helper 会话隔离**：prepare 的文件操作使用持久会话（`WslHost::open`），长命令各使用独立 helper，避免阻塞锁心跳；取消关闭该命令的 stdin 租约并清理其进程组。工作区上传走 helper 的安全文件协议。未使用 `wsl::PrepareHook`（同步签名无法 await，且 build_script 在 init 时就需要 env python 路径）；PrepareHook 机制保留未用。
 4. **网络模式**：`NetworkMode direct/mirror/offline` 的 Rust 边界与校验已实现，但运行入口目前固定 direct；mirror/offline 的 UI 接入留待后续。
 5. **Windows 本机 Local**：不探测剩余空间（避免平台 API 依赖），空间检查跳过。
 6. **LocalHost exec 测试**：依赖 `/bin/sh` 的用例拆分为 `#[cfg(unix)]`，与仓库"shell 缺失自动跳过"惯例一致。
@@ -17,7 +19,7 @@
 
 ## 1. 目标与决策
 
-Remote Runner 为 Python 项目提供完整的托管运行时：部署固定版本的 uv，由 uv 安装固定 patch 版本的 CPython，并依据 `uv.lock` 创建项目依赖环境。目标设备不需要预装 Python、pip、venv 或 uv。
+Remote Runner 为 Python 项目提供完整的托管运行时：部署固定版本的 uv，由 uv 解析并安装项目请求的 CPython，并依据 `uv.lock` 创建项目依赖环境。项目可声明次版本或完整补丁版本；每次准备冻结实际解析的补丁版本与 build。目标设备不需要预装 Python、pip、venv 或 uv。
 
 本设计作出以下不可回退的产品决策：
 
@@ -43,7 +45,7 @@ Remote Runner 为 Python 项目提供完整的托管运行时：部署固定版�
 - 容器环境；
 - Serial Shell V1 上的 Managed Runtime；
 - 在稳定环境中 editable 安装根项目；
-- 自动升级 uv、Python patch 或项目依赖。
+- 主动升级 uv、改写已有 Python/依赖环境或项目锁文件；次版本请求在新的准备中允许解析到其他可用补丁版本。
 
 ## 3. 术语
 
@@ -88,13 +90,13 @@ uv.lock
 .python-version
 ```
 
-`.python-version` 必须是完整、稳定的 CPython patch 版本：
+`.python-version` 支持单个稳定 CPython 次版本或完整补丁版本：
 
 ```text
-3.12.9
+3.12
 ```
 
-不接受 `3.12`、范围、多个版本、PyPy、debug 或 free-threaded variant。固定 patch 版本可以避免同一项目在不同时间自动选择不同解释器。
+也可以填写 `3.12.9` 以固定补丁版本。不接受仅主版本、范围、多个版本、PyPy、debug 或 free-threaded variant。`3.12` 由 uv 在 3.12 系列中结合 `requires-python` 选择可用受管解释器；声明值不改写，实际补丁版本和 build 用于校验、环境身份及追溯。需要跨时间固定解释器时使用完整补丁版本。
 
 `pyproject.toml` 示例：
 
@@ -117,7 +119,7 @@ extras = []
 
 校验规则：
 
-- `.python-version` 必须满足 `project.requires-python`；
+- `.python-version` 的请求范围必须与 `project.requires-python` 有交集，实际解析出的完整版本仍须满足两者；
 - `uv.lock` 必须存在且不超过配置上限；
 - 使用 `uv sync --locked`，锁文件过期直接失败；
 - `entry` 和 `python-path` 必须是工作区内不含 `.` / `..` 的相对路径；
@@ -242,16 +244,16 @@ runtime_root_not_executable
 
 ## 10. Managed Python 安装
 
-Runtime 安装使用精确版本：
+完整补丁版本请求可直接安装；次版本请求则与 `requires-python` 合并为约束，例如项目声明 `3.12` 且要求 `>=3.12.9,<3.13`：
 
 ```text
-uv python install 3.12.9
+uv python install '==3.12.*,>=3.12.9,<3.13'
 ```
 
 同时设置 `UV_PYTHON_INSTALL_DIR`，并要求 managed-only。安装完成后使用 uv 查询实际解释器路径，不依赖 PATH：
 
 ```text
-uv python find 3.12.9 --managed-python
+uv python find '==3.12.*,>=3.12.9,<3.13' --managed-python
 ```
 
 随后执行：
@@ -261,7 +263,7 @@ uv python find 3.12.9 --managed-python
 <python> -c "import json,platform,sys,sysconfig; ..."
 ```
 
-记录解释器真实路径、实现、完整版本、platform、SOABI、libc 和 Python build identity。结果不符合请求即隔离并报错，绝不尝试系统 Python。
+记录解释器真实路径、实现、完整版本、platform、SOABI、libc 和 Python build identity。结果不符合请求即报错，绝不尝试系统 Python。后续 `uv sync --locked --python <已解析的解释器绝对路径>` 固定本次解析结果，不在创建环境时再次选择另一个补丁版本。
 
 Environment 的解释器位置不得通过字符串拼接猜测。创建完成后由后端验证并记录实际路径：Windows 通常为 `<env>\\Scripts\\python.exe`，Unix 通常为 `<env>/bin/python`；任何平台都以探测和 smoke test 结果为准。
 
@@ -296,9 +298,9 @@ SHA256(
   "schema": 1,
   "environmentId": "...",
   "uvVersion": "...",
-  "pythonRequest": "3.12.9",
+  "pythonRequest": "3.12",
   "pythonExecutable": "...",
-  "pythonVersion": "...",
+  "pythonVersion": "3.12.9",
   "pythonBuild": "...",
   "platform": "...",
   "libc": "...",

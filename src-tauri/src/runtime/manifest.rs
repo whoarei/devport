@@ -11,7 +11,7 @@ pub struct EnvironmentManifest {
     pub schema: u32,
     pub environment_id: String,
     pub uv_version: String,
-    /// .python-version 的请求版本（如 3.12.9）
+    /// .python-version 的请求版本（如 3.12 或 3.12.9）
     pub python_request: String,
     /// 环境内实际解释器路径（探测所得，非拼接猜测）
     pub python_executable: String,

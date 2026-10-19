@@ -27,6 +27,7 @@ pub struct SessionSpec {
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
     pub env: Vec<(String, String)>,
+    pub env_clear: bool,
     pub mode: ConsoleMode,
     pub cols: u32,
     pub rows: u32,
@@ -177,6 +178,9 @@ impl Session {
             })
             .map_err(|e| failure(format!("cannot create a pseudo terminal: {e}")))?;
         let mut command = portable_pty::CommandBuilder::new(&spec.program);
+        if spec.env_clear {
+            command.env_clear();
+        }
         for arg in &spec.args {
             command.arg(arg);
         }
@@ -237,6 +241,9 @@ impl Session {
             .stderr(std::process::Stdio::piped());
         if let Some(cwd) = &spec.cwd {
             command.current_dir(cwd);
+        }
+        if spec.env_clear {
+            command.env_clear();
         }
         command.envs(spec.env.iter().map(|(k, v)| (k, v)));
         #[cfg(windows)]

@@ -2,7 +2,7 @@
 //! 锁 → 复用或 `uv sync --locked` → smoke test → manifest + .ready（00027 §9-§13）。
 //!
 //! 取消语义：cancel 置位后当前 exec 终止远程/本地进程并返回 CANCELED；
-//! 中途取消的环境缺少 `.ready`，下次准备时缓存未命中并整体隔离重建。
+//! 中途取消清理本次未就绪实例；已有实例保持在最终路径，由配方绑定选择当前代次。
 use crate::error::{Result, RunnerError};
 use crate::process::OutputStream;
 use crate::runtime::catalog::RuntimeCatalog;
@@ -13,6 +13,7 @@ use crate::runtime::manifest::{self, EnvironmentManifest};
 use crate::runtime::profile;
 use crate::runtime::project::PythonProject;
 use crate::runtime::{ManagedRuntimeInfo, PreparedEnvironment, RuntimePhase, RuntimeReady};
+use futures::future::BoxFuture;
 use sha2::Digest;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -85,8 +86,64 @@ pub struct PrepareEvents {
 }
 
 impl PrepareEvents {
-    fn phase(&mut self, phase: RuntimePhase) {
+    pub(crate) fn log(&mut self, message: impl AsRef<str>) {
+        let message = crate::runtime::scrub_credentials(message.as_ref());
+        let line = format!(
+            "[prepare {}] {message}\n",
+            chrono::Local::now().format("%H:%M:%S")
+        );
+        (self.on_output)(OutputStream::Stdout, line.as_bytes());
+    }
+
+    pub(crate) fn phase(&mut self, phase: RuntimePhase) {
+        self.log(format!("phase: {}", phase.as_str()));
         (self.on_phase)(phase);
+    }
+
+    fn progress(&mut self, message: &str, done: u64, total: Option<u64>) {
+        self.log(format!("{message} (bytes={done}, total={total:?})"));
+        (self.on_progress)(message, done, total);
+    }
+
+    async fn exec(
+        &mut self,
+        host: &Arc<dyn RuntimeHost + Send + Sync>,
+        argv: &[String],
+        env: &[(String, String)],
+        cwd: Option<&str>,
+        cancel: &AtomicBool,
+    ) -> Result<ExecResult> {
+        self.log(format!(
+            "exec: {}; cwd={cwd:?}",
+            serde_json::to_string(argv).unwrap()
+        ));
+        let started = std::time::Instant::now();
+        match host.exec(argv, env, cwd, None, cancel).await {
+            Ok(result) => {
+                self.output(&result);
+                if result
+                    .stderr
+                    .last()
+                    .or(result.stdout.last())
+                    .is_some_and(|b| *b != b'\n')
+                {
+                    (self.on_output)(OutputStream::Stdout, b"\n");
+                }
+                self.log(format!(
+                    "exit={:?}; elapsed={:.2}s",
+                    result.code,
+                    started.elapsed().as_secs_f64()
+                ));
+                Ok(result)
+            }
+            Err(error) => {
+                self.log(format!(
+                    "exec failed after {:.2}s: {error}",
+                    started.elapsed().as_secs_f64()
+                ));
+                Err(error)
+            }
+        }
     }
 
     fn output(&mut self, result: &ExecResult) {
@@ -184,6 +241,10 @@ pub async fn prepare_runtime(
     crate::runtime::validate_runtime_root(&root, host.is_windows())
         .map_err(|e| RunnerError::managed(code::UNSUPPORTED_PLATFORM, e.to_string()))?;
     profile.runtime_root = root.clone();
+    events.log(format!(
+        "target platform={}; runtime root={root:?}; Python request={python_version:?}",
+        profile.platform_key()
+    ));
 
     let uv_path = deploy_uv(
         &host,
@@ -195,7 +256,7 @@ pub async fn prepare_runtime(
         events,
     )
     .await?;
-    let (python_path, python_build) = install_python(
+    let (python_path, resolved_version, python_build) = install_python(
         &host,
         catalog,
         &root,
@@ -210,6 +271,7 @@ pub async fn prepare_runtime(
         uv_path,
         uv_version: catalog.uv_version.clone(),
         python_path,
+        python_version: resolved_version,
         python_build,
         profile,
     })
@@ -256,6 +318,7 @@ async fn deploy_uv(
         &catalog.uv_version,
     );
     let uv_path = host.join(&tools_dir, &uv_name);
+    events.log(format!("checking uv {} at {uv_path:?}", catalog.uv_version));
 
     // 缓存命中：`uv --version` 与 Catalog 完全一致才复用
     check_cancel(cancel)?;
@@ -270,7 +333,7 @@ async fn deploy_uv(
         .await
     {
         if result.success() && uv_version_matches(&result.stdout, &catalog.uv_version) {
-            (events.on_progress)(&format!("uv {} cache hit", catalog.uv_version), 0, None);
+            events.progress(&format!("uv {} cache hit", catalog.uv_version), 0, None);
             return Ok(uv_path);
         }
         // 版本不符：隔离旧二进制（不允许 uv self update 语义）
@@ -290,11 +353,11 @@ async fn deploy_uv(
     events.phase(RuntimePhase::DeployingUv);
     // 1. 桌面端获取资产（本地内容缓存 → 下载），长度/SHA256 以 Catalog 为准
     let total = (asset.size > 0).then_some(asset.size);
-    (events.on_progress)(&format!("downloading uv {}", catalog.uv_version), 0, total);
+    events.progress(&format!("downloading uv {}", catalog.uv_version), 0, total);
     let archive = if let Some(cached) =
         crate::runtime::download::cached_asset(cache_dir, &asset, &catalog.uv_version)?
     {
-        (events.on_progress)("uv archive cache hit", cached.len() as u64, total);
+        events.progress("uv archive cache hit", cached.len() as u64, total);
         cached
     } else {
         let asset_clone = asset.clone();
@@ -306,7 +369,7 @@ async fn deploy_uv(
             RunnerError::managed(code::UV_ASSET_VERIFY, format!("download task failed: {e}"))
         })??;
         crate::runtime::download::store_cache(cache_dir, &asset, &catalog.uv_version, &downloaded)?;
-        (events.on_progress)("uv archive downloaded", downloaded.len() as u64, total);
+        events.progress("uv archive downloaded", downloaded.len() as u64, total);
         downloaded
     };
     let binary = crate::runtime::download::unpack_uv(&archive, host.is_windows())?;
@@ -322,7 +385,7 @@ async fn deploy_uv(
             uuid::Uuid::new_v4().simple()
         ),
     );
-    (events.on_progress)("uploading uv binary", 0, Some(binary.bytes.len() as u64));
+    events.progress("uploading uv binary", 0, Some(binary.bytes.len() as u64));
     host.write_file(&tmp_remote, &binary.bytes, 0o700).await?;
     let readback = host.read_file(&tmp_remote).await?;
     if readback != binary.bytes {
@@ -364,7 +427,7 @@ async fn deploy_uv(
             ),
         ));
     }
-    (events.on_progress)(
+    events.progress(
         &format!("uv {} deployed", catalog.uv_version),
         binary.bytes.len() as u64,
         None,
@@ -387,7 +450,7 @@ fn uv_version_matches(stdout: &[u8], expected: &str) -> bool {
     !version.is_empty() && version == expected
 }
 
-/// 安装并验证 Managed Python：精确版本、managed-only、拒绝系统 Python
+/// Resolve and verify managed CPython; freeze the actual patch version and build.
 async fn install_python(
     host: &Arc<dyn RuntimeHost + Send + Sync>,
     catalog: &RuntimeCatalog,
@@ -396,7 +459,7 @@ async fn install_python(
     network: &NetworkConfig,
     cancel: &AtomicBool,
     events: &mut PrepareEvents,
-) -> Result<(String, String)> {
+) -> Result<(String, String, String)> {
     events.phase(RuntimePhase::InstallingPython);
     let env = uv_env(&**host, root, network);
     let uv_path = host.join(
@@ -409,9 +472,10 @@ async fn install_python(
     let install_dir = host.join(root, "python");
 
     // uv python install 幂等：已安装时快速返回
-    (events.on_progress)(&format!("installing CPython {python_version}"), 0, None);
-    let install = host
+    events.progress(&format!("installing CPython {python_version}"), 0, None);
+    let install = events
         .exec(
+            host,
             &[
                 uv_path.clone(),
                 "python".into(),
@@ -420,11 +484,9 @@ async fn install_python(
             ],
             &env,
             None,
-            None,
             cancel,
         )
         .await?;
-    events.output(&install);
     if !install.success() {
         return Err(RunnerError::managed(
             code::PYTHON_INSTALL,
@@ -437,8 +499,9 @@ async fn install_python(
     }
 
     // 解析实际解释器路径（不依赖 PATH，不拼接猜测）
-    let find = host
+    let find = events
         .exec(
+            host,
             &[
                 uv_path.clone(),
                 "python".into(),
@@ -447,7 +510,6 @@ async fn install_python(
                 "--managed-python".into(),
             ],
             &env,
-            None,
             None,
             cancel,
         )
@@ -478,11 +540,11 @@ async fn install_python(
     }
 
     // 实际解释器验证：版本、实现、SOABI、platform
-    let info = host
+    let info = events
         .exec(
+            host,
             &[python_path.clone(), "-c".into(), PYTHON_INFO_SNIPPET.into()],
             &[],
-            None,
             None,
             cancel,
         )
@@ -500,14 +562,20 @@ async fn install_python(
         )
     })?;
     let version = parsed["version"].as_str().unwrap_or("");
-    if version != python_version {
+    let matches = crate::runtime::project::python_version_matches(python_version, version)
+        || crate::runtime::catalog::is_exact_version(version)
+            && crate::runtime::project::satisfies_requires_python(python_version, version);
+    if !matches || parsed["implementation"].as_str() != Some("CPython") {
         return Err(RunnerError::managed(
             code::PYTHON_VERIFY,
             format!("managed Python version mismatch: requested {python_version}, got {version}"),
         ));
     }
     let build = python_build_id(&parsed);
-    Ok((python_path, build))
+    events.log(format!(
+        "resolved CPython {version}; interpreter={python_path:?}; build={build}"
+    ));
+    Ok((python_path, version.to_string(), build))
 }
 
 /// Python build identity：实现 + 版本 + SOABI + 平台 的摘要（uv 版本间接固定该清单）
@@ -524,6 +592,28 @@ const PYTHON_INFO_SNIPPET: &str = "import json,platform,sysconfig;print(json.dum
 
 const SMOKE_SNIPPET: &str = "import json,sys;print(json.dumps({'prefix':sys.prefix,'version':sys.version.split()[0],'executable':sys.executable}))";
 
+/// Reopen the execution workspace through its safe file service on every check.
+/// Publication must use the same bounded inputs that defined the recipe.
+pub type InputVerifier = dyn Fn() -> BoxFuture<'static, Result<()>> + Send + Sync;
+
+async fn verify_project_inputs(
+    verify: Option<&InputVerifier>,
+    stage: &str,
+    events: &mut PrepareEvents,
+) -> Result<()> {
+    if let Some(verify) = verify {
+        events.log(format!("checking project inputs: {stage}"));
+        if let Err(error) = verify().await {
+            events.log(format!(
+                "project input verification failed ({stage}): {error}"
+            ));
+            return Err(error);
+        }
+        events.log("project inputs match planning snapshot");
+    }
+    Ok(())
+}
+
 // ---------- 阶段 2：环境锁 + uv sync --locked + 验证 ----------
 
 pub async fn prepare_environment(
@@ -537,9 +627,52 @@ pub async fn prepare_environment(
     cancel: &AtomicBool,
     events: &mut PrepareEvents,
 ) -> Result<PreparedEnvironment> {
+    prepare_generation(
+        host,
+        ready,
+        project,
+        workspace_dir,
+        catalog,
+        network,
+        owner,
+        cancel,
+        events,
+        false,
+        None,
+        &crate::runtime::manager::LeaseSet::default(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn prepare_generation(
+    host: Arc<dyn RuntimeHost + Send + Sync>,
+    ready: &RuntimeReady,
+    project: &PythonProject,
+    workspace_dir: &str,
+    catalog: &RuntimeCatalog,
+    network: &NetworkConfig,
+    owner: &str,
+    cancel: &AtomicBool,
+    events: &mut PrepareEvents,
+    force: bool,
+    verify_inputs: Option<&InputVerifier>,
+    leases: &crate::runtime::manager::LeaseSet,
+) -> Result<PreparedEnvironment> {
     let root = ready.profile.runtime_root.clone();
     let platform = ready.profile.platform_key();
-    let python_version = project.python_version.clone();
+    let python_version = ready.python_version.clone();
+    if !crate::runtime::project::python_version_matches(&project.python_version, &python_version)
+        || !crate::runtime::project::satisfies_requires_python(
+            &project.requires_python,
+            &python_version,
+        )
+    {
+        return Err(RunnerError::managed(
+            code::VERSION_MISMATCH,
+            format!("resolved Python {python_version} does not satisfy .python-version {} and requires-python {:?}", project.python_version, project.requires_python),
+        ));
+    }
     let environment_id = envid::compute(
         &ready.uv_version,
         &platform,
@@ -555,10 +688,7 @@ pub async fn prepare_environment(
     );
     let envs_root = host.join(&root, "envs");
     let locks_root = host.join(&root, "locks");
-    let env_dir = host.join(&envs_root, &environment_id);
-    let manifest_path = host.join(&env_dir, manifest::MANIFEST_NAME);
-    let ready_path = host.join(&env_dir, manifest::READY_MARKER);
-    let preparing_path = host.join(&env_dir, manifest::PREPARING_MARKER);
+    events.log(format!("execution workspace={workspace_dir:?}; environment recipe={environment_id}; rebuild={force}; lock SHA-256={}", project.lock_sha256));
 
     // 锁（并发 Run 只构建一次；等待期间上报进度）
     events.phase(RuntimePhase::WaitingEnvironmentLock);
@@ -569,30 +699,154 @@ pub async fn prepare_environment(
         owner,
         cancel,
         |round| {
-            (events.on_progress)(&format!("waiting for environment lock ({round})"), 0, None);
+            events.progress(&format!("waiting for environment lock ({round})"), 0, None);
         },
     )
     .await?;
 
-    let result = prepare_environment_locked(
-        &host,
-        ready,
-        project,
-        workspace_dir,
-        catalog,
-        network,
-        cancel,
-        events,
-        &root,
-        &env_dir,
-        &manifest_path,
-        &ready_path,
-        &preparing_path,
-        &environment_id,
-        &python_version,
-    )
-    .await;
+    let bindings = host.join(&root, "bindings");
+    let binding = host.join(&bindings, &format!("{environment_id}.json"));
+    let current = host
+        .read_file(&binding)
+        .await
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
+        .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+        .unwrap_or_else(|| environment_id.clone());
+    let current_dir = host.join(&envs_root, &current);
+    let mut instance = if force {
+        format!(
+            "{:x}",
+            sha2::Sha256::digest(uuid::Uuid::new_v4().as_bytes())
+        )[..32]
+            .to_owned()
+    } else {
+        current
+    };
+    let mut lease = match leases.acquire(&instance, cancel).await {
+        Ok(lease) => lease,
+        Err(error) => {
+            crate::runtime::lock::release(&*host, lock).await;
+            return Err(error);
+        }
+    };
+    let exists = host.exists(&current_dir).await;
+    events.log(format!(
+        "environment candidate={current_dir:?}; exists={exists}"
+    ));
+    let mut result = if !force && exists {
+        prepare_environment_locked(
+            &host,
+            ready,
+            project,
+            workspace_dir,
+            catalog,
+            network,
+            cancel,
+            events,
+            &root,
+            &current_dir,
+            &host.join(&current_dir, manifest::MANIFEST_NAME),
+            &host.join(&current_dir, manifest::READY_MARKER),
+            &host.join(&current_dir, manifest::PREPARING_MARKER),
+            &instance,
+            &python_version,
+            verify_inputs,
+        )
+        .await
+    } else {
+        Err(RunnerError::TaskFailed("new environment instance".into()))
+    };
+    let mut building = None;
+    if result.is_err() && check_cancel(cancel).is_ok() {
+        // An existing venv is immutable: console-script shebangs contain its final path.
+        // Keep it in place for active leases; build the replacement in a fresh final directory.
+        if exists && !force {
+            if let Err(error) = &result {
+                events.log(format!("cached environment cannot be reused: {error}"));
+            }
+            instance = format!(
+                "{:x}",
+                sha2::Sha256::digest(uuid::Uuid::new_v4().as_bytes())
+            )[..32]
+                .to_owned();
+            lease = match leases.acquire(&instance, cancel).await {
+                Ok(lease) => lease,
+                Err(error) => {
+                    crate::runtime::lock::release(&*host, lock).await;
+                    return Err(error);
+                }
+            };
+        }
+        let env_dir = host.join(&envs_root, &instance);
+        events.log(format!("creating environment at {env_dir:?}"));
+        building = Some(env_dir.clone());
+        result = prepare_environment_locked(
+            &host,
+            ready,
+            project,
+            workspace_dir,
+            catalog,
+            network,
+            cancel,
+            events,
+            &root,
+            &env_dir,
+            &host.join(&env_dir, manifest::MANIFEST_NAME),
+            &host.join(&env_dir, manifest::READY_MARKER),
+            &host.join(&env_dir, manifest::PREPARING_MARKER),
+            &instance,
+            &python_version,
+            verify_inputs,
+        )
+        .await;
+    }
+    if check_cancel(cancel).is_err() {
+        result = Err(crate::runtime::host::canceled_error());
+    }
+    if result.is_ok() {
+        if let Err(error) =
+            verify_project_inputs(verify_inputs, "before publishing binding", events).await
+        {
+            result = Err(error);
+        }
+    }
+    if check_cancel(cancel).is_err() {
+        result = Err(crate::runtime::host::canceled_error());
+    }
+    if result.is_ok() {
+        events.log(format!("publishing environment binding={binding:?}"));
+        if let Err(error) = async {
+            host.mkdir_all(&bindings).await?;
+            manifest::write_atomic(&*host, &binding, &serde_json::to_vec(&instance).unwrap()).await
+        }
+        .await
+        {
+            result = Err(error);
+        }
+    }
+    if result.is_err() {
+        if let Err(error) = &result {
+            events.log(format!("environment preparation failed: {error}"));
+        }
+        if let Some(dir) = building {
+            // Publication is part of preparation. A failed binding write must
+            // also remove this new instance, even after its .ready marker.
+            // Cache hits never populate building, so existing instances survive.
+            events.log(format!("removing failed environment instance={dir:?}"));
+            if let Err(error) = host.remove(&dir).await {
+                events.log(format!("environment cleanup failed: {error}"));
+            }
+        }
+    }
 
+    if let Ok(env) = &mut result {
+        events.log(format!(
+            "environment ready: {}; interpreter={:?}; cache hit={}",
+            env.environment_id, env.python_path, env.cache_hit
+        ));
+        env.lease = Some(lease);
+    }
     crate::runtime::lock::release(&*host, lock).await;
     result
 }
@@ -607,14 +861,16 @@ async fn prepare_environment_locked(
     network: &NetworkConfig,
     cancel: &AtomicBool,
     events: &mut PrepareEvents,
-    root: &str,
+    _root: &str,
     env_dir: &str,
     manifest_path: &str,
     ready_path: &str,
     preparing_path: &str,
     environment_id: &str,
     python_version: &str,
+    verify_inputs: Option<&InputVerifier>,
 ) -> Result<PreparedEnvironment> {
+    verify_project_inputs(verify_inputs, "before inspecting environment", events).await?;
     // 缓存命中：manifest + .ready + smoke test
     if host.exists(ready_path).await {
         if let Ok(data) = host.read_file(manifest_path).await {
@@ -624,7 +880,7 @@ async fn prepare_environment_locked(
                     && existing.uv_version == ready.uv_version
                 {
                     events.phase(RuntimePhase::VerifyingEnvironment);
-                    match verify_environment(host, env_dir, python_version, cancel).await {
+                    match verify_environment(host, env_dir, python_version, cancel, events).await {
                         Ok(python_path) => {
                             let mut updated = existing.clone();
                             updated.last_used_at = chrono::Local::now().to_rfc3339();
@@ -633,6 +889,7 @@ async fn prepare_environment_locked(
                                     manifest::write_atomic(&**host, manifest_path, &bytes).await;
                             }
                             return Ok(PreparedEnvironment {
+                                lease: None,
                                 environment_id: environment_id.to_string(),
                                 env_path: env_dir.to_string(),
                                 python_path,
@@ -643,6 +900,7 @@ async fn prepare_environment_locked(
                             });
                         }
                         Err(e) => {
+                            events.log(format!("cached environment verification failed: {e}"));
                             tracing::warn!(
                                 "environment {environment_id} verification failed: {e}; rebuilding"
                             );
@@ -653,16 +911,11 @@ async fn prepare_environment_locked(
         }
     }
 
-    // 恢复路径：.preparing / 缺失 .ready / manifest 无效 → 隔离旧环境
+    // Existing instances may still be in use. Never move or rewrite them.
     if host.exists(env_dir).await {
-        let quarantine_root = host.join(root, "quarantine");
-        host.mkdir_all(&quarantine_root).await?;
-        let quarantined = host.join(
-            &quarantine_root,
-            &format!("{environment_id}-{}", uuid::Uuid::new_v4().simple()),
-        );
-        host.rename(env_dir, &quarantined).await?;
-        (events.on_progress)("quarantined incomplete environment", 0, None);
+        return Err(RunnerError::TaskFailed(
+            "cached environment is incomplete or failed verification".into(),
+        ));
     }
 
     // uv sync --locked：锁文件过期/不一致直接失败，不改写锁文件。
@@ -672,6 +925,7 @@ async fn prepare_environment_locked(
     // venv 不能整体 rename（console-script shebang 存绝对路径），因此崩溃恢复
     // 依靠下一轮的缓存未命中 + 隔离路径，而不是 .preparing 标记。
     events.phase(RuntimePhase::SyncingDependencies);
+    verify_project_inputs(verify_inputs, "before uv sync", events).await?;
     run_uv_sync(
         host,
         ready,
@@ -687,7 +941,8 @@ async fn prepare_environment_locked(
 
     // 验证：环境内 Python 位置以探测 + smoke test 为准
     events.phase(RuntimePhase::VerifyingEnvironment);
-    let python_path = verify_environment(host, env_dir, python_version, cancel).await?;
+    let python_path = verify_environment(host, env_dir, python_version, cancel, events).await?;
+    verify_project_inputs(verify_inputs, "after uv sync and smoke test", events).await?;
 
     // manifest 原子写，最后原子创建 .ready
     let now = chrono::Local::now().to_rfc3339();
@@ -695,7 +950,7 @@ async fn prepare_environment_locked(
         schema: crate::runtime::SCHEMA,
         environment_id: environment_id.to_string(),
         uv_version: ready.uv_version.clone(),
-        python_request: python_version.to_string(),
+        python_request: project.python_version.clone(),
         python_executable: python_path.clone(),
         python_version: python_version.to_string(),
         python_build: ready.python_build.clone(),
@@ -716,6 +971,7 @@ async fn prepare_environment_locked(
     }
 
     Ok(PreparedEnvironment {
+        lease: None,
         environment_id: environment_id.to_string(),
         env_path: env_dir.to_string(),
         python_path,
@@ -750,6 +1006,8 @@ async fn run_uv_sync(
         "--managed-python".into(),
         "--no-python-downloads".into(),
         "--no-progress".into(),
+        "--python".into(),
+        ready.python_path.clone(),
     ];
     for group in &project.groups {
         argv.push("--group".into());
@@ -773,7 +1031,7 @@ async fn run_uv_sync(
         argv.push(wheelhouse);
     }
 
-    (events.on_progress)(
+    events.progress(
         &format!(
             "uv sync --locked ({} groups, {} extras)",
             project.groups.len(),
@@ -782,10 +1040,13 @@ async fn run_uv_sync(
         0,
         None,
     );
-    let result = host
-        .exec(&argv, &env, Some(workspace_dir), None, cancel)
+    events.log(format!(
+        "UV_PROJECT_ENVIRONMENT={env_dir:?}; network mode={:?}",
+        network.mode
+    ));
+    let result = events
+        .exec(host, &argv, &env, Some(workspace_dir), cancel)
         .await?;
-    events.output(&result);
     if !result.success() {
         return Err(RunnerError::managed(
             code::ENV_SYNC,
@@ -834,6 +1095,7 @@ async fn verify_environment(
     env_dir: &str,
     python_version: &str,
     cancel: &AtomicBool,
+    events: &mut PrepareEvents,
 ) -> Result<String> {
     let candidates = if host.is_windows() {
         vec![host.join(env_dir, "Scripts\\python.exe")]
@@ -854,8 +1116,9 @@ async fn verify_environment(
         )
     })?;
 
-    let smoke = host
+    let smoke = events
         .exec(
+            host,
             &[
                 python_path.clone(),
                 "-I".into(),
@@ -864,7 +1127,6 @@ async fn verify_environment(
             ],
             &[],
             Some(env_dir),
-            None,
             cancel,
         )
         .await?;

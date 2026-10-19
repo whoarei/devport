@@ -171,7 +171,7 @@ impl SshWorkspace {
         let mut entries = Vec::new();
         for item in self.sftp.read_dir(&path).await.map_err(map_err)? {
             let name = item.file_name();
-            if name.starts_with('.') && !workspace::allowed_hidden(&name) {
+            if name == "." || name == ".." {
                 continue;
             }
             let meta = item.metadata();

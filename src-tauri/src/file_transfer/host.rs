@@ -11,12 +11,12 @@ use std::{
 };
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
-pub(super) enum Host {
+pub(crate) enum Host {
     Local(PathBuf),
     Ssh(SshHost),
     Wsl(WslHost),
 }
-pub(super) enum Handle {
+pub(crate) enum Handle {
     Local(tokio::fs::File),
     Remote(String),
 }

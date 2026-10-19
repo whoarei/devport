@@ -50,6 +50,7 @@ pub async fn execute(
         args: interactive_args(&shell),
         cwd: working_directory(cwd)?,
         env,
+        env_clear: false,
         mode: ConsoleMode::Pty,
         cols,
         rows,

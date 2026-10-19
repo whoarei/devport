@@ -51,14 +51,27 @@ pub struct RunRequest {
     #[serde(default)]
     pub managed_python: bool,
     /// 准备阶段回填：环境内解释器路径（直接启动，不用 `uv run`）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub managed_env_python: Option<String>,
     /// 准备阶段回填：加入 PYTHONPATH 的工作区内相对目录
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_deserializing, skip_serializing_if = "Vec::is_empty")]
     pub managed_pythonpath: Vec<String>,
     /// 准备阶段回填：module 模式启动（entry 为模块名）
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_deserializing, skip_serializing_if = "is_false")]
     pub managed_module: bool,
+    #[serde(default)]
+    pub module: bool,
+    #[serde(default = "default_cwd")]
+    pub cwd: String,
+    #[serde(default)]
+    pub bash: Option<String>,
+    #[serde(skip)]
+    pub workspace_context: Option<crate::workspace_run::Context>,
+    #[serde(skip)]
+    pub project_inputs: Option<crate::workspace_run::Inputs>,
+    /// The local Python probe captured the complete shell environment.
+    #[serde(skip)]
+    pub local_env_resolved: bool,
     #[serde(default = "default_console_mode")]
     pub console_mode: ConsoleMode,
     #[serde(default = "default_cols")]
@@ -72,6 +85,9 @@ pub struct RunRequest {
 
 fn is_false(v: &bool) -> bool {
     !*v
+}
+fn default_cwd() -> String {
+    ".".into()
 }
 
 fn default_console_mode() -> ConsoleMode {
@@ -140,6 +156,15 @@ impl RunStatus {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunEvent {
+    Launch {
+        run_id: String,
+        launch: crate::workspace_run::Launch,
+    },
+    WorkspaceState {
+        run_id: String,
+        workspace: WorkspaceRef,
+        warning: Option<String>,
+    },
     Output {
         run_id: String,
         stream: String,
@@ -193,6 +218,9 @@ pub struct RunManager {
     event_tx: broadcast::Sender<RunEvent>,
     /// 活跃 Run 持有的 Environment lease（00027 §16），与 AppState 共享
     leases: Arc<LeaseSet>,
+    workspace_contexts: Arc<Mutex<HashMap<String, (crate::workspace_run::Context, bool)>>>,
+    launches: Arc<Mutex<HashMap<String, crate::workspace_run::Launch>>>,
+    workspace_warnings: Arc<Mutex<HashMap<String, String>>>,
 }
 
 /// Run 存续期间持有 Environment lease；drop 时释放（含失败/取消路径）
@@ -286,6 +314,9 @@ impl RunManager {
             logs_dir,
             event_tx,
             leases: Arc::new(LeaseSet::default()),
+            workspace_contexts: Arc::new(Mutex::new(HashMap::new())),
+            launches: Arc::new(Mutex::new(HashMap::new())),
+            workspace_warnings: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -480,14 +511,86 @@ impl RunManager {
     fn set_state(&self, run_id: &str, state: RunState) {
         let mut map = self.handles.lock();
         if let Some(h) = map.get_mut(run_id) {
-            if h.status.state == RunState::Stopping {
-                return;
+            if h.status.state != RunState::Stopping {
+                h.status.state = state;
+                let _ = self.event_tx.send(RunEvent::Status {
+                    status: h.status.clone(),
+                });
             }
-            h.status.state = state;
-            let _ = self.event_tx.send(RunEvent::Status {
-                status: h.status.clone(),
-            });
         }
+        drop(map);
+        if state == RunState::Running {
+            let context = {
+                let mut contexts = self.workspace_contexts.lock();
+                contexts.get_mut(run_id).and_then(|(context, remembered)| {
+                    if *remembered {
+                        None
+                    } else {
+                        *remembered = true;
+                        Some(context.clone())
+                    }
+                })
+            };
+            if let Some(context) = context {
+                let this = self.clone();
+                let id = run_id.to_string();
+                tokio::spawn(async move {
+                    this.remember_context(&id, context).await;
+                });
+            }
+        }
+    }
+
+    pub fn workspace_session(&self, id: &str) -> Option<serde_json::Value> {
+        self.workspace_contexts.lock().get(id).map(|(context,_)|serde_json::json!({
+            "request":context.request,"launch":self.launches.lock().get(id),"warning":self.workspace_warnings.lock().get(id)
+        })).or_else(||self.launches.lock().get(id).map(|launch|serde_json::json!({"request":null,"launch":launch,"warning":null})))
+    }
+    pub async fn retry_command_history(&self, id: &str) -> Result<()> {
+        let context = self
+            .workspace_contexts
+            .lock()
+            .get(id)
+            .filter(|(_, started)| *started)
+            .map(|(c, _)| c.clone())
+            .ok_or_else(|| RunnerError::RunNotFound(id.into()))?;
+        self.remember_context(id, context).await;
+        Ok(())
+    }
+    async fn remember_context(&self, id: &str, context: crate::workspace_run::Context) {
+        let result = async {
+            let mut store = crate::workspace_run::Store::open(
+                &context.request.workspace,
+                context.source_device.as_ref(),
+                &context.config_dir,
+            )
+            .await?;
+            store
+                .remember(
+                    context.request.command.clone(),
+                    context.request.source.clone(),
+                )
+                .await
+        }
+        .await;
+        let warning = result.err().map(|e| e.to_string());
+        if let Some(w) = &warning {
+            self.workspace_warnings.lock().insert(id.into(), w.clone());
+        } else {
+            self.workspace_warnings.lock().remove(id);
+        }
+        let _ = self.event_tx.send(RunEvent::WorkspaceState {
+            run_id: id.into(),
+            workspace: context.request.workspace,
+            warning,
+        });
+    }
+    fn publish_launch(&self, id: &str, launch: crate::workspace_run::Launch) {
+        self.launches.lock().insert(id.into(), launch.clone());
+        let _ = self.event_tx.send(RunEvent::Launch {
+            run_id: id.into(),
+            launch,
+        });
     }
 
     // ---------- Managed Runtime 准备（00027 §13/§14） ----------
@@ -556,17 +659,21 @@ impl RunManager {
         &self,
         run_id: &str,
         host: Arc<dyn RuntimeHost + Send + Sync>,
-        python_version: &str,
+        project: &PythonProject,
         config_dir: &std::path::Path,
     ) -> Result<RuntimeReady> {
         let cancel = self.runtime_cancel(run_id);
         let catalog = RuntimeCatalog::embedded()?;
         let network = NetworkConfig::default();
         let mut events = self.prepare_events(run_id);
+        events.log(format!(
+            "project={:?}; .python-version={:?}; requires-python={:?}; input SHA-256={:?}",
+            project.name, project.python_version, project.requires_python, project.input_hashes
+        ));
         prepare::prepare_runtime(
             host,
             catalog,
-            python_version,
+            &project.python_request(),
             config_dir,
             &network,
             &cancel,
@@ -583,12 +690,18 @@ impl RunManager {
         ready: &RuntimeReady,
         project: &PythonProject,
         workspace_dir: &str,
+        verify_inputs: Option<&prepare::InputVerifier>,
     ) -> Result<PreparedEnvironment> {
         let cancel = self.runtime_cancel(run_id);
         let catalog = RuntimeCatalog::embedded()?;
         let network = NetworkConfig::default();
         let mut events = self.prepare_events(run_id);
-        let env = prepare::prepare_environment(
+        let rebuild = self
+            .workspace_contexts
+            .lock()
+            .get(run_id)
+            .is_some_and(|(c, _)| c.request.operation == crate::workspace_run::Operation::Rebuild);
+        let env = prepare::prepare_generation(
             host,
             ready,
             project,
@@ -598,6 +711,9 @@ impl RunManager {
             run_id,
             &cancel,
             &mut events,
+            rebuild,
+            verify_inputs,
+            &self.leases,
         )
         .await?;
         self.set_managed_info(run_id, &env);
@@ -605,6 +721,20 @@ impl RunManager {
     }
 
     fn finish(&self, run_id: &str, state: RunState, exit_code: Option<u32>, error: Option<String>) {
+        let prepared = self
+            .handles
+            .lock()
+            .get(run_id)
+            .is_some_and(|h| h.status.phase.is_some());
+        if prepared {
+            self.prepare_events(run_id).log(format!(
+                "run finished: {state:?}; exit={exit_code:?}{}",
+                error
+                    .as_ref()
+                    .map(|e| format!("; error: {e}"))
+                    .unwrap_or_default(),
+            ));
+        }
         let status = {
             let mut map = self.handles.lock();
             match map.get_mut(run_id) {
@@ -657,6 +787,21 @@ impl RunManager {
             ));
         }
         validate_request(&mut req)?;
+        {
+            let keep = self
+                .snapshot()
+                .into_iter()
+                .map(|s| s.run_id)
+                .collect::<std::collections::HashSet<_>>();
+            self.workspace_contexts
+                .lock()
+                .retain(|id, _| keep.contains(id));
+            self.launches.lock().retain(|id, _| keep.contains(id));
+            self.workspace_warnings
+                .lock()
+                .retain(|id, _| keep.contains(id));
+            // The source identity is retained before any cross-device staging.
+        }
         let capabilities = device.transport.capabilities();
         if req.console_mode == ConsoleMode::Pipe && !capabilities.pipe {
             return Err(RunnerError::InvalidInput(
@@ -699,6 +844,11 @@ impl RunManager {
             },
         );
         drop(handles);
+        if let Some(context) = &req.workspace_context {
+            self.workspace_contexts
+                .lock()
+                .insert(run_id.clone(), (context.clone(), false));
+        }
         let _ = self.event_tx.send(RunEvent::Status {
             status: status.clone(),
         });
@@ -765,8 +915,47 @@ impl RunManager {
         workspace_source: Option<DeviceProfile>,
         mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
     ) -> Result<RunOutcome> {
+        if req.managed_python {
+            let mut events = self.prepare_events(run_id);
+            events.phase(RuntimePhase::ValidatingProject);
+            events.log(format!(
+                "run={run_id}; target={} ({:?}); source workspace={:?}",
+                device.name, device.transport, req.workspace
+            ));
+        }
         // 0. 跨设备工作区（00029）：先暂存到本机临时目录，再走既有本机工作区管线；
         //    同设备工作区（SSH/WSL）由各自 transport 分支原地运行。
+        if let Some(context) = &req.workspace_context {
+            let check = async {
+                let mut store = crate::workspace_run::Store::open(
+                    &context.request.workspace,
+                    context.source_device.as_ref(),
+                    config_dir,
+                )
+                .await
+                .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
+                if let Some(revision) = &context.request.config_revision {
+                    if store
+                        .config()
+                        .await
+                        .map_err(|e| RunnerError::InvalidInput(e.to_string()))?
+                        .revision
+                        != *revision
+                    {
+                        return Err(RunnerError::InvalidInput(
+                            "Runner configuration changed; refresh before running".into(),
+                        ));
+                    }
+                }
+                store
+                    .inputs(&context.request.command.entry, req.managed_python, &req.cwd)
+                    .await
+                    .map_err(|e| RunnerError::InvalidInput(e.to_string()))
+            };
+            let inputs = tokio::select! { biased; _=stop_rx.recv()=>return Ok(RunOutcome::Canceled {code:None}), result=check=>result? };
+            req.managed_pythonpath = inputs.python_path.clone();
+            req.project_inputs = Some(inputs);
+        }
         let mut in_place_workspace: Option<String> = None;
         let _staging = match req.workspace.as_ref().and_then(|w| w.device_ref()) {
             Some((source_id, path)) if source_id == device.id => {
@@ -819,17 +1008,21 @@ impl RunManager {
                 .workspace
                 .as_ref()
                 .and_then(|w| w.local_dir().map(str::to_owned))
+                .or_else(|| in_place_workspace.clone())
                 .ok_or_else(|| {
                     RunnerError::InvalidInput("managed python requires a workspace".into())
                 })?;
-            let project = crate::runtime::project::inspect(std::path::Path::new(&workspace))?;
+            let project = match req.project_inputs.as_ref().and_then(|i| i.project.clone()) {
+                Some(p) => p,
+                None => crate::runtime::project::inspect(std::path::Path::new(&workspace))?,
+            };
             let host: Arc<dyn RuntimeHost + Send + Sync> =
                 Arc::new(crate::runtime::hosts::ssh::SshHost::from_arc(
                     conn.handle.clone(),
                     crate::runtime::manage::remote_root(),
                 ));
             let ready = self
-                .managed_prepare_runtime(run_id, host.clone(), &project.python_version, config_dir)
+                .managed_prepare_runtime(run_id, host.clone(), &project, config_dir)
                 .await?;
             managed = Some((project, host, ready));
         }
@@ -848,7 +1041,7 @@ impl RunManager {
                     )
                     .await
                     .map_err(|e| RunnerError::TaskFailed(e.message))?;
-                    if req.kind != ScriptKind::Command {
+                    if req.kind != ScriptKind::Command && !req.module {
                         let entry = req.entry.as_deref().unwrap_or_default();
                         workspace
                             .check_script_entry(entry)
@@ -879,6 +1072,11 @@ impl RunManager {
         if in_place_workspace.is_none() {
             if let Some(local_dir) = req.workspace.as_ref().and_then(|w| w.local_dir()) {
                 self.set_state(run_id, RunState::Syncing);
+                if req.managed_python {
+                    self.prepare_events(run_id).log(format!(
+                        "uploading workspace: source={local_dir:?}; SSH destination={remote_dir:?}"
+                    ));
+                }
                 let sync = async {
                     let sftp = filesync::open_sftp(&conn).await?;
                     filesync::upload_dir(&sftp, std::path::Path::new(local_dir), &remote_dir).await
@@ -889,6 +1087,11 @@ impl RunManager {
                     result = sync => result?,
                 };
                 tracing::info!("run {run_id}: uploaded {n} files to {remote_dir}");
+                if req.managed_python {
+                    self.prepare_events(run_id).log(format!(
+                        "workspace upload complete: {n} files; destination={remote_dir:?}"
+                    ));
+                }
             }
         }
         if stop_rx.try_recv().is_ok() {
@@ -898,19 +1101,39 @@ impl RunManager {
         // 4. Managed Runtime：workspace 可见后执行 locked environment sync，回填启动参数
         let mut _env_lease = None;
         if let Some((project, host, ready)) = managed {
+            let verify = crate::workspace_run::input_verifier(
+                device,
+                config_dir,
+                &remote_dir,
+                project.input_hashes.clone(),
+            );
             let env = self
-                .managed_prepare_environment(run_id, host, &ready, &project, &remote_dir)
+                .managed_prepare_environment(
+                    run_id,
+                    host,
+                    &ready,
+                    &project,
+                    &remote_dir,
+                    Some(&*verify),
+                )
                 .await?;
             req.managed_env_python = Some(env.python_path.clone());
             req.managed_pythonpath = project.python_path.clone();
-            req.managed_module = project.mode == EntryMode::Module;
-            req.entry = Some(project.entry.clone());
+            if req.workspace_context.is_none() {
+                req.managed_module = project.mode == EntryMode::Module;
+                req.entry = Some(project.entry.clone());
+            }
             _env_lease = Some(EnvLeaseGuard::new(self.leases.clone(), &env.environment_id));
         }
         if stop_rx.try_recv().is_ok() {
             return Ok(RunOutcome::Canceled { code: None });
         }
 
+        self.resolve_workspace_launch(run_id, &mut req, device, config_dir, &remote_dir)
+            .await?;
+        if Self::preparation_only(&req) {
+            return Ok(RunOutcome::Exited { code: Some(0) });
+        }
         // 5. 构造启动命令（含远程 PID 捕获包装）
         let marker_prefix = format!("{PID_MARKER_PREFIX}{run_id}_");
         let command = build_command(&req, &remote_dir, &marker_prefix);
@@ -920,6 +1143,22 @@ impl RunManager {
 
         // 4. 启动进程
         self.set_state(run_id, RunState::Starting);
+        if req.kind == ScriptKind::Command {
+            self.publish_launch(
+                run_id,
+                crate::workspace_run::Launch {
+                    program: "sh".into(),
+                    version: None,
+                    cwd: if req.workspace.is_some() {
+                        remote_dir.clone()
+                    } else {
+                        ".".into()
+                    },
+                    python_path: vec![],
+                    environment: "command".into(),
+                },
+            );
+        }
         let (session_tx, mut session_rx) = mpsc::channel::<SessionEvent>(64);
         let proc = session::spawn(
             &conn,
@@ -1092,20 +1331,43 @@ impl RunManager {
         let mut remote = in_place_workspace.clone().unwrap_or_else(|| {
             format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id)
         });
+        if in_place_workspace.is_none() {
+            if let Some(dir) = req.workspace.as_ref().and_then(|w| w.local_dir()) {
+                self.set_state(run_id, RunState::Syncing);
+                if req.managed_python {
+                    self.prepare_events(run_id).log(format!(
+                        "uploading workspace: source={dir:?}; WSL destination={remote:?}"
+                    ));
+                }
+                remote = wsl::upload_workspace(
+                    device.wsl.as_ref().unwrap(),
+                    std::path::Path::new(dir),
+                    &remote,
+                    &self.runtime_cancel(run_id),
+                )
+                .await?;
+                if req.managed_python {
+                    self.prepare_events(run_id)
+                        .log(format!("workspace upload complete: destination={remote:?}"));
+                }
+            }
+        }
         let mut _env_lease = None;
-        let files = if in_place_workspace.is_some() {
-            Vec::new()
-        } else if req.managed_python {
+        if req.managed_python {
             // Managed Runtime：独立 helper 会话上传 workspace 并完成准备（00027 §13）；
             // 运行会话（bridge A）随后零文件上传、直接 cd 到已就绪目录
             let workspace = req
                 .workspace
                 .as_ref()
                 .and_then(|w| w.local_dir().map(str::to_owned))
+                .or_else(|| in_place_workspace.clone())
                 .ok_or_else(|| {
                     RunnerError::InvalidInput("managed python requires a workspace".into())
                 })?;
-            let project = crate::runtime::project::inspect(std::path::Path::new(&workspace))?;
+            let project = match req.project_inputs.as_ref().and_then(|i| i.project.clone()) {
+                Some(p) => p,
+                None => crate::runtime::project::inspect(std::path::Path::new(&workspace))?,
+            };
             let wsl_host = crate::runtime::hosts::wsl::WslHost::open(
                 device.wsl.clone().unwrap(),
                 &crate::runtime::manage::remote_root(),
@@ -1113,36 +1375,43 @@ impl RunManager {
             .await?;
             remote = wsl_host.resolve_path(&remote).await?;
             let host: Arc<dyn RuntimeHost + Send + Sync> = Arc::new(wsl_host);
-            self.set_state(run_id, RunState::Syncing);
-            crate::runtime::manage::upload_wsl_workspace(&host, &workspace, &remote).await?;
             if stop_rx.try_recv().is_ok() {
                 return Ok(RunOutcome::Canceled { code: None });
             }
             let ready = self
-                .managed_prepare_runtime(run_id, host.clone(), &project.python_version, config_dir)
+                .managed_prepare_runtime(run_id, host.clone(), &project, config_dir)
                 .await?;
+            let verify = crate::workspace_run::input_verifier(
+                device,
+                config_dir,
+                &remote,
+                project.input_hashes.clone(),
+            );
             let env = self
-                .managed_prepare_environment(run_id, host, &ready, &project, &remote)
+                .managed_prepare_environment(
+                    run_id,
+                    host,
+                    &ready,
+                    &project,
+                    &remote,
+                    Some(&*verify),
+                )
                 .await?;
             req.managed_env_python = Some(env.python_path.clone());
             req.managed_pythonpath = project.python_path.clone();
-            req.managed_module = project.mode == EntryMode::Module;
-            req.entry = Some(project.entry.clone());
+            if req.workspace_context.is_none() {
+                req.managed_module = project.mode == EntryMode::Module;
+                req.entry = Some(project.entry.clone());
+            }
             _env_lease = Some(EnvLeaseGuard::new(self.leases.clone(), &env.environment_id));
-            Vec::new()
-        } else if let Some(dir) = req
-            .workspace
-            .as_ref()
-            .and_then(|w| w.local_dir().map(str::to_owned))
-        {
-            tokio::task::spawn_blocking(move || wsl::filesync::collect(std::path::Path::new(&dir)))
-                .await
-                .map_err(|e| RunnerError::TaskFailed(e.to_string()))??
-        } else {
-            Vec::new()
-        };
+        }
         if stop_rx.try_recv().is_ok() {
             return Ok(RunOutcome::Canceled { code: None });
+        }
+        self.resolve_workspace_launch(run_id, &mut req, device, config_dir, &remote)
+            .await?;
+        if Self::preparation_only(&req) {
+            return Ok(RunOutcome::Exited { code: Some(0) });
         }
         let (control, mut controls) = mpsc::unbounded_channel();
         if let Some(handle) = self.handles.lock().get_mut(run_id) {
@@ -1152,11 +1421,12 @@ impl RunManager {
             device.wsl.as_ref().unwrap(),
             &req,
             &remote,
-            in_place_workspace.is_some(),
-            files,
+            req.workspace.is_some(),
+            Vec::new(),
             &mut controls,
             |event| match event {
                 Event::State(state) => self.set_state(run_id, state),
+                Event::Launch(launch) => self.publish_launch(run_id, launch),
                 Event::Output { stream, data } => {
                     self.emit_output(run_id, stream, &data);
                 }
@@ -1209,6 +1479,7 @@ impl RunManager {
             &mut controls,
             |event| match event {
                 Event::State(state) => self.set_state(run_id, state),
+                Event::Launch(launch) => self.publish_launch(run_id, launch),
                 Event::Output { stream, data } => {
                     self.emit_output(run_id, stream, &data);
                 }
@@ -1240,25 +1511,54 @@ impl RunManager {
                 .ok_or_else(|| {
                     RunnerError::InvalidInput("managed python requires a workspace".into())
                 })?;
-            let project = crate::runtime::project::inspect(std::path::Path::new(&workspace))?;
+            let project = match req.project_inputs.as_ref().and_then(|i| i.project.clone()) {
+                Some(p) => p,
+                None => crate::runtime::project::inspect(std::path::Path::new(&workspace))?,
+            };
             let host: Arc<dyn RuntimeHost + Send + Sync> =
                 Arc::new(crate::runtime::hosts::local::LocalHost::new(
                     crate::runtime::manage::local_root(config_dir),
                 )?);
             let ready = self
-                .managed_prepare_runtime(run_id, host.clone(), &project.python_version, config_dir)
+                .managed_prepare_runtime(run_id, host.clone(), &project, config_dir)
                 .await?;
+            let verify = crate::workspace_run::input_verifier(
+                device,
+                config_dir,
+                &workspace,
+                project.input_hashes.clone(),
+            );
             let env = self
-                .managed_prepare_environment(run_id, host, &ready, &project, &workspace)
+                .managed_prepare_environment(
+                    run_id,
+                    host,
+                    &ready,
+                    &project,
+                    &workspace,
+                    Some(&*verify),
+                )
                 .await?;
             req.managed_env_python = Some(env.python_path.clone());
             req.managed_pythonpath = project.python_path.clone();
-            req.managed_module = project.mode == EntryMode::Module;
-            req.entry = Some(project.entry.clone());
+            if req.workspace_context.is_none() {
+                req.managed_module = project.mode == EntryMode::Module;
+                req.entry = Some(project.entry.clone());
+            }
             _env_lease = Some(EnvLeaseGuard::new(self.leases.clone(), &env.environment_id));
         }
         if stop_rx.try_recv().is_ok() {
             return Ok(RunOutcome::Canceled { code: None });
+        }
+        let root = req
+            .workspace
+            .as_ref()
+            .and_then(|w| w.local_dir())
+            .unwrap_or("")
+            .to_string();
+        self.resolve_workspace_launch(run_id, &mut req, device, config_dir, &root)
+            .await?;
+        if Self::preparation_only(&req) {
+            return Ok(RunOutcome::Exited { code: Some(0) });
         }
         let (control, mut controls) = mpsc::unbounded_channel();
         if let Some(handle) = self.handles.lock().get_mut(run_id) {
@@ -1270,12 +1570,168 @@ impl RunManager {
             &mut controls,
             |event| match event {
                 Event::State(state) => self.set_state(run_id, state),
+                Event::Launch(launch) => self.publish_launch(run_id, launch),
                 Event::Output { stream, data } => {
                     self.emit_output(run_id, stream, &data);
                 }
             },
         );
         await_transport(execution, control, stop_rx, req.timeout_secs).await
+    }
+
+    fn preparation_only(req: &RunRequest) -> bool {
+        req.workspace_context
+            .as_ref()
+            .is_some_and(|c| c.request.operation != crate::workspace_run::Operation::Run)
+    }
+
+    async fn resolve_workspace_launch(
+        &self,
+        id: &str,
+        req: &mut RunRequest,
+        device: &DeviceProfile,
+        config: &std::path::Path,
+        root: &str,
+    ) -> Result<()> {
+        if req.workspace_context.is_none() {
+            return Ok(());
+        }
+        let endpoint = if device.transport == TransportKind::Local {
+            WorkspaceRef::local(root)
+        } else {
+            WorkspaceRef::device(&device.id, root)
+        };
+        let mut store = crate::workspace_run::Store::open(&endpoint, Some(device), config)
+            .await
+            .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
+        if let Some(inputs) = &req.project_inputs {
+            store
+                .verify(inputs)
+                .await
+                .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
+        }
+        store
+            .check_entry(&req.cwd, true)
+            .await
+            .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
+        let cwd = if req.cwd == "." {
+            root.to_string()
+        } else {
+            format!("{}/{}", root.trim_end_matches(['/', '\\']), req.cwd)
+        };
+        let (program, version) = if req.kind == ScriptKind::Python {
+            let cancel = self.runtime_cancel(id);
+            let result = crate::workspace_probe::python(
+                device,
+                config,
+                None,
+                req.managed_env_python.as_deref(),
+                &req.env,
+                Some(&cwd),
+                &cancel,
+            )
+            .await?;
+            req.managed_env_python = Some(result.program.clone());
+            if device.transport == TransportKind::Local {
+                req.env = result.env.into_iter().collect();
+                req.local_env_resolved = true;
+            } else {
+                for (key, value) in result.env {
+                    req.env.insert(key, value);
+                }
+            }
+            if req.managed_python {
+                let (directory, parent) = if device.transport == TransportKind::Local {
+                    let parent =
+                        std::path::Path::new(&result.program)
+                            .parent()
+                            .ok_or_else(|| {
+                                RunnerError::InvalidInput("Invalid environment executable".into())
+                            })?;
+                    (
+                        parent.to_string_lossy().into_owned(),
+                        parent
+                            .parent()
+                            .unwrap_or(parent)
+                            .to_string_lossy()
+                            .into_owned(),
+                    )
+                } else {
+                    let (dir, _) = result.program.rsplit_once('/').unwrap();
+                    (dir.into(), dir.rsplit_once('/').unwrap().0.into())
+                };
+                let separator = if device.transport == TransportKind::Local && cfg!(windows) {
+                    ';'
+                } else {
+                    ':'
+                };
+                req.env.insert(
+                    "PATH".into(),
+                    format!(
+                        "{directory}{separator}{}",
+                        req.env.get("PATH").cloned().unwrap_or_default()
+                    ),
+                );
+                req.env.insert("VIRTUAL_ENV".into(), parent);
+                req.env.insert("PYTHONHOME".into(), String::new());
+            }
+            (result.program, Some(result.version))
+        } else if device.transport == TransportKind::Local {
+            (
+                crate::local::select_bash(device.local.as_ref().unwrap(), req.bash.as_deref())?
+                    .path
+                    .to_string_lossy()
+                    .into_owned(),
+                None,
+            )
+        } else {
+            let host = crate::runtime::manage::open_host(device, config).await?;
+            let cancel = self.runtime_cancel(id);
+            let out = host
+                .exec(
+                    &["/bin/sh".into(), "-lc".into(), "command -v bash".into()],
+                    &[],
+                    Some(&cwd),
+                    None,
+                    &cancel,
+                )
+                .await?;
+            let path = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .last()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if !out.success() || !path.starts_with('/') || path.len() > 4096 {
+                return Err(RunnerError::InvalidInput(
+                    "Bash is not available on the target device".into(),
+                ));
+            }
+            req.bash = Some(path.clone());
+            (path, None)
+        };
+        self.publish_launch(
+            id,
+            crate::workspace_run::Launch {
+                program,
+                version,
+                cwd,
+                python_path: req
+                    .managed_pythonpath
+                    .iter()
+                    .map(|p| format!("{}/{p}", root.trim_end_matches('/')))
+                    .collect(),
+                environment: if req.kind == ScriptKind::Shell {
+                    "bash"
+                } else if req.managed_python {
+                    "project"
+                } else {
+                    "device_default"
+                }
+                .into(),
+            },
+        );
+        Ok(())
     }
 }
 
@@ -1401,6 +1857,13 @@ pub(crate) fn sh_quote(s: &str) -> String {
 
 fn validate_request(req: &mut RunRequest) -> Result<()> {
     let invalid = |message: &str| RunnerError::InvalidInput(message.into());
+    req.cwd = crate::workspace_run::relative(&req.cwd, true).map_err(|e| invalid(&e.message))?;
+    if req.workspace_context.is_none() && req.cwd != "." {
+        return Err(invalid("Custom cwd requires a workspace run request"));
+    }
+    if req.module && req.kind != ScriptKind::Python {
+        return Err(invalid("Only Python supports module entries"));
+    }
     if serde_json::to_vec(req)
         .map_err(|e| invalid(&e.to_string()))?
         .len()
@@ -1441,7 +1904,8 @@ fn validate_request(req: &mut RunRequest) -> Result<()> {
         }
         Some(WorkspaceRef::Device { device_id, path }) => {
             crate::workspace_ref::validate_device_path(path).map_err(|m| invalid(&m))?;
-            if req.managed_python && device_id == &req.device_id {
+            if req.managed_python && device_id == &req.device_id && req.workspace_context.is_none()
+            {
                 return Err(invalid(
                     "同设备原地运行暂不支持 Managed Python；请选择其他运行设备或关闭 Managed Python",
                 ));
@@ -1462,11 +1926,20 @@ fn validate_request(req: &mut RunRequest) -> Result<()> {
                 return Err(invalid("command must not be empty or contain NUL"));
             }
         }
-        _ if req.managed_python => {
+        _ if req.managed_python || req.module => {
             // Managed 项目入口由项目契约（[tool.remote-runner]）决定，可以是模块名；
             // entry/python-path 的文件级校验由 ProjectInspector 在准备阶段完成
             if req.workspace.is_none() {
                 return Err(invalid("script requires a workspace"));
+            }
+            if req.module {
+                let mut command = crate::workspace_run::Command {
+                    entry: crate::workspace_run::Entry::PythonModule {
+                        name: req.entry.clone().unwrap_or_default(),
+                    },
+                    args: req.args.clone(),
+                };
+                command.validate().map_err(|e| invalid(&e.message))?;
             }
         }
         _ => {
@@ -1528,6 +2001,13 @@ fn validate_request(req: &mut RunRequest) -> Result<()> {
 /// 脚本体的 base64 编码避免一切嵌套引号问题；包装层捕获远程 PID 用于可靠的 stop/timeout kill；
 /// `wait` 将进程退出码原样传递为 channel 的 exit-status。
 pub(crate) fn build_script(req: &RunRequest, remote_dir: &str) -> String {
+    let entry_arg = |entry: &str| {
+        if req.cwd == "." {
+            format!("./{entry}")
+        } else {
+            format!("{}/{entry}", remote_dir.trim_end_matches('/'))
+        }
+    };
     let env_prefix = req
         .env
         .iter()
@@ -1559,7 +2039,7 @@ pub(crate) fn build_script(req: &RunRequest, remote_dir: &str) -> String {
                 .join(" ");
             if let Some(env_python) = &req.managed_env_python {
                 // Managed Runtime：直接启动环境内 Python，不使用 uv run / 系统 Python
-                if req.managed_module {
+                if req.managed_module || req.module {
                     format!(
                         "exec {} -u -m {} {}",
                         sh_quote(env_python),
@@ -1570,17 +2050,15 @@ pub(crate) fn build_script(req: &RunRequest, remote_dir: &str) -> String {
                     format!(
                         "exec {} -u {} {}",
                         sh_quote(env_python),
-                        sh_quote(&format!("./{entry}")),
+                        sh_quote(&entry_arg(entry)),
                         args
                     )
                 }
+            } else if req.module {
+                format!("exec python3 -u -m {} {}", sh_quote(entry), args)
             } else {
                 // exec 使 sh 直接替换为目标进程，PID 即 python 进程
-                format!(
-                    "exec python3 -u {} {}",
-                    sh_quote(&format!("./{entry}")),
-                    args
-                )
+                format!("exec python3 -u {} {}", sh_quote(&entry_arg(entry)), args)
             }
         }
         ScriptKind::Shell => {
@@ -1591,7 +2069,13 @@ pub(crate) fn build_script(req: &RunRequest, remote_dir: &str) -> String {
                 .map(|a| sh_quote(a))
                 .collect::<Vec<_>>()
                 .join(" ");
-            format!("exec bash {} {}", sh_quote(&format!("./{entry}")), args)
+            let bash = req
+                .bash
+                .as_deref()
+                .filter(|b| b.starts_with('/'))
+                .map(sh_quote)
+                .unwrap_or_else(|| "bash".into());
+            format!("exec {bash} {} {}", sh_quote(&entry_arg(entry)), args)
         }
         ScriptKind::Command => req.command.clone().unwrap_or_default(),
     };
@@ -1599,7 +2083,11 @@ pub(crate) fn build_script(req: &RunRequest, remote_dir: &str) -> String {
     if req.workspace.is_some() {
         format!(
             "cd {} || exit $?; {env_prefix} {pythonpath_prefix} {body}",
-            sh_quote(remote_dir)
+            sh_quote(&if req.cwd == "." {
+                remote_dir.to_string()
+            } else {
+                format!("{}/{cwd}", remote_dir.trim_end_matches('/'), cwd = req.cwd)
+            })
         )
     } else {
         format!("{env_prefix} {pythonpath_prefix} {body}")
@@ -1936,6 +2424,52 @@ mod tests {
     }
 
     #[test]
+    fn preparation_failure_is_logged_before_terminal_status_and_log_finalization() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, mut rx) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        manager
+            .handles
+            .lock()
+            .insert("run".into(), test_handle("run"));
+        manager
+            .prepare_events("run")
+            .phase(RuntimePhase::ValidatingProject);
+        manager.finish(
+            "run",
+            RunState::Failed,
+            None,
+            Some("input conflict https://user:secret@example.com/project".into()),
+        );
+        let log = std::fs::read_to_string(root.join("run_logs/run.log")).unwrap();
+        assert!(
+            log.contains("validating_project")
+                && log.contains("run finished: Failed")
+                && log.contains("input conflict"),
+            "{log}"
+        );
+        assert!(!log.contains("secret"), "{log}");
+        assert_eq!(manager.history()[0].output_bytes, log.len() as u64);
+        let mut terminal_seen = false;
+        let mut output_seen = false;
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                RunEvent::Output { .. } => {
+                    assert!(!terminal_seen);
+                    output_seen = true;
+                }
+                RunEvent::Status { status } if status.state == RunState::Failed => {
+                    assert!(output_seen);
+                    terminal_seen = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(terminal_seen);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn output_is_persisted_to_log_and_capped_at_run_log_limit() {
         let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
         let (tx, _rx) = crate::events::channel();
@@ -2215,6 +2749,332 @@ mod tests {
         assert!(!flag.load(Ordering::Relaxed));
         manager.stop("run").unwrap();
         assert!(flag.load(Ordering::Relaxed));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_bash_uses_bash_with_literal_args_and_cwd_even_on_a_non_bash_device() {
+        let available = crate::local::shells::detect();
+        let Some(bash) = available
+            .iter()
+            .find(|s| matches!(s.id.as_str(), "bash" | "gitbash" | "msys2"))
+        else {
+            eprintln!("SKIP: Bash unavailable");
+            return;
+        };
+        let selected = available
+            .iter()
+            .find(|s| matches!(s.id.as_str(), "cmd" | "pwsh" | "zsh" | "sh"))
+            .unwrap_or(bash);
+        let root = std::env::temp_dir().join(format!("rr-launch-{}", uuid::Uuid::new_v4()));
+        let source = root.join("source");
+        std::fs::create_dir_all(source.join("tools")).unwrap();
+        std::fs::create_dir_all(source.join("data")).unwrap();
+        std::fs::write(
+            source.join("tools/test.sh"),
+            b"printf '%s\\0' \"$@\" > argv.bin\nprintf '%s' \"$PWD\" > cwd.txt\nexit 7\n",
+        )
+        .unwrap();
+        let device:DeviceProfile=serde_json::from_value(serde_json::json!({"id":"test","name":"local","transport":"local","local":{"shell":selected.id,"no_profile":true}})).unwrap();
+        let args = vec![
+            "",
+            "a b",
+            "汉字",
+            "$(touch owned)",
+            "*",
+            "a;b",
+            "C:\\a b",
+            "quote\"'",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+        let intent:crate::workspace_run::Request=serde_json::from_value(serde_json::json!({
+            "workspace":WorkspaceRef::local(source.to_string_lossy()),"device_id":"test","device_revision":crate::workspace_run::device_revision(&device),
+            "command":{"entry":{"type":"bash_script","path":"tools/test.sh"},"args":args},"python":"project",
+            "settings":{"cwd":"data","console_mode":"pipe","timeout_secs":10,"bash":bash.id}
+        })).unwrap();
+        let mut req:RunRequest=serde_json::from_value(serde_json::json!({"device_id":"test","workspace":intent.workspace,"kind":"shell","entry":"tools/test.sh","args":args,"cwd":"data","bash":bash.id,"console_mode":"pipe","timeout_secs":10})).unwrap();
+        req.workspace_context = Some(crate::workspace_run::Context {
+            request: intent,
+            source_device: None,
+            config_dir: root.clone(),
+        });
+        let (tx, _rx) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        let id = manager.start(req, device, root.clone(), None).unwrap();
+        tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                if manager.status(&id).is_some_and(|s| !s.state.is_active()) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let status = manager.status(&id).unwrap();
+        assert_eq!(status.exit_code, Some(7), "{status:?}");
+        let expected = args
+            .iter()
+            .flat_map(|s| s.as_bytes().iter().copied().chain(std::iter::once(0)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            std::fs::read(source.join("data/argv.bin")).unwrap(),
+            expected
+        );
+        assert!(!source.join("data/owned").exists());
+        assert!(
+            String::from_utf8(std::fs::read(source.join("data/cwd.txt")).unwrap())
+                .unwrap()
+                .ends_with("/source/data")
+        );
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let mut store = crate::workspace_run::Store::open(
+                    &WorkspaceRef::local(source.to_string_lossy()),
+                    None,
+                    &root,
+                )
+                .await
+                .unwrap();
+                if store.commands().await.unwrap().entries.len() == 1 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let session = manager.workspace_session(&id).unwrap();
+        assert_eq!(session["launch"]["environment"], "bash");
+        assert!(!session["launch"]["program"]
+            .as_str()
+            .unwrap()
+            .contains("cmd.exe"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn workspace_system_python_supports_scripts_modules_and_source_paths_without_uv_files() {
+        let python = std::env::var_os("REMOTE_RUNNER_TEST_PYTHON")
+            .map(PathBuf::from)
+            .or_else(|| {
+                crate::local::shells::find_on_path(if cfg!(windows) { "python" } else { "python3" })
+            });
+        let Some(python) = python.filter(|p| !p.to_string_lossy().contains("WindowsApps")) else {
+            eprintln!("SKIP: set REMOTE_RUNNER_TEST_PYTHON to an installed interpreter");
+            return;
+        };
+        let available = crate::local::shells::detect();
+        let Some(shell) = available
+            .iter()
+            .find(|s| matches!(s.id.as_str(), "pwsh" | "powershell" | "bash"))
+        else {
+            return;
+        };
+        let root = std::env::temp_dir().join(format!("rr-python-{}", uuid::Uuid::new_v4()));
+        let source = root.join("source");
+        for path in ["tools", "data", "src/app"] {
+            std::fs::create_dir_all(source.join(path)).unwrap();
+        }
+        let code="import os,sys,json\nwith open('result.json','w',encoding='utf8') as f: json.dump(dict(args=sys.argv[1:],python=sys.executable,cwd=os.getcwd(),path=os.environ.get('PYTHONPATH')),f)\n";
+        std::fs::write(source.join("tools/test.py"), code).unwrap();
+        std::fs::write(source.join("src/app/cli.py"), code).unwrap();
+        std::fs::write(
+            source.join("pyproject.toml"),
+            "[tool.remote-runner]\nentry='old.py'\nmode='script'\npython-path=['src']\n",
+        )
+        .unwrap();
+        let device:DeviceProfile=serde_json::from_value(serde_json::json!({"id":"python","name":"local","transport":"local","local":{"shell":shell.id,"no_profile":true}})).unwrap();
+        let (tx, _rx) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        for (entry, module) in [("tools/test.py", false), ("app.cli", true)] {
+            let args = vec![
+                "",
+                "a b",
+                "汉字",
+                "$(touch owned)",
+                "quote\"'",
+                "C:\\folder\\file",
+            ];
+            let mut paths = vec![python.parent().unwrap().to_path_buf()];
+            paths.extend(std::env::split_paths(
+                &std::env::var_os("PATH").unwrap_or_default(),
+            ));
+            let env = std::collections::HashMap::from([(
+                "PATH".to_string(),
+                std::env::join_paths(paths)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+            )]);
+            let intent:crate::workspace_run::Request=serde_json::from_value(serde_json::json!({"workspace":WorkspaceRef::local(source.to_string_lossy()),"device_id":"python","device_revision":crate::workspace_run::device_revision(&device),"command":{"entry":if module {serde_json::json!({"type":"python_module","name":entry})} else {serde_json::json!({"type":"python_script","path":entry})},"args":args},"python":"device_default","settings":{"cwd":"data","console_mode":"pipe","timeout_secs":10,"env":env}})).unwrap();
+            let mut req:RunRequest=serde_json::from_value(serde_json::json!({"device_id":"python","workspace":intent.workspace,"kind":"python","entry":entry,"module":module,"args":args,"cwd":"data","console_mode":"pipe","timeout_secs":10,"env":env})).unwrap();
+            req.workspace_context = Some(crate::workspace_run::Context {
+                request: intent,
+                source_device: None,
+                config_dir: root.clone(),
+            });
+            let id = manager
+                .start(req, device.clone(), root.clone(), None)
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(25), async {
+                loop {
+                    if manager.status(&id).is_some_and(|s| !s.state.is_active()) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .unwrap();
+            let status = manager.status(&id).unwrap();
+            assert_eq!(status.exit_code, Some(0), "{status:?}");
+            let result: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(source.join("data/result.json")).unwrap())
+                    .unwrap();
+            assert_eq!(result["args"], serde_json::json!(args));
+            assert!(result["path"]
+                .as_str()
+                .unwrap()
+                .replace('\\', "/")
+                .ends_with("/source/src"));
+            assert!(result["cwd"]
+                .as_str()
+                .unwrap()
+                .replace('\\', "/")
+                .ends_with("/source/data"));
+            assert_eq!(
+                manager.workspace_session(&id).unwrap()["launch"]["environment"],
+                "device_default"
+            );
+        }
+        // Wait for the independent source-owned history write before removing the fixture.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let mut s = crate::workspace_run::Store::open(
+                    &WorkspaceRef::local(source.to_string_lossy()),
+                    None,
+                    &root,
+                )
+                .await
+                .unwrap();
+                if s.commands().await.unwrap().entries.len() == 2 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn local_python_preserves_profile_environment_and_explicit_overrides_in_pipe_and_pty() {
+        let python = std::env::var_os("REMOTE_RUNNER_TEST_PYTHON")
+            .map(PathBuf::from)
+            .or_else(|| {
+                crate::local::shells::find_on_path(if cfg!(windows) { "python" } else { "python3" })
+            });
+        let Some(python) = python.filter(|p| !p.to_string_lossy().contains("WindowsApps")) else {
+            return;
+        };
+        let shell_id = if cfg!(windows) { "gitbash" } else { "bash" };
+        let local = crate::device::LocalConfig {
+            shell: shell_id.into(),
+            path: None,
+            no_profile: false,
+        };
+        if crate::local::shells::resolve(&local).is_err() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("rr-python-profile-{}", uuid::Uuid::new_v4()));
+        let source = root.join("source");
+        for path in [&source, &root.join("bin"), &root.join("modules")] {
+            std::fs::create_dir_all(path).unwrap();
+        }
+        std::fs::write(
+            root.join("modules/rr_profile_module.py"),
+            "value='from-profile'\n",
+        )
+        .unwrap();
+        let wrapper = root.join("bin/python3");
+        std::fs::write(
+            &wrapper,
+            format!(
+                "#!/bin/sh\nexec {} \"$@\"\n",
+                sh_quote(&python.to_string_lossy().replace('\\', "/"))
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        #[cfg(windows)]
+        let bin = crate::local::to_msys_path(&root.join("bin"));
+        #[cfg(not(windows))]
+        let bin = root.join("bin").to_string_lossy().into_owned();
+        let profile = root.join("profile.sh");
+        std::fs::write(&profile, format!("export PATH={}:\"$PATH\"\nexport PYTHONPATH={}\nexport RR_PROFILE_VALUE='from-profile'\nexport RR_OVERRIDE='profile'\nunset REMOTE_RUNNER_TEST_PYTHON\n", sh_quote(&bin), sh_quote(&root.join("modules").to_string_lossy().replace('\\', "/")))).unwrap();
+        std::fs::write(source.join("main.py"), "import os,json,rr_profile_module\nwith open('result.json','w') as f: json.dump(dict(module=rr_profile_module.value,profile=os.getenv('RR_PROFILE_VALUE'),override=os.getenv('RR_OVERRIDE'),removed=os.getenv('REMOTE_RUNNER_TEST_PYTHON')),f)\n").unwrap();
+        let device: DeviceProfile = serde_json::from_value(serde_json::json!({"id":"profile-python","name":"local","transport":"local","local":local})).unwrap();
+        let (tx, _rx) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        for mode in ["pipe", "pty"] {
+            let override_key = if cfg!(windows) && mode == "pty" {
+                "rr_override"
+            } else {
+                "RR_OVERRIDE"
+            };
+            let env = serde_json::json!({"BASH_ENV":profile.to_string_lossy().replace('\\', "/"), (override_key):"explicit"});
+            let intent: crate::workspace_run::Request = serde_json::from_value(serde_json::json!({"workspace":WorkspaceRef::local(source.to_string_lossy()),"device_id":device.id,"device_revision":crate::workspace_run::device_revision(&device),"command":{"entry":{"type":"python_script","path":"main.py"},"args":[mode]},"python":"device_default","settings":{"cwd":".","console_mode":mode,"timeout_secs":10,"env":env}})).unwrap();
+            let mut req: RunRequest = serde_json::from_value(serde_json::json!({"device_id":device.id,"workspace":intent.workspace,"kind":"python","entry":"main.py","args":[mode],"console_mode":mode,"timeout_secs":10,"env":env})).unwrap();
+            req.workspace_context = Some(crate::workspace_run::Context {
+                request: intent,
+                source_device: None,
+                config_dir: root.clone(),
+            });
+            let id = manager
+                .start(req, device.clone(), root.clone(), None)
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(25), async {
+                while manager.status(&id).is_none_or(|s| s.state.is_active()) {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .unwrap();
+            let status = manager.status(&id).unwrap();
+            assert_eq!(status.exit_code, Some(0), "{mode}: {status:?}");
+            let result: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(source.join("result.json")).unwrap())
+                    .unwrap();
+            assert_eq!(
+                result,
+                serde_json::json!({"module":"from-profile","profile":"from-profile","override":"explicit","removed":null})
+            );
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let mut store = crate::workspace_run::Store::open(
+                    &WorkspaceRef::local(source.to_string_lossy()),
+                    None,
+                    &root,
+                )
+                .await
+                .unwrap();
+                if store.commands().await.unwrap().entries.len() == 2 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 

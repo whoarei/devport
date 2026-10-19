@@ -12,6 +12,13 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
 /// 可编程行为：测试可在准备中途改变 fake uv / fake python 的应答
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingFailure {
+    Mkdir,
+    Write,
+    Rename,
+}
+
 #[derive(Debug, Clone)]
 pub struct Behavior {
     /// `uv --version` 报告的版本（与注入 Catalog 一致）
@@ -24,6 +31,8 @@ pub struct Behavior {
     pub sync_fails: bool,
     /// `uv sync` 成功时仍写入的 stderr 原始字节（非 UTF-8 透传测试）
     pub sync_stderr: Vec<u8>,
+    /// 配方绑定发布的故障注入；不影响实例 manifest 和 ready marker。
+    pub binding_failure: Option<BindingFailure>,
 }
 
 impl Default for Behavior {
@@ -34,6 +43,7 @@ impl Default for Behavior {
             find_returns_system: false,
             sync_fails: false,
             sync_stderr: Vec::new(),
+            binding_failure: None,
         }
     }
 }
@@ -305,9 +315,9 @@ impl FakeHost {
                                 stderr: Vec::new(),
                             });
                         }
-                        let requested = argv.get(3).map(String::as_str).unwrap_or("3.12.9");
+                        let resolved = &state.behavior.python_version;
                         let path = format!(
-                            "{}/python/cpython-{requested}-linux-x86_64-gnu/bin/python3.12",
+                            "{}/python/cpython-{resolved}-linux-x86_64-gnu/bin/python3.12",
                             self.root
                         );
                         return Ok(ExecResult {
@@ -459,6 +469,13 @@ impl RuntimeHost for FakeHost {
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let mut state = self.state.lock().unwrap();
+            if path.contains("/bindings/")
+                && state.behavior.binding_failure == Some(BindingFailure::Write)
+            {
+                return Err(RunnerError::TaskFailed(
+                    "injected binding write failure".into(),
+                ));
+            }
             if path.contains("/downloads/") {
                 state.deploys += 1;
             }
@@ -483,11 +500,31 @@ impl RuntimeHost for FakeHost {
     }
 
     fn mkdir_all<'a>(&'a self, path: &'a str) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async move { self.state.lock().unwrap().mkdir_all_locked(path) })
+        Box::pin(async move {
+            let mut state = self.state.lock().unwrap();
+            if path.ends_with("/bindings")
+                && state.behavior.binding_failure == Some(BindingFailure::Mkdir)
+            {
+                return Err(RunnerError::TaskFailed(
+                    "injected binding mkdir failure".into(),
+                ));
+            }
+            state.mkdir_all_locked(path)
+        })
     }
 
     fn rename<'a>(&'a self, from: &'a str, to: &'a str) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async move { self.state.lock().unwrap().rename_locked(from, to) })
+        Box::pin(async move {
+            let mut state = self.state.lock().unwrap();
+            if to.contains("/bindings/")
+                && state.behavior.binding_failure == Some(BindingFailure::Rename)
+            {
+                return Err(RunnerError::TaskFailed(
+                    "injected binding rename failure".into(),
+                ));
+            }
+            state.rename_locked(from, to)
+        })
     }
 
     fn remove<'a>(&'a self, path: &'a str) -> BoxFuture<'a, Result<()>> {
@@ -620,6 +657,7 @@ mod tests {
             extras: vec![],
             package_source_identity: "b".repeat(64),
             workspace: PathBuf::from("/ws"),
+            input_hashes: vec![],
         }
     }
 
@@ -691,7 +729,7 @@ mod tests {
         let catalog = fake_catalog(&cache.0);
         let cancel = AtomicBool::new(false);
 
-        let (mut events, phases, _) = collect_events();
+        let (mut events, phases, outputs) = collect_events();
         let ready = prepare_runtime(
             shared(&host),
             &catalog,
@@ -706,6 +744,28 @@ mod tests {
         assert!(host.exists(&ready.uv_path).await, "uv 二进制已发布");
         assert_eq!(host.install_count(), 1);
         assert_eq!(host.deploys(), 1);
+        let log = outputs
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|(_, bytes)| bytes.clone())
+            .collect::<Vec<_>>();
+        let log = String::from_utf8_lossy(&log);
+        for expected in [
+            "phase: probing_runtime",
+            "target platform=",
+            "runtime root=",
+            "Python request=",
+            "phase: installing_python",
+            "exec:",
+            "install",
+            "exit=Some(0)",
+            "elapsed=",
+            "resolved CPython",
+            "interpreter=",
+        ] {
+            assert!(log.contains(expected), "missing {expected}: {log}");
+        }
         // UV_PYTHON_PREFERENCE 与 --managed-python 在 uv 0.10+ 冲突，env 里不得再出现
         for env in host.exec_log_envs() {
             for (key, _) in env {
@@ -751,6 +811,57 @@ mod tests {
                 .await
         );
         assert_eq!(env.python_path, format!("{}/bin/python", env.env_path));
+    }
+
+    #[tokio::test]
+    async fn rebuilding_rebinds_a_new_generation_and_preserves_leased_paths() {
+        let host = Arc::new(FakeHost::new());
+        let cache = TestDir::new();
+        let catalog = fake_catalog(&cache.0);
+        let cancel = AtomicBool::new(false);
+        let (ready, old) = full_prepare(&host, &catalog, &cache.0, &cancel).await;
+        let leases = crate::runtime::manager::LeaseSet::default();
+        leases.lease(&old.environment_id);
+        leases.lease(&old.environment_id);
+        let (mut events, _, _) = collect_events();
+        let new = crate::runtime::manager::rebuild_environment(
+            shared(&host),
+            &leases,
+            &ready,
+            &fake_project(),
+            "/ws",
+            &catalog,
+            &cache.0,
+            &NetworkConfig::default(),
+            "rebuild",
+            &cancel,
+            &mut events,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_ne!(old.environment_id, new.environment_id);
+        assert_ne!(old.env_path, new.env_path);
+        assert!(host.exists(&old.python_path).await);
+        assert!(host.exists(&new.python_path).await);
+        leases.release(&old.environment_id);
+        assert!(leases.is_leased(&old.environment_id));
+        assert!(crate::runtime::manager::delete_environment(
+            shared(&host),
+            &leases,
+            &old.environment_id
+        )
+        .await
+        .is_err());
+        let (_, reused) = full_prepare(&host, &catalog, &cache.0, &cancel).await;
+        assert_eq!(reused.environment_id, new.environment_id);
+        assert!(reused.cache_hit);
+        leases.release(&old.environment_id);
+        assert!(!leases.is_leased(&old.environment_id));
+        crate::runtime::manager::delete_environment(shared(&host), &leases, &old.environment_id)
+            .await
+            .unwrap();
+        assert!(host.exists(&new.python_path).await);
     }
 
     /// 真实 uv 把非空的 UV_PROJECT_ENVIRONMENT 当作"复用现有环境"而拒绝。
@@ -840,8 +951,11 @@ mod tests {
         .await
         .unwrap();
 
-        host.set_behavior(|b| b.sync_fails = true);
-        let (mut events, _, _) = collect_events();
+        host.set_behavior(|b| {
+            b.sync_fails = true;
+            b.sync_stderr = b"lockfile needs to be updated\n".to_vec();
+        });
+        let (mut events, _, outputs) = collect_events();
         let err = prepare_environment(
             shared(&host),
             &ready,
@@ -859,6 +973,27 @@ mod tests {
             err.to_string().contains(code::ENV_SYNC),
             "unexpected error: {err}"
         );
+        let log = outputs
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|(_, bytes)| bytes.clone())
+            .collect::<Vec<_>>();
+        let log = String::from_utf8_lossy(&log);
+        for expected in [
+            "execution workspace=\"/ws\"",
+            "environment recipe=",
+            "phase: syncing_dependencies",
+            "UV_PROJECT_ENVIRONMENT=",
+            "exec:",
+            "--locked",
+            "lockfile needs to be updated",
+            "exit=Some(2)",
+            "environment preparation failed:",
+            "removing failed environment",
+        ] {
+            assert!(log.contains(expected), "missing {expected}: {log}");
+        }
         // sync 失败：环境目录可能尚未创建（uv 报错在写盘之前），或创建了但无 .ready。
         // 无论哪种，下一轮都会整体重建。
         let envs = host.list(&format!("{}/envs", host.root())).await.unwrap();
@@ -954,6 +1089,149 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn minor_python_request_freezes_actual_version_and_reuses_the_same_build() {
+        let host = Arc::new(FakeHost::new());
+        let cache = TestDir::new();
+        let catalog = fake_catalog(&cache.0);
+        let cancel = AtomicBool::new(false);
+        let mut project = fake_project();
+        project.python_version = "3.12".into();
+        project.requires_python = ">=3.12.9,<3.13".into();
+        let (mut events, _, _) = collect_events();
+        let ready = prepare_runtime(
+            shared(&host),
+            &catalog,
+            &project.python_request(),
+            &cache.0,
+            &NetworkConfig::default(),
+            &cancel,
+            &mut events,
+        )
+        .await
+        .unwrap();
+        assert_eq!(ready.python_version, "3.12.9");
+        let leases = crate::runtime::manager::LeaseSet::default();
+        let prepared = crate::runtime::prepare::prepare_generation(
+            shared(&host),
+            &ready,
+            &project,
+            "/ws",
+            &catalog,
+            &NetworkConfig::default(),
+            "minor",
+            &cancel,
+            &mut events,
+            false,
+            None,
+            &leases,
+        )
+        .await
+        .unwrap();
+        assert_eq!(prepared.python_version, "3.12.9");
+        let manifest = manifest::EnvironmentManifest::parse(
+            &host
+                .read_file(&host.join(&prepared.env_path, manifest::MANIFEST_NAME))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest.python_request, "3.12");
+        assert_eq!(manifest.python_version, "3.12.9");
+        let log = host.exec_log();
+        let sync = log
+            .iter()
+            .find(|args| args.get(1).is_some_and(|arg| arg == "sync"))
+            .unwrap();
+        let selected = sync.iter().position(|arg| arg == "--python").unwrap();
+        assert_eq!(sync[selected + 1], ready.python_path);
+        let (_, exact) = full_prepare(&host, &catalog, &cache.0, &cancel).await;
+        assert!(exact.cache_hit);
+        assert_eq!(exact.environment_id, prepared.environment_id);
+        let count = host.sync_count();
+        let reused = crate::runtime::prepare::prepare_generation(
+            shared(&host),
+            &ready,
+            &project,
+            "/ws",
+            &catalog,
+            &NetworkConfig::default(),
+            "reuse-minor",
+            &cancel,
+            &mut events,
+            false,
+            None,
+            &leases,
+        )
+        .await
+        .unwrap();
+        assert!(reused.cache_hit);
+        assert_eq!(host.sync_count(), count);
+
+        host.set_behavior(|b| b.python_version = "3.12.10".into());
+        let next = prepare_runtime(
+            shared(&host),
+            &catalog,
+            &project.python_request(),
+            &cache.0,
+            &NetworkConfig::default(),
+            &cancel,
+            &mut events,
+        )
+        .await
+        .unwrap();
+        let upgraded = crate::runtime::prepare::prepare_generation(
+            shared(&host),
+            &next,
+            &project,
+            "/ws",
+            &catalog,
+            &NetworkConfig::default(),
+            "new-patch",
+            &cancel,
+            &mut events,
+            false,
+            None,
+            &leases,
+        )
+        .await
+        .unwrap();
+        assert_ne!(prepared.environment_id, upgraded.environment_id);
+        assert_eq!(upgraded.python_version, "3.12.10");
+        assert!(host.exists(&prepared.python_path).await);
+    }
+
+    #[tokio::test]
+    async fn minor_python_request_rejects_an_incompatible_resolved_interpreter() {
+        for actual in ["3.13.0", "3.12.8"] {
+            let host = Arc::new(FakeHost::new());
+            let cache = TestDir::new();
+            let catalog = fake_catalog(&cache.0);
+            let cancel = AtomicBool::new(false);
+            let mut project = fake_project();
+            project.python_version = "3.12".into();
+            project.requires_python = ">=3.12.9,<3.13".into();
+            host.set_behavior(|b| b.python_version = actual.into());
+            let (mut events, _, _) = collect_events();
+            let err = prepare_runtime(
+                shared(&host),
+                &catalog,
+                &project.python_request(),
+                &cache.0,
+                &NetworkConfig::default(),
+                &cancel,
+                &mut events,
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                err.to_string().contains(code::PYTHON_VERIFY),
+                "{actual}: {err}"
+            );
+            assert_eq!(host.sync_count(), 0);
+        }
+    }
+
+    #[tokio::test]
     async fn python_version_mismatch_is_refused() {
         let host = Arc::new(FakeHost::new());
         let cache = TestDir::new();
@@ -1027,6 +1305,314 @@ mod tests {
             a.cache_hit, b.cache_hit,
             "恰好一个 Run 构建、另一个缓存命中"
         );
+    }
+
+    #[tokio::test]
+    async fn preparing_generations_are_leased_until_handoff_and_released_on_failure_or_cancel() {
+        for outcome in ["success", "failure", "cancel"] {
+            let host = Arc::new(FakeHost::new());
+            let cache = TestDir::new();
+            let catalog = fake_catalog(&cache.0);
+            let cancel = Arc::new(AtomicBool::new(false));
+            let (ready, old) = full_prepare(&host, &catalog, &cache.0, &cancel).await;
+            let leases = Arc::new(crate::runtime::manager::LeaseSet::default());
+            let resume = Arc::new(tokio::sync::Notify::new());
+            let (paused_tx, mut paused_rx) = tokio::sync::mpsc::unbounded_channel();
+            let building_host = host.clone();
+            let building_leases = leases.clone();
+            let building_cancel = cancel.clone();
+            let building_resume = resume.clone();
+            let building_catalog = catalog.clone();
+            let task_host = host.clone();
+            let task = tokio::spawn(async move {
+                let verifier: Box<crate::runtime::prepare::InputVerifier> = Box::new(move || {
+                    let (host, resume, paused_tx) = (
+                        building_host.clone(),
+                        building_resume.clone(),
+                        paused_tx.clone(),
+                    );
+                    Box::pin(async move {
+                        let envs = host.join(host.root(), "envs");
+                        for id in host.list(&envs).await? {
+                            let dir = host.join(&envs, &id);
+                            if !host.exists(&host.join(&dir, manifest::READY_MARKER)).await {
+                                paused_tx.send(id).unwrap();
+                                resume.notified().await;
+                                if outcome == "failure" {
+                                    return Err(RunnerError::TaskFailed(
+                                        "injected verification failure".into(),
+                                    ));
+                                }
+                            }
+                        }
+                        Ok(())
+                    })
+                });
+                let (mut events, _, _) = collect_events();
+                crate::runtime::prepare::prepare_generation(
+                    shared(&task_host),
+                    &ready,
+                    &fake_project(),
+                    "/ws",
+                    &building_catalog,
+                    &NetworkConfig::default(),
+                    "leased-preparation",
+                    &building_cancel,
+                    &mut events,
+                    true,
+                    Some(&*verifier),
+                    &building_leases,
+                )
+                .await
+            });
+            let id = tokio::time::timeout(std::time::Duration::from_secs(5), paused_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let dir = host.join(&host.join(host.root(), "envs"), &id);
+            assert!(leases.is_leased(&id));
+            assert!(
+                crate::runtime::manager::delete_environment(shared(&host), &leases, &id)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                crate::runtime::manager::clean_cache(
+                    shared(&host),
+                    &leases,
+                    &catalog,
+                    &AtomicBool::new(false)
+                )
+                .await
+                .unwrap(),
+                0
+            );
+            assert!(host.exists(&dir).await);
+            if outcome == "cancel" {
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            resume.notify_one();
+            let result = task.await.unwrap();
+            if outcome == "success" {
+                let prepared = result.unwrap();
+                let launch_handoff = prepared.clone();
+                drop(prepared);
+                assert!(leases.is_leased(&id));
+                assert!(
+                    crate::runtime::manager::delete_environment(shared(&host), &leases, &id)
+                        .await
+                        .is_err()
+                );
+                drop(launch_handoff);
+                assert!(!leases.is_leased(&id));
+                crate::runtime::manager::delete_environment(shared(&host), &leases, &id)
+                    .await
+                    .unwrap();
+            } else {
+                assert!(result.is_err(), "{outcome}");
+                assert!(!leases.is_leased(&id), "{outcome}");
+                assert!(!host.exists(&dir).await, "{outcome}");
+            }
+            assert!(host.exists(&old.python_path).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_binding_publication_removes_only_new_instances_and_preserves_old_binding() {
+        for failure in [
+            BindingFailure::Mkdir,
+            BindingFailure::Write,
+            BindingFailure::Rename,
+        ] {
+            for scenario in ["create", "rebuild", "reuse"] {
+                let host = Arc::new(FakeHost::new());
+                let cache = TestDir::new();
+                let catalog = fake_catalog(&cache.0);
+                let cancel = AtomicBool::new(false);
+                let (ready, old) = full_prepare(&host, &catalog, &cache.0, &cancel).await;
+                let leases = crate::runtime::manager::LeaseSet::default();
+                leases.lease(&old.environment_id);
+                let bindings = host.join(host.root(), "bindings");
+                let binding_names = host.list(&bindings).await.unwrap();
+                let binding = host.join(&bindings, &binding_names[0]);
+                let previous_binding = host.read_file(&binding).await.unwrap();
+                let envs = host.join(host.root(), "envs");
+                let mut project = fake_project();
+                if scenario == "create" {
+                    project.lock_sha256 = "c".repeat(64);
+                }
+                host.set_behavior(|b| b.binding_failure = Some(failure));
+                let before = host.sync_count();
+                for _ in 0..2 {
+                    let (mut events, _, _) = collect_events();
+                    let result = crate::runtime::prepare::prepare_generation(
+                        shared(&host),
+                        &ready,
+                        &project,
+                        "/ws",
+                        &catalog,
+                        &NetworkConfig::default(),
+                        "failed-binding",
+                        &cancel,
+                        &mut events,
+                        scenario == "rebuild",
+                        None,
+                        &leases,
+                    )
+                    .await;
+                    assert!(
+                        result.unwrap_err().to_string().contains("injected binding"),
+                        "{failure:?}/{scenario}"
+                    );
+                    assert_eq!(
+                        host.list(&envs).await.unwrap(),
+                        vec![old.environment_id.clone()],
+                        "{failure:?}/{scenario}"
+                    );
+                    assert_eq!(
+                        host.list(&bindings).await.unwrap(),
+                        binding_names,
+                        "{failure:?}/{scenario}"
+                    );
+                    assert_eq!(host.read_file(&binding).await.unwrap(), previous_binding);
+                    assert!(host.exists(&old.python_path).await);
+                    for env in host.exec_log_envs() {
+                        for (_, dir) in env
+                            .iter()
+                            .filter(|(key, _)| key == "UV_PROJECT_ENVIRONMENT")
+                        {
+                            let id = dir.rsplit('/').next().unwrap();
+                            if id != old.environment_id {
+                                assert!(!leases.is_leased(id), "{failure:?}/{scenario}");
+                            }
+                        }
+                    }
+                }
+                assert_eq!(
+                    host.sync_count() - before,
+                    if scenario == "reuse" { 0 } else { 2 }
+                );
+                host.set_behavior(|b| b.binding_failure = None);
+                let count = host.sync_count();
+                let (_, restored) = full_prepare(&host, &catalog, &cache.0, &cancel).await;
+                assert!(restored.cache_hit);
+                assert_eq!(restored.environment_id, old.environment_id);
+                assert_eq!(host.sync_count(), count);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn changed_inputs_never_publish_or_preserve_a_stale_generation() {
+        for change_at in ["before_sync", "after_sync", "before_binding"] {
+            let host = Arc::new(FakeHost::new());
+            let cache = TestDir::new();
+            let catalog = fake_catalog(&cache.0);
+            let cancel = AtomicBool::new(false);
+            let (ready, old) = full_prepare(&host, &catalog, &cache.0, &cancel).await;
+            host.mkdir_all("/ws").await.unwrap();
+            host.write_file("/ws/uv.lock", b"A", 0o600).await.unwrap();
+            let bindings = host.join(host.root(), "bindings");
+            let binding = host.join(&bindings, &host.list(&bindings).await.unwrap()[0]);
+            let previous_binding = host.read_file(&binding).await.unwrap();
+            let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let verifier: Box<crate::runtime::prepare::InputVerifier> = {
+                let host = host.clone();
+                let calls = calls.clone();
+                Box::new(move || {
+                    let host = host.clone();
+                    let round = calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    Box::pin(async move {
+                        if change_at == "before_binding" && round == 4 {
+                            host.write_file("/ws/uv.lock", b"B", 0o600).await?;
+                        }
+                        if host.read_file("/ws/uv.lock").await? != b"A" {
+                            return Err(RunnerError::InvalidInput("Project input changed".into()));
+                        }
+                        Ok(())
+                    })
+                })
+            };
+            let (mut events, _, outputs) = collect_events();
+            let changing = host.clone();
+            events.on_phase = Box::new(move |phase| {
+                if (change_at == "before_sync" && phase == RuntimePhase::SyncingDependencies)
+                    || (change_at == "after_sync" && phase == RuntimePhase::VerifyingEnvironment)
+                {
+                    changing
+                        .state
+                        .lock()
+                        .unwrap()
+                        .files
+                        .insert("/ws/uv.lock".into(), b"B".to_vec());
+                }
+            });
+            let result = crate::runtime::prepare::prepare_generation(
+                shared(&host),
+                &ready,
+                &fake_project(),
+                "/ws",
+                &catalog,
+                &NetworkConfig::default(),
+                "changing-inputs",
+                &cancel,
+                &mut events,
+                true,
+                Some(&*verifier),
+                &crate::runtime::manager::LeaseSet::default(),
+            )
+            .await;
+            assert!(result.is_err(), "{change_at}");
+            let log = outputs
+                .lock()
+                .unwrap()
+                .iter()
+                .flat_map(|(_, bytes)| bytes.clone())
+                .collect::<Vec<_>>();
+            let log = String::from_utf8_lossy(&log);
+            let stage = match change_at {
+                "before_sync" => "before uv sync",
+                "after_sync" => "after uv sync and smoke test",
+                _ => "before publishing binding",
+            };
+            assert!(
+                log.contains(&format!("project input verification failed ({stage})"))
+                    && log.contains("Project input changed"),
+                "{log}"
+            );
+            assert_eq!(
+                host.read_file(&binding).await.unwrap(),
+                previous_binding,
+                "{change_at}"
+            );
+            assert!(host.exists(&old.python_path).await);
+            assert_eq!(
+                host.list(&host.join(host.root(), "envs")).await.unwrap(),
+                vec![old.environment_id.clone()]
+            );
+            host.write_file("/ws/uv.lock", b"A", 0o600).await.unwrap();
+            let count = host.sync_count();
+            let (mut events, _, _) = collect_events();
+            let restored = crate::runtime::prepare::prepare_generation(
+                shared(&host),
+                &ready,
+                &fake_project(),
+                "/ws",
+                &catalog,
+                &NetworkConfig::default(),
+                "restored-inputs",
+                &cancel,
+                &mut events,
+                false,
+                Some(&*verifier),
+                &crate::runtime::manager::LeaseSet::default(),
+            )
+            .await
+            .unwrap();
+            assert!(restored.cache_hit);
+            assert_eq!(restored.environment_id, old.environment_id);
+            assert_eq!(host.sync_count(), count);
+        }
     }
 
     #[tokio::test]

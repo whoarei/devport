@@ -1,7 +1,7 @@
 //! WSL RuntimeHost：持久 helper + 结构化 exec 协议（00027 §13）。
 //!
 //! 文件操作通过带严格引用的短 sh 命令完成；大文件（uv 二进制）通过 exec stdin 写入。
-//! cancel：stop 消息杀 exec 进程组；bridge 销毁时 EOF 兜底清理。
+//! 长命令使用独立 helper，避免阻塞文件操作和锁心跳；cancel 关闭该 helper 的 stdin 租约。
 use crate::device::WslConfig;
 use crate::error::{Result, RunnerError};
 use crate::runner::sh_quote;
@@ -83,11 +83,17 @@ impl RuntimeHost for WslHost {
     ) -> BoxFuture<'a, Result<ExecResult>> {
         Box::pin(async move {
             check_cancel(cancel)?;
-            let result = self.exec_inner(argv, env, cwd, input).await;
-            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err(crate::runtime::host::canceled_error());
+            // Keep the long-running command's lease separate from file IO.
+            // In particular, environment-lock heartbeats must not wait for uv.
+            let operation = async {
+                let mut bridge = Bridge::launch(crate::wsl::helper_command(&self.config)?).await?;
+                exec_managed(&mut bridge, argv, env, cwd, input.unwrap_or(&[])).await
+            };
+            tokio::select! {
+                biased;
+                _ = crate::runtime::host::cancelled(cancel) => Err(crate::runtime::host::canceled_error()),
+                result = operation => result,
             }
-            result
         })
     }
 
@@ -239,5 +245,68 @@ impl Drop for WslHost {
         if Arc::strong_count(&self.bridge) == 1 {
             // 持有最后一份引用：Bridge 随 Arc 销毁
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    #[tokio::test]
+    #[ignore = "requires an explicitly selected local WSL distribution"]
+    async fn canceled_exec_stops_its_group_without_blocking_heartbeat_or_cleanup() {
+        let config = WslConfig {
+            distribution: std::env::var("REMOTE_RUNNER_TEST_WSL")
+                .expect("select a test distribution"),
+            user: String::new(),
+        };
+        let host = WslHost::open(config.clone(), "/tmp").await.unwrap();
+        let observer = WslHost::open(config, "/tmp").await.unwrap();
+        let marker = format!("/tmp/rr-exec-cancel-{}", uuid::Uuid::new_v4());
+        let heartbeat = format!("{marker}-heartbeat");
+        let cancel = AtomicBool::new(false);
+        let argv = vec!["python3".into(), "-u".into(), "-c".into(),
+            "import os,sys,time; open(sys.argv[1],'w').write(str(os.getpid())); [(print('active',flush=True),time.sleep(.05)) for _ in range(1200)]".into(), marker.clone()];
+        let stop = async {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while !observer.exists(&marker).await {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .unwrap();
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                host.write_file(&heartbeat, b"alive", 0o600),
+            )
+            .await
+            .expect("a long exec must not block its environment lock heartbeat")
+            .unwrap();
+            cancel.store(true, Ordering::Relaxed);
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(15), async {
+            tokio::join!(host.exec(&argv, &[], None, None, &cancel), stop)
+        })
+        .await
+        .expect("cancellation must interrupt an exec that is still producing output");
+        assert!(matches!(
+            result,
+            Err(RunnerError::ManagedRuntime {
+                code: crate::runtime::code::CANCELED,
+                ..
+            })
+        ));
+        // The same host must still allow both verification and cleanup.
+        let verify = vec!["python3".into(), "-c".into(),
+            "import os,pathlib,sys,time; pid=int(pathlib.Path(sys.argv[1]).read_text()); time.sleep(.2); assert not pathlib.Path('/proc',str(pid)).exists()".into(), marker.clone()];
+        let result = host
+            .exec(&verify, &[], None, None, &AtomicBool::new(false))
+            .await
+            .unwrap();
+        host.remove(&marker).await.unwrap();
+        host.remove(&heartbeat).await.unwrap();
+        assert!(result.success(), "{}", result.tail(500));
     }
 }

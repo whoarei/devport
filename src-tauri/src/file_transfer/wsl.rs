@@ -7,7 +7,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use std::{path::PathBuf, time::Duration};
 
-pub(super) struct WslHost {
+pub(crate) struct WslHost {
     bridge: Bridge,
     pub root: String,
     pub local_alias: Option<PathBuf>,

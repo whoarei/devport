@@ -5,6 +5,7 @@ export type AuthMethod =
   | { type: "key"; key_path: string | null };
 
 export interface DeviceProfile {
+  revision?: string;
   id: string;
   name: string;
   is_default: boolean;
@@ -139,6 +140,8 @@ export interface TerminalStatus {
 export interface TerminalRead { status: TerminalStatus; data: string }
 
 export type RunEvent =
+  | { type: "launch"; run_id: string; launch: WorkspaceLaunch }
+  | { type: "workspace_state"; run_id: string; workspace: WorkspaceRef; warning: string | null }
   | { type: "output"; run_id: string; stream: string; data: string }
   | { type: "status"; status: RunStatus }
   | { type: "resync"; statuses: RunStatus[] }
@@ -152,6 +155,31 @@ export type RunEvent =
     };
 
 // ---------- Managed Python Runtime（uv-only） ----------
+
+export type WorkspaceRunEntry =
+  | { type: "python_script" | "bash_script"; path: string }
+  | { type: "python_module"; name: string };
+export interface WorkspaceCommand { entry: WorkspaceRunEntry; args: string[] }
+export interface CommandSource { type: "file" | "dir"; path: string }
+export interface WorkspaceCommandRecord extends WorkspaceCommand { id: string; sources?: CommandSource[]; last_used_at: string; needs_edit?: boolean }
+export interface WorkspaceCommands { entries: WorkspaceCommandRecord[]; revision: string }
+export interface RunnerConfig { schema: 1; run_defaults: { cwd: string } }
+export interface RunnerConfigState { config: RunnerConfig; revision: string }
+export type PythonSelection = "device_default" | "project";
+export interface WorkspaceExecutionSettings {
+  cwd: string; env: Record<string,string>; console_mode: ConsoleMode; timeout_secs: number;
+  cols: number; rows: number; bash?: string | null;
+}
+export interface WorkspaceRunRequest {
+  config_revision?: string | null;
+  workspace: WorkspaceRef; device_id: string; device_revision: string;
+  command: WorkspaceCommand; python: PythonSelection; settings: WorkspaceExecutionSettings;
+  source?: CommandSource | null; operation?: "run" | "prepare" | "rebuild";
+}
+export interface WorkspaceLaunch { program: string; version: string | null; cwd: string; python_path: string[]; environment: "device_default" | "project" | "bash" | "command" }
+export interface WorkspaceRunSession { request: WorkspaceRunRequest | null; launch: WorkspaceLaunch | null; warning: string | null }
+export interface WorkspacePythonInfo { python_version: string | null; python_path: string[]; project: PythonProject | null; legacy_entry: string | null; legacy_module: boolean }
+export interface PythonProbe { program: string; version: string; env: Record<string,string> }
 
 export interface PythonProject {
   name: string;
@@ -254,6 +282,19 @@ export function errorMessage(error: unknown): string {
 }
 
 export const api = {
+  readRunnerConfig: (workspace: WorkspaceRef) => invoke<RunnerConfigState>("read_runner_config", { workspace }),
+  saveRunnerConfig: (workspace: WorkspaceRef, config: RunnerConfig, expectedRevision: string) => invoke<RunnerConfigState>("save_runner_config", { workspace, config, expectedRevision }),
+  listWorkspaceCommands: (workspace: WorkspaceRef) => invoke<WorkspaceCommands>("list_workspace_commands", { workspace }),
+  deleteWorkspaceCommand: (workspace: WorkspaceRef, id: string, expectedRevision: string) => invoke<WorkspaceCommands>("delete_workspace_command", { workspace, id, expectedRevision }),
+  editWorkspaceCommandEntry: (workspace: WorkspaceRef, id: string, entry: WorkspaceRunEntry, expectedRevision: string) => invoke<WorkspaceCommands>("edit_workspace_command_entry", { workspace, id, entry, expectedRevision }),
+  inspectWorkspacePython: (workspace: WorkspaceRef, project: boolean) => invoke<WorkspacePythonInfo>("inspect_workspace_python", { workspace, project }),
+  probePythonEnvironment: (deviceId: string) => invoke<PythonProbe>("probe_python_environment", { deviceId }),
+  runnerLockInfo: (workspace: WorkspaceRef) => invoke<{ content: string; revision: string } | null>("runner_lock_info", { workspace }),
+  recoverRunnerLock: (workspace: WorkspaceRef, expectedRevision: string) => invoke<void>("recover_runner_lock", { workspace, expectedRevision }),
+  runWorkspace: (request: WorkspaceRunRequest) => invoke<string>("run_workspace", { request }),
+  getWorkspaceRun: (runId: string) => invoke<WorkspaceRunSession | null>("get_workspace_run", { runId }),
+  retryWorkspaceHistory: (runId: string) => invoke<void>("retry_workspace_history", { runId }),
+  renameWorkspaceCommands: (workspace: WorkspaceRef, oldPath: string, newPath: string) => invoke<WorkspaceCommands>("rename_workspace_commands", { workspace, oldPath, newPath }),
   openTerminal: (deviceId: string, cols = 80, rows = 24) => invoke<TerminalStatus>("open_terminal", { deviceId, cols, rows }),
   openWorkspaceTerminal: (deviceId: string, workspace: WorkspaceRef, subdir: string, cols = 80, rows = 24) =>
     invoke<TerminalStatus>("open_workspace_terminal", { deviceId, workspace, subdir, cols, rows }),

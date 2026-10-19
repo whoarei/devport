@@ -85,9 +85,12 @@ pub async fn execute<T: AsyncRead + AsyncWrite + Unpin>(
     controls: &mut mpsc::UnboundedReceiver<SessionControl>,
     events: impl Fn(Event),
 ) -> Result<Outcome> {
+    let mut owned_request = req.clone();
+    let req = &mut owned_request;
     preflight(req, remote, &files)?;
     let mut session = ShellSession::new(io, baud_rate);
     let runtime_probe = match &req.kind {
+        ScriptKind::Python if req.workspace_context.is_some() => "",
         ScriptKind::Python => " && command -v python3 >/dev/null",
         ScriptKind::Shell => " && command -v bash >/dev/null",
         ScriptKind::Command => "",
@@ -201,7 +204,129 @@ pub async fn execute<T: AsyncRead + AsyncWrite + Unpin>(
             }
         }
     }
+    if req.workspace_context.is_some() {
+        let (program, version) = if req.kind == ScriptKind::Python {
+            let nonce = format!("RR_PROBE_{}", uuid::Uuid::new_v4().simple());
+            let hashes = req
+                .project_inputs
+                .as_ref()
+                .map(|i| i.serial_hashes.clone())
+                .unwrap_or_default();
+            let hashes = hashes
+                .into_iter()
+                .map(|(path, hash)| (format!("{remote}/{path}"), hash))
+                .collect::<Vec<_>>();
+            let encoded = serde_json::to_string(&hashes)
+                .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
+            let checks=format!("import os,hashlib;assert all((hashlib.sha256(os.fdopen(os.open(p,os.O_RDONLY|os.O_NOFOLLOW),'rb').read(1048577)).hexdigest() if os.path.exists(p) else 'missing')==h for p,h in {encoded}), 'Project inputs changed';");
+            let code = format!("{checks}{}", crate::workspace_probe::payload(&nonce));
+            let variables = req
+                .env
+                .iter()
+                .map(|(k, v)| format!("export {k}={};", sh_quote(v)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let cwd = if req.cwd == "." {
+                remote.to_string()
+            } else {
+                format!("{remote}/{}", req.cwd)
+            };
+            let command = format!("cd {} || exit $?; {variables} __rr_python=$(command -v python3 || command -v python) && \"$__rr_python\" -c {}", sh_quote(&cwd), sh_quote(&code));
+            let mut output = Vec::new();
+            let result = session
+                .execute(
+                    &command,
+                    None,
+                    Some(Duration::from_secs(10)),
+                    controls,
+                    |bytes| {
+                        output.extend(
+                            bytes
+                                .into_iter()
+                                .take(65537_usize.saturating_sub(output.len())),
+                        )
+                    },
+                    |_| {},
+                )
+                .await?;
+            if result.stopped.is_some() {
+                return Ok(result.into());
+            }
+            if result.code != 0 || output.len() > 65536 {
+                return Err(RunnerError::Serial(
+                    "Python or project input probe failed".into(),
+                ));
+            }
+            let probe = crate::workspace_probe::parse(&output, &nonce, false)?;
+            req.managed_env_python = Some(probe.program.clone());
+            req.env.extend(probe.env);
+            (probe.program, Some(probe.version))
+        } else {
+            let mut output = Vec::new();
+            let result = session
+                .execute(
+                    "command -v bash",
+                    None,
+                    Some(Duration::from_secs(5)),
+                    controls,
+                    |bytes| {
+                        output.extend(
+                            bytes
+                                .into_iter()
+                                .take(8193_usize.saturating_sub(output.len())),
+                        )
+                    },
+                    |_| {},
+                )
+                .await?;
+            if result.stopped.is_some() {
+                return Ok(result.into());
+            }
+            let path = String::from_utf8(output)
+                .map_err(|_| RunnerError::Serial("Invalid Bash path".into()))?
+                .trim()
+                .to_string();
+            if result.code != 0 || !path.starts_with('/') || path.len() > 8192 {
+                return Err(RunnerError::Serial("Bash is unavailable".into()));
+            }
+            req.bash = Some(path.clone());
+            (path, None)
+        };
+        events(Event::Launch(crate::workspace_run::Launch {
+            program,
+            version,
+            cwd: if req.cwd == "." {
+                remote.into()
+            } else {
+                format!("{remote}/{}", req.cwd)
+            },
+            python_path: req
+                .managed_pythonpath
+                .iter()
+                .map(|p| format!("{remote}/{p}"))
+                .collect(),
+            environment: if req.kind == ScriptKind::Python {
+                "device_default"
+            } else {
+                "bash"
+            }
+            .into(),
+        }));
+    }
     events(Event::State(RunState::Starting));
+    if req.kind == ScriptKind::Command {
+        events(Event::Launch(crate::workspace_run::Launch {
+            program: "sh".into(),
+            version: None,
+            cwd: if req.workspace.is_some() {
+                remote.into()
+            } else {
+                ".".into()
+            },
+            python_path: vec![],
+            environment: "command".into(),
+        }));
+    }
     let command = build_script(req, remote);
     session
         .execute(

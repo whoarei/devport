@@ -1,0 +1,256 @@
+<div id="rr-python-design">
+  <style>
+    #rr-python-design { color-scheme: light dark; --rr-bg: light-dark(#f6f7fa,#1e1f24); --rr-panel: light-dark(#ffffff,#25262e); --rr-subtle: light-dark(#f0f1f6,#2b2d36); --rr-text: light-dark(#262936,#e6e8ef); --rr-muted: light-dark(#626a7d,#adb3c2); --rr-line: light-dark(#dce0e9,#3c3f4c); --rr-action: light-dark(#435cc0,#a0b3ff); --rr-action-text: light-dark(#ffffff,#1c2339); --rr-selected: light-dark(#e8edff,#343f62); --rr-warning: light-dark(#886012,#edc56c); --rr-warning-bg: light-dark(#fff6dc,#3b3324); --rr-success: light-dark(#227043,#8bc9a3); font: 13px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif; color: var(--rr-text); }
+    #rr-python-design * { box-sizing: border-box; }
+    #rr-python-design [hidden] { display: none !important; }
+    #rr-python-design .rr-stage { min-height: 730px; }
+    #rr-python-design .rr-window { background: var(--rr-bg); border: 1px solid var(--rr-line); border-radius: 10px; overflow: hidden; }
+    #rr-python-design .rr-title { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--rr-line); background: var(--rr-panel); }
+    #rr-python-design .rr-mark { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; color: var(--rr-action); background: var(--rr-selected); font-weight: 500; }
+    #rr-python-design .rr-title strong { font-weight: 500; }
+    #rr-python-design .rr-title span:last-child { color: var(--rr-muted); }
+    #rr-python-design .rr-menu { padding: 5px 16px; background: var(--rr-panel); border-bottom: 1px solid var(--rr-line); color: var(--rr-muted); word-spacing: 12px; }
+    #rr-python-design .rr-layout { display: grid; grid-template-columns: 142px minmax(0,1fr); min-height: 610px; }
+    #rr-python-design .rr-side { background: var(--rr-panel); padding: 14px 12px; border-right: 1px solid var(--rr-line); }
+    #rr-python-design .rr-side-head { font-weight: 500; margin-bottom: 10px; }
+    #rr-python-design .rr-file { padding: 5px 6px; overflow-wrap: anywhere; color: var(--rr-muted); }
+    #rr-python-design .rr-file-active { background: var(--rr-selected); color: var(--rr-text); border-radius: 4px; }
+    #rr-python-design .rr-divider { height: 1px; background: var(--rr-line); margin: 16px 0; }
+    #rr-python-design .rr-main { min-width: 0; }
+    #rr-python-design .rr-editor-title { padding: 9px 14px; border-bottom: 1px solid var(--rr-line); background: var(--rr-panel); }
+    #rr-python-design .rr-code { margin: 0; padding: 14px 18px; color: var(--rr-muted); font: 12px/1.8 Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 104px; }
+    #rr-python-design .rr-tabs { display: flex; flex-wrap: wrap; gap: 16px; padding: 9px 14px; border-block: 1px solid var(--rr-line); background: var(--rr-panel); }
+    #rr-python-design .rr-active-tab { color: var(--rr-action); font-weight: 500; }
+    #rr-python-design .rr-work { padding: 14px; }
+    #rr-python-design .rr-runrow { display: flex; align-items: end; flex-wrap: wrap; gap: 9px; }
+    #rr-python-design label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    #rr-python-design .rr-label { color: var(--rr-muted); font-size: 12px; }
+    #rr-python-design input, #rr-python-design select { background: var(--rr-panel); color: var(--rr-text); border: 1px solid var(--rr-line); border-radius: 5px; padding: 7px 8px; min-height: 34px; max-width: 100%; font: inherit; }
+    #rr-python-design button { border: 1px solid var(--rr-line); background: var(--rr-panel); color: var(--rr-text); border-radius: 5px; padding: 7px 11px; min-height: 34px; font: inherit; }
+    #rr-python-design button:hover:not(:disabled) { background: var(--rr-subtle); }
+    #rr-python-design button:disabled { opacity: .55; cursor: not-allowed; }
+    #rr-python-design .rr-primary { background: var(--rr-action); color: var(--rr-action-text); border-color: var(--rr-action); }
+    #rr-python-design .rr-primary:hover:not(:disabled) { background: var(--rr-action); filter: brightness(.94); }
+    #rr-python-design .rr-device { flex: 1.3; min-width: 145px; }
+    #rr-python-design .rr-entry { flex: 1; min-width: 130px; }
+    #rr-python-design .rr-kind { width: 100px; }
+    #rr-python-design .rr-envline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 0; }
+    #rr-python-design .rr-envline label { flex-direction: row; align-items: center; gap: 8px; }
+    #rr-python-design .rr-envline select { min-width: 155px; }
+    #rr-python-design .rr-status { color: var(--rr-muted); }
+    #rr-python-design .rr-settings { border: 1px solid var(--rr-line); border-radius: 7px; background: var(--rr-panel); margin: 0 0 12px; }
+    #rr-python-design .rr-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; background: var(--rr-subtle); border-bottom: 1px solid var(--rr-line); border-radius: 7px 7px 0 0; }
+    #rr-python-design .rr-settings-body { padding: 12px; display: flex; flex-direction: column; gap: var(--rr-setting-gap,10px); }
+    #rr-python-design .rr-field-pair { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.35fr); gap: 10px; }
+    #rr-python-design .rr-hint { color: var(--rr-muted); font-size: 12px; overflow-wrap: anywhere; }
+    #rr-python-design .rr-path { display: block; color: var(--rr-muted); font: 12px/1.7 Consolas, monospace; overflow-wrap: anywhere; }
+    #rr-python-design .rr-detail { display: flex; flex-direction: column; gap: 4px; }
+    #rr-python-design .rr-actionrow { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+    #rr-python-design .rr-success { color: var(--rr-success); }
+    #rr-python-design .rr-notice { color: var(--rr-warning); background: var(--rr-warning-bg); border-radius: 5px; padding: 8px 10px; }
+    #rr-python-design .rr-output { border-top: 1px solid var(--rr-line); margin-top: 10px; padding-top: 11px; }
+    #rr-python-design .rr-output-title { display: flex; align-items: center; justify-content: space-between; color: var(--rr-muted); font-size: 12px; gap: 10px; }
+    #rr-python-design .rr-log { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--rr-text); font: 12px/1.8 Consolas, monospace; padding: 9px 0; margin: 0; min-height: 75px; }
+    #rr-python-design .rr-advanced { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--rr-line); padding-top: 10px; }
+    #rr-python-design .rr-check { flex-direction: row; align-items: center; gap: 7px; color: var(--rr-muted); font-size: 12px; }
+    #rr-python-design .rr-check input { min-height: auto; }
+    #rr-python-design .rr-options { color: var(--rr-muted); font-size: 12px; margin-top: 5px; }
+    #rr-python-design .rr-statusbar { padding: 7px 14px; background: var(--rr-panel); border-top: 1px solid var(--rr-line); color: var(--rr-muted); font-size: 12px; }
+    #rr-python-design [data-layout="sidebar"] .rr-layout { grid-template-columns: minmax(0,1fr) 280px; }
+    #rr-python-design [data-layout="sidebar"] .rr-side { display: none; }
+    #rr-python-design .rr-right { padding: 14px 12px; background: var(--rr-panel); border-left: 1px solid var(--rr-line); min-width: 0; }
+    #rr-python-design .rr-right .rr-settings { margin-top: 12px; }
+    #rr-python-design .rr-right .rr-field-pair { grid-template-columns: 1fr; }
+    #rr-python-design .rr-right .rr-settings-body { padding: 10px; }
+    #rr-python-design .rr-env-context { color: var(--rr-muted); font-size: 12px; margin-top: 5px; overflow-wrap: anywhere; }
+    @media(max-width:780px) { #rr-python-design .rr-stage { min-height: 850px; } #rr-python-design .rr-layout { grid-template-columns: 1fr; } #rr-python-design .rr-side { display: none; } #rr-python-design [data-layout="sidebar"] .rr-layout { grid-template-columns: 1fr; } #rr-python-design .rr-right { border-left: 0; border-top: 1px solid var(--rr-line); } #rr-python-design .rr-right .rr-field-pair { grid-template-columns: minmax(0,1fr) minmax(0,1fr); } }
+    @media(max-width:440px) { #rr-python-design .rr-stage { min-height: 1050px; } #rr-python-design .rr-field-pair, #rr-python-design .rr-right .rr-field-pair { grid-template-columns: 1fr; } #rr-python-design .rr-device { flex-basis: 100%; } #rr-python-design .rr-work { padding: 10px; } #rr-python-design .rr-envline label { flex-basis: 100%; } #rr-python-design .rr-envline select { flex: 1; min-width: 0; } #rr-python-design .rr-title { padding-right: 95px; flex-wrap: wrap; } }
+    @media(pointer:coarse) { #rr-python-design button, #rr-python-design select, #rr-python-design input:not([type="checkbox"]) { min-height: 44px; } }
+  </style>
+  <div class="viz-carousel" aria-label="Python 环境设置布局" data-previous-label="上一个方案" data-next-label="下一个方案">
+    <section data-variant="就地设置" class="rr-stage" aria-label="运行栏就地设置">
+      <div class="rr-window" data-layout="inline"></div>
+    </section>
+    <section data-variant="侧栏管理" class="rr-stage" aria-label="Python 环境侧栏" hidden>
+      <div class="rr-window" data-layout="sidebar"></div>
+    </section>
+  </div>
+  <script>
+    (() => {
+      const root = document.getElementById('rr-python-design');
+      const targets = {
+        wsl: {name:'Ubuntu · WSL', path:'/usr/bin/python3', existing:'/home/demo/venvs/analysis/bin/python', managed:'/home/demo/.remote-runner/envs/analysis/bin/python', version:'3.12.9'},
+        ssh: {name:'开发服务器 · SSH', path:'/usr/bin/python3', existing:'/home/demo/venvs/analysis/bin/python', managed:'/home/demo/.remote-runner/envs/analysis/bin/python', version:'3.11.9'},
+        local: {name:'本机 · PowerShell', path:'C:\\Python312\\python.exe', existing:'E:\\projects\\analysis\\.venv\\Scripts\\python.exe', managed:'C:\\Users\\demo\\AppData\\Local\\RemoteRunner\\envs\\analysis\\Scripts\\python.exe', version:'3.12.9'},
+        serial: {name:'调试设备 · 串口', path:'/usr/bin/python3', existing:'/opt/venv/bin/python', managed:'', version:'3.10.14'}
+      };
+      const defaults = () => ({target:'wsl', mode:'project', source:'requirements', version:'3.12.9', entry:'main.py', kind:'script', checked:false, ready:false, open:true, stage:'idle', log:'', path:'', advanced:false, gap:10});
+      const saved = window.openai?.widgetState;
+      const states = [];
+      const save = () => {
+        if (!window.openai?.setWidgetState) return;
+        const compact = states.map(({s}) => ({target:s.target, mode:s.mode, source:s.source, version:s.version, entry:s.entry, kind:s.kind, path:s.path, open:s.open, advanced:s.advanced, gap:s.gap}));
+        window.openai.setWidgetState({modelContent:{design:'Python 环境重新设计', configurations:compact.map(({target,mode,source})=>({target,mode,source}))},privateContent:{views:compact}}).catch(()=>{});
+      };
+      const restore = (s, value) => {
+        if (!value || !Object.hasOwn(targets,value.target)) return;
+        for (const k of ['mode','source','kind']) {
+          const allowed = {mode:['default','existing','project'], source:['none','requirements','uv'], kind:['script','module']}[k];
+          if (allowed.includes(value[k])) s[k] = value[k];
+        }
+        s.target = value.target;
+        for (const k of ['version','entry','path']) if (typeof value[k] === 'string' && value[k].length < 500) s[k] = value[k];
+        for (const k of ['open','advanced']) if (typeof value[k] === 'boolean') s[k] = value[k];
+        if (Number.isFinite(value.gap)) s.gap = Math.min(18, Math.max(8,value.gap));
+      };
+      root.querySelectorAll('.rr-window').forEach((windowEl,index) => {
+        const s = defaults(); restore(s,saved?.privateContent?.views?.[index]);
+        const bindings = new Map();
+        let generation = 0;
+        const isSidebar = windowEl.dataset.layout === 'sidebar';
+        windowEl.innerHTML = `
+          <div class="rr-title"><span class="rr-mark" aria-hidden="true">R</span><strong>Remote Runner</strong><span>analysis</span></div>
+          <div class="rr-menu">文件　 视图　 设备　 帮助</div>
+          <div class="rr-layout">
+            <aside class="rr-side"><div class="rr-side-head">工作区</div><div class="rr-file">▾ analysis</div><div class="rr-file rr-file-active">　main.py</div><div class="rr-file">　requirements.txt</div><div class="rr-file">　data.csv</div><div class="rr-divider"></div><div class="rr-side-head">运行历史</div><div class="rr-file">main.py · 完成</div></aside>
+            <main class="rr-main">
+              <div class="rr-editor-title">main.py</div>
+              <pre class="rr-code">import sys\nprint("Python:", sys.version.split()[0])\nprint("分析完成")</pre>
+              <div class="rr-tabs"><span class="rr-active-tab">运行控制台</span><span class="rr-hint">终端 · Ubuntu</span></div>
+              <div class="rr-work">
+                <div class="rr-runrow">
+                  <label class="rr-device"><span class="rr-label">运行设备</span><select data-field="target" aria-label="运行设备"><option value="wsl">Ubuntu · WSL</option><option value="ssh">开发服务器 · SSH</option><option value="local">本机 · PowerShell</option><option value="serial">调试设备 · 串口</option></select></label>
+                  <label class="rr-kind"><span class="rr-label">Python 入口</span><select data-field="kind" aria-label="Python 入口类型"><option value="script">脚本</option><option value="module">模块 -m</option></select></label>
+                  <label class="rr-entry"><span class="rr-label">入口</span><input data-field="entry" aria-label="入口" value="main.py"></label>
+                  <button class="rr-primary cursor-interaction" data-action="run" type="button">准备环境并运行</button>
+                </div>
+                <div class="rr-envline">
+                  <label><span>Python</span><select data-field="mode" aria-label="Python 环境"><option value="default">设备默认 Python</option><option value="existing">已有环境</option><option value="project">项目专用环境</option></select></label>
+                  <span class="rr-status" data-role="summary" aria-live="polite"></span>
+                  <button data-action="settings" type="button" class="cursor-interaction">环境设置…</button>
+                </div>
+                <div data-role="inline-settings"></div>
+                <div class="rr-options">参数：无　　终端：PTY　　超时：不限</div>
+                <div class="rr-output"><div class="rr-output-title"><span>输出</span><span data-role="runstatus">尚未运行</span></div><pre class="rr-log" data-role="log" aria-live="polite">选择环境后运行 main.py</pre></div>
+              </div>
+            </main>
+            ${isSidebar ? '<aside class="rr-right"><div class="rr-side-head">Python 环境</div><div class="rr-env-context" data-role="context"></div><div data-role="sidebar-settings"></div></aside>' : ''}
+          </div>
+          <div class="rr-statusbar" data-role="footer"></div>`;
+        const q = sel => windowEl.querySelector(sel);
+        const settings = document.createElement('section');
+        settings.className = 'rr-settings'; settings.setAttribute('aria-label', isSidebar ? '侧栏环境设置' : '运行栏环境设置');
+        settings.innerHTML = `
+          <div class="rr-settings-head"><span data-role="setting-title">项目专用环境</span><span class="rr-hint" data-role="owner">应用管理</span></div>
+          <div class="rr-settings-body">
+            <div data-role="project-fields" class="rr-field-pair">
+              <label><span class="rr-label">Python 版本</span><select data-field="version" aria-label="Python 版本"><option value="3.12.9">3.12.9</option><option value="3.11.9">3.11.9</option></select></label>
+              <label><span class="rr-label">依赖来源</span><select data-field="source" aria-label="依赖来源"><option value="none">无依赖</option><option value="requirements">requirements.txt</option><option value="uv">pyproject.toml + uv.lock</option></select></label>
+            </div>
+            <label data-role="existing-field"><span class="rr-label">目标设备上的 Python 路径</span><input data-field="path" aria-label="Python 解释器路径" placeholder="输入目标端绝对路径"></label>
+            <div class="rr-hint" data-role="source-hint"></div>
+            <div class="rr-detail"><span data-role="checkstate" aria-live="polite"></span><code class="rr-path" data-role="pythonpath"></code></div>
+            <div class="rr-notice" data-role="notice" role="status" hidden></div>
+            <div class="rr-actionrow"><button type="button" data-action="prepare" class="cursor-interaction">准备环境</button><button type="button" data-action="cancel" class="cursor-interaction" hidden>取消准备</button><button type="button" data-action="details" class="cursor-interaction">高级设置</button></div>
+            <div class="rr-advanced" data-role="advanced" hidden><span class="rr-hint">工作目录：工作区根目录</span><span class="rr-hint">额外模块路径：无</span><span class="rr-hint" data-role="advanced-source">依赖范围：主依赖</span></div>
+          </div>`;
+        q(isSidebar ? '[data-role="sidebar-settings"]' : '[data-role="inline-settings"]').append(settings);
+        const sourceLabel = () => ({none:'无依赖',requirements:'requirements.txt',uv:'uv.lock'})[s.source];
+        const busy = () => ['checking','python','dependencies','verify'].includes(s.stage);
+        const executable = () => s.mode === 'project' ? targets[s.target].managed : s.mode === 'existing' ? s.path : targets[s.target].path;
+        const render = () => {
+          const t = targets[s.target]; const unsupported = s.target === 'serial' && s.mode === 'project';
+          windowEl.style.setProperty('--rr-setting-gap',s.gap+'px');
+          for (const f of ['target','mode','source','version','entry','kind','path']) q(`[data-field="${f}"]`).value = s[f];
+          q('[data-field="mode"] option[value="project"]').disabled = s.target === 'serial';
+          q('[data-role="project-fields"]').hidden = s.mode !== 'project';
+          q('[data-role="existing-field"]').hidden = s.mode !== 'existing';
+          settings.hidden = !s.open;
+          q('[data-action="settings"]').setAttribute('aria-expanded',String(s.open));
+          q('[data-role="setting-title"]').textContent = {default:'设备默认 Python',existing:'已有环境',project:'analysis · 项目专用环境'}[s.mode];
+          q('[data-role="owner"]').textContent = s.mode === 'project' ? '应用管理' : '用户维护';
+          const hints = {none:'创建独立环境，无需项目配置文件。',requirements:'按此文件准备依赖；后续复用本次解析结果。',uv:'按已有锁文件同步依赖；运行时不修改锁文件。'};
+          q('[data-role="source-hint"]').textContent = s.mode === 'project' ? hints[s.source] : s.mode === 'default' ? '在当前运行设备上检查 Python。应用不安装依赖。' : '使用指定解释器。应用不修改或删除这个环境。';
+          const stageText = {checking:'检查解释器…',python:'安装 Python…',dependencies:'准备项目依赖…',verify:'验证环境…'}[s.stage];
+          const valid = s.mode === 'project' ? s.ready : s.checked;
+          q('[data-role="checkstate"]').textContent = unsupported ? '此设备不支持创建环境' : stageText || (valid ? `就绪 · Python ${s.mode === 'project' ? s.version : t.version}` : s.mode === 'project' ? '需要准备' : '尚未检查');
+          q('[data-role="checkstate"]').className = valid ? 'rr-success' : 'rr-status';
+          q('[data-role="pythonpath"]').textContent = valid ? executable() : '';
+          q('[data-role="summary"]').textContent = unsupported ? '不支持' : stageText || (valid ? `就绪 · ${s.mode === 'project' ? sourceLabel() : t.version}` : s.mode === 'project' ? '需要准备' : '尚未检查');
+          const notice = s.target === 'serial' ? (unsupported ? '串口仅支持设备默认 Python 或已有解释器。' : '串口只检查解释器，不枚举环境或安装依赖。') : s.stage === 'invalid' ? '请填写目标端绝对解释器路径。' : '';
+          q('[data-role="notice"]').hidden = !notice;
+          q('[data-role="notice"]').textContent = notice;
+          q('[data-action="prepare"]').textContent = s.mode === 'project' ? (s.ready ? '重新准备' : '准备环境') : '检查环境';
+          q('[data-action="prepare"]').disabled = busy() || unsupported;
+          q('[data-action="cancel"]').hidden = !busy();
+          q('[data-action="run"]').textContent = busy() ? '准备中…' : s.mode === 'project' && !s.ready ? '准备环境并运行' : '运行';
+          q('[data-action="run"]').disabled = busy() || unsupported || !s.entry.trim();
+          q('[data-role="advanced"]').hidden = !s.advanced;
+          q('[data-role="advanced-source"]').textContent = s.mode === 'project' && s.source === 'uv' ? '依赖组：主依赖　Extras：无' : '更新时创建新环境，已有任务继续使用原实例';
+          q('[data-action="details"]').textContent = s.advanced ? '收起高级设置' : '高级设置';
+          q('[data-role="footer"]').textContent = `工作区：analysis　 ·　环境位置：${t.name}　 ·　入口：${s.kind === 'module' ? '-m ' : ''}${s.entry}`;
+          if (isSidebar) q('[data-role="context"]').textContent = `analysis → ${t.name}`;
+          if (s.log) q('[data-role="log"]').textContent = s.log;
+          q('[data-role="runstatus"]').textContent = busy() ? '环境准备中' : s.stage === 'done' ? '进程已退出 · exit=0' : s.stage === 'canceled' ? '准备已取消' : '尚未运行';
+        };
+        const launch = () => {
+          s.stage = 'done';
+          s.log = `▶ ${s.kind === 'module' ? '-m ' : ''}${s.entry}  @ ${targets[s.target].name}\nPython: ${s.mode === 'project' ? s.version : targets[s.target].version}\n解释器: ${executable()}\n分析完成`;
+          render();
+        };
+        const prepare = (runAfter) => {
+          if (s.mode === 'existing' && !(s.path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(s.path))) { s.stage='invalid'; render(); return; }
+          const id = ++generation;
+          s.open=true;
+          const stages = s.mode === 'project' ? ['python','dependencies','verify'] : ['checking'];
+          s.stage=stages[0]; s.log=''; q('[data-role="log"]').textContent=''; render();
+          const step = i => {
+            if (id !== generation) return;
+            if (i < stages.length) { s.stage=stages[i]; render(); setTimeout(()=>step(i+1),480); }
+            else { s.ready=s.mode==='project'; s.checked=true; s.stage='idle'; render(); if(runAfter) launch(); }
+          };
+          setTimeout(()=>step(1),480);
+        };
+        windowEl.addEventListener('change',event => {
+          const field = event.target.dataset.field;
+          if (!field) return;
+          ++generation;
+          if (field === 'target') bindings.set(s.target, {mode:s.mode,source:s.source,version:s.version,path:s.path,checked:s.checked,ready:s.ready});
+          s[field]=event.target.value; s.stage='idle';
+          if (field === 'target') {
+            const binding=bindings.get(s.target);
+            Object.assign(s,binding || {mode:'default',path:'',checked:false,ready:false});
+            s.log=''; q('[data-role="log"]').textContent=binding ? '已恢复此设备的环境选择。' : '此设备尚无环境选择记录。';
+          }
+          if (field === 'mode') { s.checked=false; s.open=true; s.ready=false; if (s.mode==='existing') s.path=''; }
+          if (['source','version','path'].includes(field)) { s.ready=false; s.checked=false; }
+          render(); save();
+        });
+        windowEl.addEventListener('input',event => {
+          if (event.target.dataset.field==='entry') { s.entry=event.target.value; render(); }
+        });
+        windowEl.addEventListener('click',event => {
+          const action=event.target.closest('button')?.dataset.action;
+          if (!action) return;
+          if (action==='settings') s.open=!s.open;
+          if (action==='details') s.advanced=!s.advanced;
+          if (action==='prepare') prepare(false);
+          if (action==='cancel') { ++generation; s.stage='canceled'; s.log='准备已取消，当前入口和环境选择已保留。'; }
+          if (action==='run') { if ((s.mode==='project' && !s.ready) || (s.mode!=='project' && !s.checked)) prepare(true); else launch(); }
+          render(); save();
+        });
+        render(); states.push({s,render});
+        if (globalThis.Tweak) {
+          const tweak = new Tweak({container:settings,onChange:render});
+          tweak.addToggle(s,'advanced',{label:'显示高级选项'});
+          tweak.addSlider(s,'gap',{label:'设置项间距',min:8,max:18,step:2,unit:'px'});
+        }
+      });
+      window.addEventListener('openai:set_globals',event => {
+        const views=event.detail?.globals?.widgetState?.privateContent?.views;
+        if (!Array.isArray(views)) return;
+        states.forEach(({s,render},i)=>{restore(s,views[i]);render();});
+      });
+    })();
+  </script>
+</div>

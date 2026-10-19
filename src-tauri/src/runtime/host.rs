@@ -53,6 +53,13 @@ pub fn check_cancel(cancel: &AtomicBool) -> Result<()> {
     }
 }
 
+/// Atomic cancellation is shared with RunManager; keep pending IO responsive.
+pub async fn cancelled(cancel: &AtomicBool) {
+    while !cancel.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
+}
+
 /// 执行单个命令的默认最长等待（无取消信号时的兜底）
 pub const EXEC_TIMEOUT: Duration = Duration::from_secs(600);
 

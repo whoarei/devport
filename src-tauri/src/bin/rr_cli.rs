@@ -97,6 +97,12 @@ async fn main() {
                 managed_env_python: None,
                 managed_pythonpath: vec![],
                 managed_module: false,
+                module: false,
+                cwd: ".".into(),
+                bash: None,
+                workspace_context: None,
+                project_inputs: None,
+                local_env_resolved: false,
                 console_mode: ConsoleMode::Pty,
                 cols: 120,
                 rows: 40,
@@ -115,6 +121,12 @@ async fn main() {
                 managed_env_python: None,
                 managed_pythonpath: vec![],
                 managed_module: false,
+                module: false,
+                cwd: ".".into(),
+                bash: None,
+                workspace_context: None,
+                project_inputs: None,
+                local_env_resolved: false,
                 console_mode: ConsoleMode::Pipe,
                 cols: 120,
                 rows: 40,
@@ -144,6 +156,7 @@ async fn main() {
         let mut final_state = String::new();
         while let Some(ev) = next_event(&mut event_rx, &manager, &run_id).await {
             match ev {
+                RunEvent::Launch { .. } | RunEvent::WorkspaceState { .. } => {}
                 RunEvent::Resync { .. } => unreachable!("CLI recovers directly"),
                 RunEvent::RuntimeProgress { message, .. } => {
                     eprintln!("[rr-cli] prepare: {message}");
@@ -252,6 +265,12 @@ async fn main() {
                 managed_env_python: None,
                 managed_pythonpath: vec![],
                 managed_module: false,
+                module: false,
+                cwd: ".".into(),
+                bash: None,
+                workspace_context: None,
+                project_inputs: None,
+                local_env_resolved: false,
                 console_mode: ConsoleMode::Pipe,
                 cols: 120,
                 rows: 40,
@@ -267,6 +286,7 @@ async fn main() {
     let mut exit_code: Option<u32> = None;
     while let Some(ev) = next_event(&mut event_rx, &manager, &run_id).await {
         match ev {
+            RunEvent::Launch { .. } | RunEvent::WorkspaceState { .. } => {}
             RunEvent::Resync { .. } => unreachable!("CLI recovers directly"),
             RunEvent::RuntimeProgress { message, .. } => {
                 eprintln!("[rr-cli] prepare: {message}");

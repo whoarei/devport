@@ -117,8 +117,15 @@ pub fn drain_run_events(state: tauri::State<'_, AppState>) -> Vec<crate::runner:
 // ---------- 设备管理 ----------
 
 #[tauri::command]
-pub fn list_devices(state: tauri::State<'_, AppState>) -> Result<Vec<DeviceProfile>> {
-    state.device_store.list()
+pub fn list_devices(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<crate::workspace_commands::DeviceSnapshot>> {
+    Ok(state
+        .device_store
+        .list()?
+        .into_iter()
+        .map(crate::workspace_commands::device_snapshot)
+        .collect())
 }
 
 #[tauri::command]

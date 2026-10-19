@@ -437,6 +437,88 @@ pub async fn execute(
     .await
 }
 
+/// Stage a fresh workspace using the same no-follow, exclusive upload protocol
+/// as execution. Dropping the bridge on cancellation closes the helper lease.
+pub(crate) async fn upload_workspace(
+    config: &WslConfig,
+    local: &std::path::Path,
+    remote: &str,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<String> {
+    let local = local.to_path_buf();
+    let operation = async {
+        let files = tokio::task::spawn_blocking(move || filesync::collect(&local))
+            .await
+            .map_err(|e| failure(e.to_string()))??;
+        upload_with_command(helper_command(config)?, remote, files, cancel).await
+    };
+    tokio::select! {
+        biased;
+        _ = crate::runtime::host::cancelled(cancel) => Err(crate::runtime::host::canceled_error()),
+        result = operation => result,
+    }
+}
+
+/// Management workspaces are removed through dirfd-based file operations too;
+/// a rejected upload must never be followed by a shell cleanup through a link.
+pub(crate) async fn remove_workspace(config: &WslConfig, remote: &str) -> Result<()> {
+    crate::workspace_ref::validate_device_path(remote).map_err(failure)?;
+    let (parent, name) = remote
+        .rsplit_once('/')
+        .filter(|(parent, name)| !parent.is_empty() && !name.is_empty())
+        .ok_or_else(|| failure("invalid temporary workspace"))?;
+    let mut bridge = Bridge::launch(helper_command(config)?).await?;
+    bridge
+        .request(json!({"type":"fs_open", "path":parent}))
+        .await?;
+    bridge
+        .request(json!({"type":"fs_delete", "path":name}))
+        .await
+}
+
+async fn upload_with_command(
+    command: impl Into<HelperCommand>,
+    remote: &str,
+    files: Vec<filesync::Entry>,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<String> {
+    let operation = async {
+        let mut bridge = Bridge::launch(command).await?;
+        let remote = bridge.resolve_path(remote)?;
+        bridge
+            .request(json!({"type":"init", "remote":remote, "in_place":false,
+            "command":"", "mode":"pipe", "cols":80, "rows":24, "timeout":0}))
+            .await?;
+        bridge.upload(files).await?;
+        Ok(remote)
+    };
+    tokio::select! {
+        biased;
+        _ = crate::runtime::host::cancelled(cancel) => Err(crate::runtime::host::canceled_error()),
+        result = operation => result,
+    }
+}
+
+impl Bridge {
+    async fn upload(&mut self, files: Vec<filesync::Entry>) -> Result<()> {
+        for entry in files {
+            if let Some(data) = entry.data {
+                self.request(json!({"type":"file", "path":entry.path, "mode":entry.mode}))
+                    .await?;
+                for chunk in data.chunks(48 * 1024) {
+                    self.request(json!({"type":"chunk", "data":STANDARD.encode(chunk)}))
+                        .await?;
+                }
+                self.request(json!({"type":"end"})).await?;
+            } else {
+                self.request(json!({"type":"directory", "path":entry.path}))
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// workspace 上传完成后、启动进程前的 Managed Runtime 准备钩子（00027 §13）
 pub type PrepareHook = Box<dyn FnOnce(&str) -> std::result::Result<(), RunnerError> + Send>;
 
@@ -477,26 +559,11 @@ pub(crate) async fn execute_with_command(
             .request(
                 json!({"type":"init", "remote":req.workspace.as_ref().map(|_| remote),
             "in_place":in_place, "command":build_script(&script_req, remote), "mode":req.console_mode,
+            "workspace_cwd":req.workspace.as_ref().map(|_| req.cwd.as_str()),
             "cols":req.cols, "rows":req.rows, "timeout":req.timeout_secs}),
             )
             .await?;
-        for entry in files {
-            if let Some(data) = entry.data {
-                bridge
-                    .request(json!({"type":"file", "path":entry.path, "mode":entry.mode}))
-                    .await?;
-                for chunk in data.chunks(48 * 1024) {
-                    bridge
-                        .request(json!({"type":"chunk", "data":STANDARD.encode(chunk)}))
-                        .await?;
-                }
-                bridge.request(json!({"type":"end"})).await?;
-            } else {
-                bridge
-                    .request(json!({"type":"directory", "path":entry.path}))
-                    .await?;
-            }
-        }
+        bridge.upload(files).await?;
         Ok::<_, RunnerError>(())
     };
     {
@@ -510,6 +577,19 @@ pub(crate) async fn execute_with_command(
         }
     }
     emit(Event::State(RunState::Starting));
+    if req.kind == crate::runner::ScriptKind::Command {
+        emit(Event::Launch(crate::workspace_run::Launch {
+            program: "/bin/sh".into(),
+            version: None,
+            cwd: if req.workspace.is_some() {
+                remote.into()
+            } else {
+                ".".into()
+            },
+            python_path: vec![],
+            environment: "command".into(),
+        }));
+    }
     // Managed Runtime：workspace 已在目标可见，执行 locked environment sync 等准备
     if let Some(hook) = prepare_hook {
         hook(remote)?;

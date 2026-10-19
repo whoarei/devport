@@ -508,6 +508,7 @@ def main():
                             exec_argv, cwd=exec_cwd, env=child_env,
                             stdin=stdin_pipe, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             start_new_session=True)
+                        exec_reported = False
                         exec_pending.extend(exec_input)
                         exec_input = None
                         exec_fds = {exec_proc.stdout.fileno(), exec_proc.stderr.fileno()}
@@ -530,6 +531,11 @@ def main():
                             raise ValueError("invalid terminal cwd")
                         initialized = True
                         remote = request.get("remote")
+                        workspace_cwd = request.get("workspace_cwd", ".")
+                        if workspace_cwd is not None and workspace_cwd != ".":
+                            if remote is None or not isinstance(workspace_cwd, str):
+                                raise ValueError("invalid workspace cwd")
+                            parts(workspace_cwd)
                         if remote is not None:
                             if not remote.startswith("/"):
                                 raise ValueError("workspace must be absolute")
@@ -586,7 +592,12 @@ def main():
                         emit("ack")
                     elif kind == "start" and initialized and process is None and upload is None:
                         if root is not None:
-                            os.fchdir(root)
+                            cwd = request.get("workspace_cwd") or "."
+                            handle = walk(root, parts(cwd)) if cwd != "." else os.dup(root)
+                            try:
+                                os.fchdir(handle)
+                            finally:
+                                os.close(handle)
                         elif request.get("cwd"):
                             # 工作区终端（00029）：交互 shell 进入设备上的工作区目录
                             os.chdir(request["cwd"])

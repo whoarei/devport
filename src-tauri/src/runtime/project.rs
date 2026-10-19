@@ -20,7 +20,7 @@ pub enum EntryMode {
 pub struct PythonProject {
     pub name: String,
     pub requires_python: String,
-    /// .python-version 中的精确 CPython patch 版本（如 3.12.9）
+    /// .python-version 中的 CPython 请求（如 3.12 或 3.12.9）。
     pub python_version: String,
     pub lock_sha256: String,
     pub entry: String,
@@ -33,6 +33,20 @@ pub struct PythonProject {
     pub package_source_identity: String,
     #[serde(skip)]
     pub workspace: PathBuf,
+    /// Exact bounded metadata consumed by this plan, including legacy callers.
+    #[serde(skip)]
+    pub input_hashes: Vec<(String, String)>,
+}
+
+impl PythonProject {
+    /// Resolve a minor request within the project's compatibility constraints.
+    pub fn python_request(&self) -> String {
+        if self.python_version.split('.').count() == 2 {
+            format!("=={}.*,{}", self.python_version, self.requires_python)
+        } else {
+            self.python_version.clone()
+        }
+    }
 }
 
 fn invalid(message: impl Into<String>) -> RunnerError {
@@ -45,18 +59,80 @@ fn sha256_hex(data: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// 精确 CPython patch 版本（3.12.9）；拒绝范围/多版本/PyPy/debug/free-threaded
-fn parse_exact_python_version(text: &str) -> Result<String> {
+/// CPython minor or patch request; no ranges, variants, or multiple versions.
+fn parse_python_version(text: &str) -> Result<String> {
     let v = text.trim();
-    if !crate::runtime::catalog::is_exact_version(v) {
+    let parts: Vec<_> = v.split('.').collect();
+    let parsed = parse_version(v);
+    if !(2..=3).contains(&parts.len())
+        || parts
+            .iter()
+            .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()))
+        || parsed.is_none()
+    {
         return Err(RunnerError::managed(
             code::INVALID_PYTHON_VERSION,
             format!(
-                ".python-version must be an exact CPython patch version like 3.12.9, got {v:?}"
+                ".python-version must be a CPython minor or patch version like 3.12 or 3.12.9, got {v:?}"
             ),
         ));
     }
-    Ok(v.to_string())
+    let parsed = parsed.unwrap();
+    Ok(if parts.len() == 2 {
+        format!("{}.{}", parsed.major, parsed.minor)
+    } else {
+        format!("{}.{}.{}", parsed.major, parsed.minor, parsed.patch)
+    })
+}
+
+pub fn python_version_matches(request: &str, actual: &str) -> bool {
+    crate::runtime::catalog::is_exact_version(actual)
+        && parse_version(actual).is_some()
+        && (actual == request
+            || request.split('.').count() == 2 && actual.starts_with(&format!("{request}.")))
+}
+
+fn request_satisfies_requires_python(request: &str, spec: &str) -> bool {
+    if request.split('.').count() == 3 {
+        return satisfies_requires_python(spec, request);
+    }
+    // Find the smallest possible patch from lower bounds, skip excluded patches,
+    // then check all clauses once. Do not interpret a minor request as patch zero.
+    let mut patch = 0;
+    let mut excluded = std::collections::BTreeSet::new();
+    for clause in spec.split(',') {
+        let raw = clause
+            .trim()
+            .trim_start_matches(['<', '>', '=', '!', '~'])
+            .trim();
+        if let Some(version) = parse_version(raw.strip_suffix(".*").unwrap_or(raw)) {
+            let base = format!("{}.{}", version.major, version.minor);
+            if base == request {
+                let clause = clause.trim();
+                let wildcard = raw.ends_with(".*");
+                if clause.starts_with(">=")
+                    || clause.starts_with("~=")
+                    || clause.starts_with("==") && !wildcard
+                {
+                    patch = patch.max(version.patch);
+                } else if clause.starts_with('>') {
+                    let Some(next) = version.patch.checked_add(1) else {
+                        return false;
+                    };
+                    patch = patch.max(next);
+                } else if clause.starts_with("!=") && !wildcard {
+                    excluded.insert(version.patch);
+                }
+            }
+        }
+    }
+    while excluded.contains(&patch) {
+        let Some(next) = patch.checked_add(1) else {
+            return false;
+        };
+        patch = next;
+    }
+    satisfies_requires_python(spec, &format!("{request}.{patch}"))
 }
 
 /// 解析 requires-python 为子句列表，逐条校验精确版本是否满足（PEP 440 常用子集）
@@ -105,18 +181,31 @@ fn check_clause(op: &str, raw: &str, ver: Version) -> bool {
         Some(b) => (true, b),
         None => (false, raw),
     };
-    // ~=X.Y.Z 等价 >=X.Y.Z 且 <X.(Y+1).0
+    // ~=X.Y allows later minors within X; ~=X.Y.Z stays within X.Y.
     if op == "~=" && !wildcard {
         let Some(lower) = parse_version(base) else {
             return false;
         };
-        return ver >= lower
-            && ver
-                < Version {
-                    major: lower.major,
-                    minor: lower.minor + 1,
-                    patch: 0,
-                };
+        let upper = if base.split('.').count() == 2 {
+            let Some(major) = lower.major.checked_add(1) else {
+                return false;
+            };
+            Version {
+                major,
+                minor: 0,
+                patch: 0,
+            }
+        } else {
+            let Some(minor) = lower.minor.checked_add(1) else {
+                return false;
+            };
+            Version {
+                major: lower.major,
+                minor,
+                patch: 0,
+            }
+        };
+        return ver >= lower && ver < upper;
     }
     if wildcard && op != "==" && op != "!=" {
         return false;
@@ -224,21 +313,9 @@ pub fn inspect(workspace: &Path) -> Result<PythonProject> {
     // 1. 项目契约三件套
     let pyproject_text = std::fs::read_to_string(root.join("pyproject.toml"))
         .map_err(|_| invalid("pyproject.toml is required for managed Python projects"))?;
-    let python_version = std::fs::read_to_string(root.join(".python-version"))
-        .map_err(|_| {
-            RunnerError::managed(code::INVALID_PYTHON_VERSION, ".python-version is required")
-        })
-        .and_then(|text| {
-            let mut lines = text.lines().filter(|l| !l.trim().is_empty());
-            let first = lines.next().unwrap_or("").trim();
-            if lines.next().is_some() {
-                return Err(RunnerError::managed(
-                    code::INVALID_PYTHON_VERSION,
-                    ".python-version must contain exactly one version",
-                ));
-            }
-            parse_exact_python_version(first)
-        })?;
+    let version_text = std::fs::read_to_string(root.join(".python-version")).map_err(|_| {
+        RunnerError::managed(code::INVALID_PYTHON_VERSION, ".python-version is required")
+    })?;
     let lock_bytes = std::fs::read(root.join("uv.lock")).map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => RunnerError::managed(
             code::MISSING_LOCK,
@@ -246,6 +323,29 @@ pub fn inspect(workspace: &Path) -> Result<PythonProject> {
         ),
         _ => RunnerError::Io(e),
     })?;
+    parse_inputs(root, &pyproject_text, &version_text, &lock_bytes, None)
+}
+
+/// Manifest parsing is independent of source location and execution entry. New
+/// workspace runs validate descendants with the source host's no-follow API.
+pub fn parse_inputs(
+    root: PathBuf,
+    pyproject_text: &str,
+    version_text: &str,
+    lock_bytes: &[u8],
+    launch: Option<(&str, bool)>,
+) -> Result<PythonProject> {
+    let mut lines = version_text.lines().filter(|l| !l.trim().is_empty());
+    let python_version = parse_python_version(lines.next().unwrap_or(""))?;
+    if lines.next().is_some() {
+        return Err(RunnerError::managed(
+            code::INVALID_PYTHON_VERSION,
+            ".python-version must contain exactly one version",
+        ));
+    }
+    if pyproject_text.len() > 1024 * 1024 || version_text.len() > 4096 {
+        return Err(invalid("Python project metadata is too large"));
+    }
     if lock_bytes.len() > crate::runtime::LOCK_LIMIT {
         return Err(RunnerError::managed(
             code::INVALID_PROJECT,
@@ -276,7 +376,7 @@ pub fn inspect(workspace: &Path) -> Result<PythonProject> {
         .and_then(toml::Value::as_str)
         .ok_or_else(|| invalid("[project].requires-python is required"))?
         .to_string();
-    if !satisfies_requires_python(&requires_python, &python_version) {
+    if !request_satisfies_requires_python(&python_version, &requires_python) {
         return Err(RunnerError::managed(
             code::VERSION_MISMATCH,
             format!(".python-version {python_version} does not satisfy requires-python {requires_python:?}"),
@@ -361,27 +461,37 @@ pub fn inspect(workspace: &Path) -> Result<PythonProject> {
     }
 
     // 5. [tool.remote-runner] 运行配置
+    let empty = toml::Table::new();
     let rr = pyproject
         .get("tool")
         .and_then(|t| t.get("remote-runner"))
         .and_then(toml::Value::as_table)
+        .or_else(|| launch.map(|_| &empty))
         .ok_or_else(|| invalid("pyproject.toml must have a [tool.remote-runner] table"))?;
-    let mode = match rr
-        .get("mode")
-        .and_then(toml::Value::as_str)
-        .unwrap_or("script")
-    {
-        "script" => EntryMode::Script,
-        "module" => EntryMode::Module,
-        other => {
-            return Err(invalid(format!(
-                "mode must be \"script\" or \"module\", got {other:?}"
-            )))
+    let mode = if let Some((_, module)) = launch {
+        if module {
+            EntryMode::Module
+        } else {
+            EntryMode::Script
+        }
+    } else {
+        match rr
+            .get("mode")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("script")
+        {
+            "script" => EntryMode::Script,
+            "module" => EntryMode::Module,
+            other => {
+                return Err(invalid(format!(
+                    "mode must be \"script\" or \"module\", got {other:?}"
+                )))
+            }
         }
     };
-    let entry_raw = rr
-        .get("entry")
-        .and_then(toml::Value::as_str)
+    let entry_raw = launch
+        .map(|(entry, _)| entry)
+        .or_else(|| rr.get("entry").and_then(toml::Value::as_str))
         .ok_or_else(|| invalid("[tool.remote-runner].entry is required"))?;
     let entry = if mode == EntryMode::Module {
         if !is_module_name(entry_raw) {
@@ -393,23 +503,25 @@ pub fn inspect(workspace: &Path) -> Result<PythonProject> {
     } else {
         let entry = relative_workspace_path(entry_raw)
             .ok_or_else(|| invalid("entry must be a relative path inside the workspace"))?;
-        // 入口必须是工作区内的真实文件（禁链接，同 runner 既有语义）
-        let mut path = root.clone();
-        for part in entry.split('/') {
-            path.push(part);
-            if std::fs::symlink_metadata(&path)
-                .map(|m| m.file_type().is_symlink())
-                .unwrap_or(false)
-            {
-                return Err(invalid(
-                    "symbolic links are not supported for script entries",
-                ));
+        // Legacy entry checks. Workspace launches use their source host instead.
+        if launch.is_none() {
+            let mut path = root.clone();
+            for part in entry.split('/') {
+                path.push(part);
+                if std::fs::symlink_metadata(&path)
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false)
+                {
+                    return Err(invalid(
+                        "symbolic links are not supported for script entries",
+                    ));
+                }
             }
-        }
-        let resolved = std::fs::canonicalize(&path)
-            .map_err(|_| invalid(format!("entry file does not exist: {entry}")))?;
-        if !resolved.starts_with(&root) || !resolved.is_file() {
-            return Err(invalid("entry must be a file inside the workspace"));
+            let resolved = std::fs::canonicalize(&path)
+                .map_err(|_| invalid(format!("entry file does not exist: {entry}")))?;
+            if !resolved.starts_with(&root) || !resolved.is_file() {
+                return Err(invalid("entry must be a file inside the workspace"));
+            }
         }
         entry
     };
@@ -420,7 +532,7 @@ pub fn inspect(workspace: &Path) -> Result<PythonProject> {
                 invalid("python-path entries must be relative paths inside the workspace")
             })?;
             let full = root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
-            if !full.is_dir() {
+            if launch.is_none() && !full.is_dir() {
                 return Err(invalid(format!(
                     "python-path entry is not a directory: {rel}"
                 )));
@@ -499,6 +611,17 @@ pub fn inspect(workspace: &Path) -> Result<PythonProject> {
         extras,
         package_source_identity: sha256_hex(identity_lines.join("\n").as_bytes()),
         workspace: root,
+        input_hashes: vec![
+            (
+                "pyproject.toml".into(),
+                sha256_hex(pyproject_text.as_bytes()),
+            ),
+            (
+                ".python-version".into(),
+                sha256_hex(version_text.as_bytes()),
+            ),
+            ("uv.lock".into(), sha256_hex(lock_bytes)),
+        ],
     })
 }
 
@@ -543,7 +666,7 @@ pub fn config_template(project_name: &str) -> String {
     format!(
         r#"# Remote Runner 工作区配置（Managed Python，uv 项目契约）
 # 完整运行还需要两个文件（本模板不生成）：
-#   .python-version  精确 CPython patch 版本，如 3.12.9，须满足 requires-python
+#   .python-version  CPython 次版本或补丁版本，如 3.12 或 3.12.9，须满足 requires-python
 #   uv.lock          在本目录执行 `uv lock` 生成
 
 [project]
@@ -659,9 +782,18 @@ python-path = ["src"]
     }
 
     #[test]
-    fn python_version_must_be_exact_patch_version() {
+    fn python_version_accepts_minor_or_patch_requests_only() {
+        for version in ["3.12", "3.12.9"] {
+            let f = valid_fixture();
+            f.write(".python-version", version);
+            assert_eq!(inspect(&f.0).unwrap().python_version, version);
+        }
         for bad in [
-            "3.12",
+            "3",
+            "3.12.",
+            "3.12.9.1",
+            ">=3.12",
+            "3.12rc1",
             "3.12.*",
             "3.12 3.13",
             "pypy3.10",
@@ -676,6 +808,70 @@ python-path = ["src"]
                 "{bad}: {err}"
             );
         }
+    }
+
+    #[test]
+    fn minor_request_checks_the_compatible_patch_range_instead_of_assuming_patch_zero() {
+        for (requires, ok) in [
+            (">=3.12.9,<3.13", true),
+            ("==3.12.9", true),
+            (">3.12.9,!=3.12.10", true),
+            ("~=3.12.9", true),
+            ("~=3.11", true),
+            ("~=3.11.9", false),
+            (">=3.13", false),
+            ("<3.12", false),
+            ("!=3.12.*", false),
+            (">=3.12.9,<3.12.9", false),
+            ("nonsense", false),
+        ] {
+            assert_eq!(
+                request_satisfies_requires_python("3.12", requires),
+                ok,
+                "{requires}"
+            );
+        }
+        let f = valid_fixture();
+        f.write(".python-version", "3.12");
+        f.write(
+            "pyproject.toml",
+            &PYPROJECT.replace("==3.12.*", ">=3.12.9,<3.13"),
+        );
+        assert_eq!(
+            inspect(&f.0).unwrap().python_request(),
+            "==3.12.*,>=3.12.9,<3.13"
+        );
+        assert!(python_version_matches("3.12", "3.12.9"));
+        assert!(!python_version_matches("3.12", "3.120.9"));
+        assert!(!python_version_matches("3.12", "3.13.0"));
+        assert!(!python_version_matches("3.12.9", "3.12.10"));
+        assert!(!python_version_matches("3.12", "3.12.9rc1"));
+    }
+
+    #[test]
+    fn workspace_launch_selects_its_entry_and_does_not_require_a_legacy_entry_table() {
+        let root = PathBuf::from("/source");
+        let text = "[project]\nname='test'\nrequires-python='>=3.12'\ndependencies=[]\n";
+        let p = parse_inputs(
+            root.clone(),
+            text,
+            "3.12.9",
+            b"version=1",
+            Some(("pytest", true)),
+        )
+        .unwrap();
+        assert_eq!(p.entry, "pytest");
+        assert_eq!(p.mode, EntryMode::Module);
+        let p = parse_inputs(
+            root,
+            &format!("{text}\n[tool.remote-runner]\nentry='old.py'\nmode='invalid-legacy-mode'\n"),
+            "3.12.9",
+            b"version=1",
+            Some(("selected.py", false)),
+        )
+        .unwrap();
+        assert_eq!(p.entry, "selected.py");
+        assert_eq!(p.mode, EntryMode::Script);
     }
 
     #[test]

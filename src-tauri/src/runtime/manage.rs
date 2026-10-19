@@ -104,13 +104,19 @@ pub async fn rebuild_on_device(
             let ready = prepare::prepare_runtime(
                 host.clone(),
                 catalog,
-                &project.python_version,
+                &project.python_request(),
                 config_dir,
                 network,
                 &cancel,
                 &mut events,
             )
             .await?;
+            let verify = crate::workspace_run::input_verifier(
+                device,
+                config_dir,
+                workspace_dir,
+                project.input_hashes.clone(),
+            );
             manager::rebuild_environment(
                 host,
                 leases,
@@ -123,6 +129,7 @@ pub async fn rebuild_on_device(
                 "manage-rebuild",
                 &cancel,
                 &mut events,
+                Some(&*verify),
             )
             .await
         }
@@ -134,6 +141,7 @@ pub async fn rebuild_on_device(
             let result = match upload_ssh_workspace(&conn, workspace_dir, &remote).await {
                 Ok(()) => {
                     rebuild_prepared(
+                        device,
                         host.clone(),
                         config_dir,
                         &project,
@@ -156,12 +164,20 @@ pub async fn rebuild_on_device(
                 .wsl
                 .clone()
                 .ok_or_else(|| RunnerError::InvalidInput("WSL configuration is required".into()))?;
-            let wsl_host = WslHost::open(config, &remote_root()).await?;
+            let wsl_host = WslHost::open(config.clone(), &remote_root()).await?;
             let remote = wsl_host.resolve_path(&temp_workspace(device)).await?;
             let host: Arc<dyn RuntimeHost + Send + Sync> = Arc::new(wsl_host);
-            let result = match upload_wsl_workspace(&host, workspace_dir, &remote).await {
-                Ok(()) => {
+            let result = match crate::wsl::upload_workspace(
+                &config,
+                Path::new(workspace_dir),
+                &remote,
+                &cancel,
+            )
+            .await
+            {
+                Ok(_) => {
                     rebuild_prepared(
+                        device,
                         host.clone(),
                         config_dir,
                         &project,
@@ -176,7 +192,7 @@ pub async fn rebuild_on_device(
                 }
                 Err(e) => Err(e),
             };
-            let _ = host.remove(&remote).await;
+            let _ = crate::wsl::remove_workspace(&config, &remote).await;
             result
         }
     }
@@ -184,6 +200,7 @@ pub async fn rebuild_on_device(
 
 #[allow(clippy::too_many_arguments)]
 async fn rebuild_prepared(
+    device: &DeviceProfile,
     host: Arc<dyn RuntimeHost + Send + Sync>,
     config_dir: &Path,
     project: &crate::runtime::project::PythonProject,
@@ -197,13 +214,19 @@ async fn rebuild_prepared(
     let ready = prepare::prepare_runtime(
         host.clone(),
         catalog,
-        &project.python_version,
+        &project.python_request(),
         config_dir,
         network,
         cancel,
         events,
     )
     .await?;
+    let verify = crate::workspace_run::input_verifier(
+        device,
+        config_dir,
+        remote_workspace,
+        project.input_hashes.clone(),
+    );
     manager::rebuild_environment(
         host,
         leases,
@@ -216,6 +239,7 @@ async fn rebuild_prepared(
         "manage-rebuild",
         cancel,
         events,
+        Some(&*verify),
     )
     .await
 }
@@ -235,32 +259,6 @@ async fn upload_ssh_workspace(
 ) -> Result<()> {
     let sftp = crate::ssh::filesync::open_sftp(conn).await?;
     crate::ssh::filesync::upload_dir(&sftp, Path::new(workspace_dir), remote).await?;
-    Ok(())
-}
-
-/// WSL 工作区上传：collect 后逐文件 write_file（目录条目显式 mkdir -p）
-pub(crate) async fn upload_wsl_workspace(
-    host: &Arc<dyn RuntimeHost + Send + Sync>,
-    workspace_dir: &str,
-    remote: &str,
-) -> Result<()> {
-    let dir = workspace_dir.to_string();
-    let files = tokio::task::spawn_blocking(move || crate::wsl::filesync::collect(Path::new(&dir)))
-        .await
-        .map_err(|e| RunnerError::TaskFailed(e.to_string()))??;
-    host.mkdir_all(remote).await?;
-    for entry in &files {
-        let target = host.join(remote, &entry.path);
-        match &entry.data {
-            None => host.mkdir_all(&target).await?,
-            Some(data) => {
-                if let Some((parent, _)) = target.rsplit_once('/') {
-                    host.mkdir_all(parent).await?;
-                }
-                host.write_file(&target, data, entry.mode).await?;
-            }
-        }
-    }
     Ok(())
 }
 

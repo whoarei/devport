@@ -64,6 +64,38 @@ fn python_interpreter() -> Result<PathBuf> {
     ))
 }
 
+pub(crate) fn select_bash(
+    config: &crate::device::LocalConfig,
+    requested: Option<&str>,
+) -> Result<Shell> {
+    let is_bash = |id: &str| matches!(id, "bash" | "msys2" | "gitbash");
+    if requested.is_none() && is_bash(&config.shell) {
+        return shells::resolve(config);
+    }
+    if let Some(id) = requested {
+        if !is_bash(id) {
+            return Err(failure("Select a detected Bash shell"));
+        }
+        return shells::resolve(&crate::device::LocalConfig {
+            shell: id.into(),
+            path: None,
+            no_profile: false,
+        });
+    }
+    let candidates = shells::detect()
+        .into_iter()
+        .filter(|s| is_bash(&s.id))
+        .collect::<Vec<_>>();
+    if candidates.len() != 1 {
+        return Err(failure("Select Git Bash/MSYS2/Bash in Run Settings; a Bash script cannot run in PowerShell/cmd/zsh/sh"));
+    }
+    shells::resolve(&crate::device::LocalConfig {
+        shell: candidates[0].id.clone(),
+        path: None,
+        no_profile: false,
+    })
+}
+
 /// 把入口相对路径拼成工作区内的原生绝对路径
 fn entry_path(workspace: &str, entry: &str) -> PathBuf {
     let mut path = PathBuf::from(workspace);
@@ -75,7 +107,7 @@ fn entry_path(workspace: &str, entry: &str) -> PathBuf {
 
 /// MSYS2/Git Bash 的 Windows 绝对路径转 posix 形式（E:\a\b → /e/a/b）
 #[cfg(windows)]
-fn to_msys_path(path: &Path) -> String {
+pub(crate) fn to_msys_path(path: &Path) -> String {
     let s = path.to_string_lossy().replace('\\', "/");
     if s.len() >= 2 && s.as_bytes()[1] == b':' {
         format!("/{}{}", s[..1].to_ascii_lowercase(), &s[2..])
@@ -108,7 +140,7 @@ pub(crate) fn invocation(shell: &Shell, req: &RunRequest) -> Result<(PathBuf, Ve
             // Managed Runtime：直接 spawn 环境内 Python，不探测系统 Python（00027 §13）
             if let Some(env_python) = &req.managed_env_python {
                 let mut args = vec!["-u".to_string()];
-                if req.managed_module {
+                if req.managed_module || req.module {
                     args.push("-m".to_string());
                     args.push(entry.to_string());
                 } else {
@@ -117,10 +149,12 @@ pub(crate) fn invocation(shell: &Shell, req: &RunRequest) -> Result<(PathBuf, Ve
                 args.extend(req.args.iter().cloned());
                 return Ok((PathBuf::from(env_python), args));
             }
-            let mut args = vec![
-                "-u".to_string(),
-                entry_path(workspace, entry).to_string_lossy().into_owned(),
-            ];
+            let mut args = vec!["-u".to_string()];
+            if req.module {
+                args.extend(["-m".into(), entry.to_string()]);
+            } else {
+                args.push(entry_path(workspace, entry).to_string_lossy().into_owned());
+            }
             args.extend(req.args.iter().cloned());
             Ok((python_interpreter()?, args))
         }
@@ -182,7 +216,9 @@ pub(crate) fn invocation(shell: &Shell, req: &RunRequest) -> Result<(PathBuf, Ve
 fn spec_for(shell: &Shell, req: &RunRequest) -> Result<SessionSpec> {
     let (program, args) = invocation(shell, req)?;
     let cwd = match workspace_dir(req) {
-        Some(workspace) => PathBuf::from(workspace),
+        Some(workspace) => {
+            crate::verbatim::simplify(&entry_path(workspace, &req.cwd)).to_path_buf()
+        }
         None => default_working_directory()
             .ok_or_else(|| failure("cannot determine the local working directory"))?,
     };
@@ -210,6 +246,7 @@ fn spec_for(shell: &Shell, req: &RunRequest) -> Result<SessionSpec> {
         args,
         cwd: Some(cwd),
         env,
+        env_clear: req.local_env_resolved,
         mode: req.console_mode,
         cols: req.cols,
         rows: req.rows,
@@ -223,6 +260,58 @@ async fn sleep_until(deadline: Option<tokio::time::Instant>) {
     }
 }
 
+/// MSYS parses Windows command lines differently from the CRT. Put literal argv
+/// in a quoted script so neither pipe mode nor ConPTY can reinterpret quotes.
+struct BashLaunchFile(PathBuf);
+impl Drop for BashLaunchFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+fn bash_launch_file(
+    shell: &Shell,
+    req: &RunRequest,
+    spec: &mut SessionSpec,
+) -> Result<Option<BashLaunchFile>> {
+    #[cfg(windows)]
+    if req.workspace_context.is_some() && req.kind == ScriptKind::Shell {
+        use std::io::Write;
+        let path =
+            std::env::temp_dir().join(format!("remote-runner-bash-{}.sh", uuid::Uuid::new_v4()));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        let guard = BashLaunchFile(path);
+        let mut argv = vec![
+            to_msys_path(&shell.path),
+            to_msys_path(&entry_path(
+                workspace_dir(req).unwrap(),
+                req.entry.as_deref().unwrap(),
+            )),
+        ];
+        argv.extend(req.args.iter().cloned());
+        let script = format!(
+            "exec {}\n",
+            argv.iter()
+                .map(|a| crate::runner::sh_quote(a))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        file.write_all(script.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        spec.args = if shell.login {
+            vec!["-l".into(), to_msys_path(&guard.0)]
+        } else {
+            vec![to_msys_path(&guard.0)]
+        };
+        return Ok(Some(guard));
+    }
+    let _ = (shell, req, spec);
+    Ok(None)
+}
+
 pub async fn execute(
     config: &LocalConfig,
     req: &RunRequest,
@@ -233,14 +322,32 @@ pub async fn execute(
         code: None,
         stopped: Some(StopReason::User),
     };
-    let shell = shells::resolve(config)?;
-    let spec = spec_for(&shell, req)?;
+    let shell = if req.workspace_context.is_some() && req.kind == ScriptKind::Shell {
+        select_bash(config, req.bash.as_deref())?
+    } else {
+        shells::resolve(config)?
+    };
+    let mut spec = spec_for(&shell, req)?;
+    if req.kind == ScriptKind::Command {
+        emit(Event::Launch(crate::workspace_run::Launch {
+            program: spec.program.to_string_lossy().into_owned(),
+            version: None,
+            cwd: spec
+                .cwd
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            python_path: vec![],
+            environment: "command".into(),
+        }));
+    }
+    let launch_file = bash_launch_file(&shell, req, &mut spec)?;
     emit(Event::State(RunState::Starting));
     // spawn（含 ConPTY 创建）是阻塞操作，放入阻塞线程池；期间可取消
-    let spawn = tokio::task::spawn_blocking(move || Session::spawn(&spec));
+    let spawn = tokio::task::spawn_blocking(move || (Session::spawn(&spec), launch_file));
     tokio::pin!(spawn);
     let mut pending_controls = Vec::new();
-    let mut session = loop {
+    let (session, _launch_file) = loop {
         tokio::select! {
             biased;
             Some(control) = controls.recv() => {
@@ -249,9 +356,10 @@ pub async fn execute(
                 }
                 pending_controls.push(control);
             },
-            result = &mut spawn => break result.map_err(|e| RunnerError::TaskFailed(e.to_string()))??,
+            result = &mut spawn => break result.map_err(|e| RunnerError::TaskFailed(e.to_string()))?,
         }
     };
+    let mut session = session?;
     emit(Event::State(RunState::Running));
     for control in pending_controls {
         match control {
@@ -385,6 +493,7 @@ pub async fn test_device(config: &LocalConfig) -> Result<String> {
         args,
         cwd: default_working_directory(),
         env: Vec::new(),
+        env_clear: false,
         mode: crate::process::ConsoleMode::Pipe,
         cols: 80,
         rows: 24,

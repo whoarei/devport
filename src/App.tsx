@@ -6,6 +6,8 @@ import { DeviceDialog } from "./components/DeviceDialog";
 import { UsbDialog } from "./components/UsbDialog";
 import { RemoteWorkspaceDialog } from "./components/RemoteWorkspaceDialog";
 import { UnsavedDialog } from "./components/UnsavedDialog";
+import { WorkspaceRunDialogs } from "./components/WorkspaceRunDialogs";
+import { useWorkspaceRunStore } from "./workspaceRunStore";
 import { TitleBar } from "./components/TitleBar";
 import { AboutDialog } from "./components/AboutDialog";
 import { SplitHandle } from "./components/SplitHandle";
@@ -58,7 +60,7 @@ export default function App() {
     const report = (error: unknown) => useAppStore.setState({ editorError: errorMessage(error) });
     void loadDevices().catch(report);
     void loadRuns().catch(report);
-    return onRunEvents(handleRunEvents, report);
+    return onRunEvents((events) => { handleRunEvents(events); useWorkspaceRunStore.getState().events(events); }, report);
   }, [loadDevices, loadRuns, handleRunEvents]);
 
   // 启动后静默检查一次更新；发现新版本时点亮标题栏「更新」按钮，失败不打扰用户。
@@ -241,6 +243,7 @@ export default function App() {
   return (
     <div className="app">
       <UnsavedDialog />
+      <WorkspaceRunDialogs />
       <AboutDialog dialogRef={aboutDialog} autoCheckNonce={aboutAutoCheck} />
       <DeviceDialog />
       <UsbDialog />

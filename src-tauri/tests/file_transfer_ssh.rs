@@ -328,6 +328,40 @@ struct Fixture {
     config: PathBuf,
     listener: tokio::task::JoinHandle<()>,
 }
+
+#[tokio::test]
+async fn runner_metadata_is_source_owned_and_survives_reopening_over_sftp() {
+    use remote_runner::workspace_run::{Command, Config, Entry, Store};
+    let fixture = Fixture::new(Behavior::default()).await;
+    let device = DeviceStore::new(&fixture.config).get("test").unwrap();
+    let workspace = WorkspaceRef::device("test", "/data");
+    let mut store = Store::open(&workspace, Some(&device), &fixture.config)
+        .await
+        .unwrap();
+    assert_eq!(store.commands().await.unwrap().revision, "missing");
+    assert!(!fixture.remote.join(".runner").exists());
+    let command = Command {
+        entry: Entry::PythonModule {
+            name: "app.cli".into(),
+        },
+        args: vec!["".into(), "汉字 a b".into()],
+    };
+    store.remember(command.clone(), None).await.unwrap();
+    drop(store);
+    let mut reopened = Store::open(&workspace, Some(&device), &fixture.config)
+        .await
+        .unwrap();
+    reopened.remember(command.clone(), None).await.unwrap();
+    let records = reopened.commands().await.unwrap();
+    assert_eq!(records.entries.len(), 1);
+    assert_eq!(records.entries[0].id, command.id());
+    reopened
+        .save_config(Config::default(), "missing")
+        .await
+        .unwrap();
+    assert!(fixture.remote.join(".runner/config.json").exists());
+    assert!(!fixture.local.join(".runner").exists());
+}
 impl Drop for Fixture {
     fn drop(&mut self) {
         self.listener.abort();

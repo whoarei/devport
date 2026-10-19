@@ -88,6 +88,14 @@ fn verify(path: &Path, parent: &Path) -> Result<std::fs::Metadata> {
 }
 
 pub fn scan(local: &Path, policy: Policy) -> Result<Vec<Source>> {
+    fn runner_name(name: &std::ffi::OsStr) -> bool {
+        if cfg!(windows) {
+            name.to_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case(".runner"))
+        } else {
+            name == ".runner"
+        }
+    }
     fn visit(
         root: &Path,
         dir: &Path,
@@ -103,7 +111,9 @@ pub fn scan(local: &Path, policy: Policy) -> Result<Vec<Source>> {
         let mut items = Vec::new();
         for item in std::fs::read_dir(dir)? {
             let item = item?;
-            if matches!(item.file_name().to_str(), Some(".git" | ".hg" | ".svn")) {
+            if matches!(item.file_name().to_str(), Some(".git" | ".hg" | ".svn"))
+                || (dir == root && runner_name(&item.file_name()))
+            {
                 continue;
             }
             if items.len() >= policy.entry_limit {
@@ -113,7 +123,9 @@ pub fn scan(local: &Path, policy: Policy) -> Result<Vec<Source>> {
         }
         items.sort_by_key(|item| item.file_name());
         for item in items {
-            if matches!(item.file_name().to_str(), Some(".git" | ".hg" | ".svn")) {
+            if matches!(item.file_name().to_str(), Some(".git" | ".hg" | ".svn"))
+                || (dir == root && runner_name(&item.file_name()))
+            {
                 continue;
             }
             let path = item.path();
@@ -215,7 +227,13 @@ pub fn read_source(source: Source, policy: Policy) -> Result<Entry> {
             })?;
     }
     let source_bytes = data.len();
-    if policy.text_only || is_text_script(&source.relative) {
+    // Managed project inputs are verified against the exact planning snapshot.
+    // Binary-capable transports must not turn CRLF into a false input conflict.
+    let project_input = matches!(
+        source.relative.as_str(),
+        "pyproject.toml" | ".python-version" | "uv.lock"
+    );
+    if policy.text_only || is_text_script(&source.relative) && !project_input {
         data = normalize_lf(data);
     }
     Ok(Entry {
@@ -387,5 +405,27 @@ mod tests {
             }
         )
         .is_err());
+    }
+
+    #[test]
+    fn root_runner_metadata_is_excluded_before_all_transport_quotas() {
+        let f = Fixture::new();
+        std::fs::create_dir(f.0.join(".runner")).unwrap();
+        std::fs::write(f.0.join(".runner/commands.json"), vec![0xff; 4096]).unwrap();
+        std::fs::write(f.0.join("main.sh"), b"true\n").unwrap();
+        for policy in [SSH, WSL, SERIAL] {
+            let files = collect(
+                &f.0,
+                Policy {
+                    file_limit: 32,
+                    total_limit: 32,
+                    entry_limit: 1,
+                    ..policy
+                },
+            )
+            .unwrap();
+            assert_eq!(files.len(), 1);
+            assert_eq!(files[0].path, "main.sh");
+        }
     }
 }

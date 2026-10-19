@@ -67,7 +67,7 @@ function rustParams(name: string): Array<{ key: string; optional: boolean }> {
     assert.ok(colon > 0, `无法解析 ${name} 的参数 “${text}”`);
     const type = text.slice(colon + 1).trim();
     if (INJECTED.test(type)) continue;
-    params.push({ key: camel(text.slice(0, colon).trim()), optional: type.startsWith("Option<") });
+    params.push({ key: camel(text.slice(0, colon).trim().replace(/^mut\s+/, "")), optional: type.startsWith("Option<") });
   }
   return params;
 }

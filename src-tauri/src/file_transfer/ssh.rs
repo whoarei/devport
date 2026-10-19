@@ -114,7 +114,7 @@ async fn monitored<T>(
     tokio::select! { biased; result = future => result, _ = receiver.changed() => Err(Error::UnexpectedBehavior("SFTP connection closed before acknowledgement".into())) }
 }
 
-pub(super) struct SshHost {
+pub(crate) struct SshHost {
     _connection: SshConnection,
     session: RawSftpSession,
     closed: watch::Sender<bool>,

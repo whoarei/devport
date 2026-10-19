@@ -74,7 +74,7 @@ impl WslWorkspace {
         loop {
             match self.next().await? {
                 Message::FsEntry { name, dir, link } => {
-                    if link || (name.starts_with('.') && !workspace::allowed_hidden(&name)) {
+                    if link || name == "." || name == ".." {
                         continue;
                     }
                     entries.push(Entry { name, is_dir: dir });

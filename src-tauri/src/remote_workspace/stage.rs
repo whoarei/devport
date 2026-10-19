@@ -28,7 +28,14 @@ mod tests {
 
     #[test]
     fn only_plain_component_names_reach_the_local_staging_directory() {
-        for good in ["main.py", ".python-version", "sub dir", "a-b_c.txt"] {
+        for good in [
+            "main.py",
+            ".python-version",
+            ".env",
+            ".config",
+            "sub dir",
+            "a-b_c.txt",
+        ] {
             assert!(safe_name(good).is_ok(), "should accept {good:?}");
         }
         // 远端响应是半可信输入：路径穿越、分隔符、Windows 保留名与控制字符
@@ -110,7 +117,9 @@ async fn download_tree(remote: &mut RemoteWorkspace, local: &Path) -> Result<()>
             .await
             .map_err(|e| failed(format!("列举远端目录失败：{}", e.message)))?;
         for entry in list {
-            if matches!(entry.name.as_str(), ".git" | ".hg" | ".svn") {
+            if matches!(entry.name.as_str(), ".git" | ".hg" | ".svn")
+                || (rel.is_empty() && entry.name == ".runner")
+            {
                 continue;
             }
             // 文件名来自远端：落到本机前逐条校验，拒绝 . / ..、分隔符与保留名

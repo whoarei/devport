@@ -13,6 +13,9 @@ import { ConfirmDialog, ConfirmRequest } from "./ConfirmDialog";
 import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
 import { deviceLabel } from "./DeviceDialog";
 import { PanelTitle } from "./PanelTitle";
+import { workspaceRunMenu } from "../workspaceRunMenu";
+import { useWorkspaceRunStore } from "../workspaceRunStore";
+import { workspaceSourceRevision } from "../workspaceRun";
 
 type Editing =
   | { mode: "create-file"; dir: WorkspacePath }
@@ -222,7 +225,8 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
   const label = workspaceLabel(workspace, devices);
 
   // 折叠面板或切换工作区时收起菜单与行内输入，避免操作落到错误的目录
-  useEffect(() => { setMenu(null); setEditing(null); }, [collapsed, workspace]);
+  const sourceRevision = workspaceSourceRevision(workspace, devices);
+  useEffect(() => { setMenu(null); setEditing(null); }, [collapsed, workspace, sourceRevision]);
 
   const startCreate = async (dir: WorkspacePath, mode: "create-file" | "create-dir") => {
     const node = useAppStore.getState().workspaceTree[dir];
@@ -241,11 +245,16 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
       .catch((error) => useAppStore.setState({ workspaceError: errorMessage(error) }));
   };
 
-  const openMenu = (event: MouseEvent, dir: WorkspacePath, entry: WorkspaceEntry | null) => {
+  const menuEpoch = useRef(0);
+  const openMenu = async (event: MouseEvent, dir: WorkspacePath, entry: WorkspaceEntry | null) => {
     event.preventDefault();
     event.stopPropagation();
     if (!workspace) return;    const path = entry ? joinPath(dir, entry.name) : dir;
-    const entries: MenuEntry[] = [];
+    const epoch = ++menuEpoch.current;
+    const x = event.clientX, y = event.clientY;
+    void useWorkspaceRunStore.getState().refreshCommands();
+    const entries: MenuEntry[] = await workspaceRunMenu(workspace, path, !entry || entry.is_dir);
+    if (epoch !== menuEpoch.current || workspace !== useAppStore.getState().workspace || sourceRevision !== workspaceSourceRevision(workspace, useAppStore.getState().devices)) return;
     entries.push({ label: t(workspace.type === "local" ? "transfer.upload" : "transfer.download"), onSelect: () => useTransferStore.getState().seed(workspace, entry ? path : undefined) });
     if (!entry) entries.push({ label: t("workspace.refresh"), onSelect: () => void useAppStore.getState().loadWorkspaceDir(dir) });
     // 新建入口只出现在目录与空白区；文件条目上只有打开/重命名/删除
@@ -258,10 +267,6 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
         children: workspaceTerminalMenuEntries(t, devices, workspace, tabsFull, (device) => openInTerminal(device, path)),
       });
     }
-    // 缺少配置时提供模板生成入口；已有 pyproject.toml 时不显示，避免误覆盖
-    if (!entry && !(workspaceTree[WORKSPACE_ROOT]?.entries ?? []).some((e) => e.name === "pyproject.toml")) {
-      entries.push({ label: t("workspace.generateConfig"), onSelect: () => void useAppStore.getState().generateWorkspaceConfig() });
-    }
     // 空白区附带工作区管理项：打开 / 关闭 / 最近（切换工作区与打开走同一条确认路径）
     if (!entry) entries.push("separator", ...workspaceSwitchMenuEntries(t, recentWorkspaces, devices));
     if (entry) {
@@ -271,7 +276,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
       entries.push({ label: t("workspace.delete"), danger: true, onSelect: () => setPendingDelete({ path, isDir: entry.is_dir }) });
     }
     setMenu({
-      ...contextMenuPosition(event.clientX, event.clientY, entries.length),
+      ...contextMenuPosition(x, y, entries.length),
       entries,
     });
   };

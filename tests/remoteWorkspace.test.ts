@@ -12,7 +12,6 @@ import i18n from "../src/i18n";
 
 // 文案断言基于中文字典，固定测试语言避免随运行环境漂移
 test.before(async () => { await i18n.changeLanguage("zh"); });
-import { managedPythonBlocked } from "../src/components/RunToolbar";
 import {
   RemoteWorkspaceDialog, isDevicePath, joinDevicePath, parentDevicePath, resolveDeviceWorkspacePath,
 } from "../src/components/RemoteWorkspaceDialog";
@@ -51,13 +50,6 @@ test("workspace labels show the path locally and device:/path remotely", () => {
   // 设备已被删除时退回设备 id，标签仍然可读
   assert.equal(workspaceLabel(deviceWorkspace("gone", "/srv/app"), devices), "gone:/srv/app");
   assert.equal(workspaceLabel(null, devices), null);
-});
-
-test("in-place runs on the workspace device disable managed python", () => {
-  assert.ok(managedPythonBlocked("d1", "d1"));
-  assert.ok(!managedPythonBlocked("d1", "d2"));
-  assert.ok(!managedPythonBlocked(null, "d1"));
-  assert.ok(!managedPythonBlocked(null, null));
 });
 
 test("device path helpers mirror the backend path rules", () => {

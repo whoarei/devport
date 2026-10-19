@@ -17,6 +17,11 @@ pub struct FileError {
     pub code: &'static str,
     pub message: String,
 }
+impl std::fmt::Display for FileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.code, self.message)
+    }
+}
 
 impl FileError {
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
@@ -351,17 +356,8 @@ const NAME_LIMIT: usize = 255;
 fn invalid_name() -> FileError {
     FileError::new(
         "name",
-        "名称无效：不能为空，不能包含 \\ / : * ? \" < > | 或控制字符，不能以 . 开头（契约文件 .python-version 除外）、以空格或 . 结尾，长度不超过 255",
+        "名称无效：不能为空或为 . / ..，不能包含 \\ / : * ? \" < > | 或控制字符，不能以空格或 . 结尾，不能使用系统保留设备名，长度不超过 255",
     )
-}
-
-/// 点开头的条目默认隐藏且不可寻址；只有项目契约显式要求的文件例外
-/// （Managed Python 需要可编辑的 .python-version，见 00027 §5）。
-/// 不要加入 .git / .env 等：它们不应出现在树的操作范围里。
-const ALLOWED_HIDDEN_FILES: [&str; 1] = [".python-version"];
-
-pub(crate) fn allowed_hidden(part: &str) -> bool {
-    ALLOWED_HIDDEN_FILES.contains(&part)
 }
 
 /// Windows device names are rejected on every platform so a workspace keeps
@@ -377,21 +373,15 @@ fn reserved_device(name: &str) -> bool {
         .any(|device| device.eq_ignore_ascii_case(stem))
 }
 
-/// Split a workspace-relative path into validated components. Hidden entries
-/// (`.` prefix) are rejected except ALLOWED_HIDDEN_FILES: the tree never lists
-/// other dot entries, so they cannot be addressed from the UI and must not be
-/// created either.
+/// Split a workspace-relative path into validated components. Dot-prefixed names
+/// are ordinary entries; standalone `.` and `..` are never path components.
 pub(crate) fn components(relative: &str) -> Result<Vec<&str>> {
     if relative.is_empty() {
         return Err(invalid_name());
     }
     let mut parts = Vec::new();
     for part in relative.split('/') {
-        if part.is_empty()
-            || part == "."
-            || part == ".."
-            || (part.starts_with('.') && !allowed_hidden(part))
-        {
+        if part.is_empty() || part == "." || part == ".." {
             return Err(invalid_name());
         }
         if part.contains(['\\', ':', '*', '?', '"', '<', '>', '|', '\0'])
@@ -558,9 +548,8 @@ pub fn delete(dir: &str, relative: &str) -> Result<()> {
     Ok(())
 }
 
-/// List one directory level for the workspace tree. Hidden entries (except
-/// ALLOWED_HIDDEN_FILES), links, and junctions are skipped so the tree only
-/// offers entries the app can operate on.
+/// List one directory level, including dot-prefixed entries. Links and junctions
+/// are skipped so the tree only offers entries the app can operate on.
 pub fn list_dir(dir: &str, subdir: &str) -> Result<Vec<Entry>> {
     let root = canonical_root(dir)?;
     let parts = if subdir.is_empty() {
@@ -575,9 +564,6 @@ pub fn list_dir(dir: &str, subdir: &str) -> Result<Vec<Entry>> {
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
-        if name.starts_with('.') && !allowed_hidden(&name) {
-            continue;
-        }
         // An entry may vanish between readdir and stat; skip instead of failing.
         let Ok(meta) = fs::symlink_metadata(entry.path()) else {
             continue;
@@ -877,7 +863,7 @@ mod tests {
             .to_string_lossy()
             .starts_with(r"\\?\"));
         // 与 list_dir 同一套校验：越界/非法名 → name；指向文件或缺失 → not_found/path
-        for subdir in ["..", "../evil", "a/../b", ".hidden", "a\\b"] {
+        for subdir in ["..", "../evil", "a/../b", "./hidden", "a\\b"] {
             assert_eq!(
                 terminal_dir(f.dir(), subdir).unwrap_err().code,
                 "name",
@@ -910,7 +896,8 @@ mod tests {
             "a/../b",
             "/abs",
             "a//b",
-            ".hidden",
+            "./hidden",
+            "a/./b",
             "con",
             "NUL.txt",
             "a\\b",
@@ -1000,27 +987,51 @@ mod tests {
     }
 
     #[test]
-    fn hidden_entries_are_not_listed_or_addressable() {
+    fn dot_entries_can_be_created_listed_edited_renamed_and_deleted() {
         let f = Fixture::new(b"ok");
-        fs::write(f.0.join(".gitignore"), b"x").unwrap();
-        fs::create_dir(f.0.join(".git")).unwrap();
+        for name in [".env", ".gitignore", ".config.toml", "..settings"] {
+            create(f.dir(), name, EntryKind::File).unwrap();
+            assert!(list_dir(f.dir(), "")
+                .unwrap()
+                .iter()
+                .any(|entry| entry.name == name && !entry.is_dir));
+            let file = read(f.dir(), name).unwrap();
+            write(SaveRequest {
+                workspace: crate::workspace_ref::WorkspaceRef::local(f.dir()),
+                name: name.into(),
+                content: "example=value\n".into(),
+                expected_revision: file.revision,
+                eol: Eol::Lf,
+                bom: false,
+            })
+            .unwrap();
+            assert_eq!(read(f.dir(), name).unwrap().content, "example=value\n");
+            rename(f.dir(), name, "visible.txt").unwrap();
+            rename(f.dir(), "visible.txt", name).unwrap();
+            delete(f.dir(), name).unwrap();
+        }
+        create(f.dir(), ".config", EntryKind::Dir).unwrap();
+        create(f.dir(), ".config/.env", EntryKind::File).unwrap();
         assert_eq!(
             names(list_dir(f.dir(), "").unwrap()),
-            [("main.py".to_string(), false)]
+            [
+                (".config".to_string(), true),
+                ("main.py".to_string(), false)
+            ]
         );
-        assert_eq!(delete(f.dir(), ".gitignore").unwrap_err().code, "name");
         assert_eq!(
-            rename(f.dir(), ".gitignore", "visible").unwrap_err().code,
-            "name"
+            names(list_dir(f.dir(), ".config").unwrap()),
+            [(".env".to_string(), false)]
         );
-        assert!(f.0.join(".gitignore").is_file());
-        assert!(f.0.join(".git").is_dir());
+        assert!(terminal_dir(f.dir(), ".config").unwrap().is_dir());
+        delete(f.dir(), ".config").unwrap();
+        assert!(!f.0.join(".config").exists());
     }
 
     #[test]
     fn python_version_is_listed_and_fully_manageable() {
         let f = Fixture::new(b"ok");
-        // 契约文件可新建、列出、读写、重命名、删除；其它点开头条目仍被拒绝
+        // 项目契约文件与其他点开头条目使用同一套名称规则。
         create(f.dir(), ".python-version", EntryKind::File).unwrap();
         assert_eq!(
             names(list_dir(f.dir(), "").unwrap()),
@@ -1046,12 +1057,6 @@ mod tests {
         rename(f.dir(), "python-version.bak", ".python-version").unwrap();
         delete(f.dir(), ".python-version").unwrap();
         assert!(!f.0.join(".python-version").exists());
-        assert_eq!(
-            create(f.dir(), ".hidden", EntryKind::File)
-                .unwrap_err()
-                .code,
-            "name"
-        );
     }
 
     #[cfg(unix)]

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import { api, errorMessage, ManagedRuntimeInfo, ProjectEnvironmentInfo } from "../api";
 import { useAppStore } from "../store";
 import { ConfirmDialog, ConfirmRequest } from "./ConfirmDialog";
 import { PanelTitle } from "./PanelTitle";
+import { useWorkspaceRunStore } from "../workspaceRunStore";
 
 /** Managed Python Runtime 管理面板：Runtime 摘要 + 项目环境列表 + 重建/删除/清理 */
 export function RuntimePanel({ collapsed, onToggleCollapse }: { collapsed: boolean; onToggleCollapse: () => void }) {
@@ -15,15 +16,18 @@ export function RuntimePanel({ collapsed, onToggleCollapse }: { collapsed: boole
   const device = devices.find((d) => d.id === selectedDeviceId) ?? null;
   const isSerial = device?.transport === "serial";
   // 项目环境重建走本机 uv 检查：仅本机工作区有可 inspect 的本地目录
-  const workspaceDir = workspace?.type === "local" ? workspace.dir : null;
+  const workspaceDir = workspace != null;
 
   const [runtime, setRuntime] = useState<ManagedRuntimeInfo | null>(null);
   const [envs, setEnvs] = useState<ProjectEnvironmentInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
+  const epoch=useRef(0);
 
   const refresh = useCallback(async () => {
+    const token=++epoch.current;
+    setRuntime(null);setEnvs([]);setError(null);
     if (!selectedDeviceId || isSerial) {
       setRuntime(null);
       setEnvs([]);
@@ -34,29 +38,21 @@ export function RuntimePanel({ collapsed, onToggleCollapse }: { collapsed: boole
         api.listManagedRuntimes(selectedDeviceId),
         api.listProjectEnvironments(selectedDeviceId),
       ]);
+      if(token!==epoch.current) return;
       setRuntime(rt);
       setEnvs(list);
       setError(null);
     } catch (e) {
-      setError(errorMessage(e));
+      if(token===epoch.current) setError(errorMessage(e));
     }
-  }, [selectedDeviceId, isSerial]);
+  }, [selectedDeviceId, isSerial, device?.revision]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   const rebuild = async () => {
-    if (!selectedDeviceId || !workspaceDir) return;
-    setBusy("rebuild");
-    try {
-      await api.rebuildProjectEnvironment(selectedDeviceId, workspaceDir);
-      await refresh();
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(null);
-    }
+    if (selectedDeviceId && workspace) useWorkspaceRunStore.getState().prepare(true);
   };
 
   const askDelete = (env: ProjectEnvironmentInfo) => {

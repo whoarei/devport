@@ -1,6 +1,6 @@
 //! uv-only Managed Python Runtime（设计 00027）。
 //!
-//! 固定版本的 uv + 固定 patch 版本 CPython + `uv.lock` 生成内容寻址的项目环境；
+//! 固定版本的 uv + 解析后的 CPython patch 版本 + `uv.lock` 生成内容寻址的项目环境；
 //! 运行阶段直接启动环境内 Python，不使用 `uv run`，不回落系统 Python。
 pub mod catalog;
 pub mod download;
@@ -135,6 +135,8 @@ pub struct RuntimeReady {
     pub uv_path: String,
     pub uv_version: String,
     pub python_path: String,
+    /// Resolved exact version, distinct from the project's minor/patch request.
+    pub python_version: String,
     /// 解析出的 Python build identity（Environment ID 输入）
     pub python_build: String,
 }
@@ -142,6 +144,8 @@ pub struct RuntimeReady {
 /// 可直接启动的项目环境
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreparedEnvironment {
+    #[serde(skip)]
+    pub(crate) lease: Option<std::sync::Arc<manager::EnvironmentLease>>,
     pub environment_id: String,
     pub env_path: String,
     pub python_path: String,

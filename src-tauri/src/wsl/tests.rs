@@ -526,6 +526,53 @@ async fn home_workspace_upload_and_transfer_browsing_resolve_the_target_user() {
             .unwrap();
         assert_eq!(listing.endpoint.device_ref().unwrap().1, absolute);
         assert!(listing.entries.iter().any(|e| e.name == "payload.txt"));
+        let config = WslConfig {
+            distribution: std::env::var("REMOTE_RUNNER_TEST_WSL").unwrap(),
+            user: String::new(),
+        };
+        let mut workspace = crate::remote_workspace::wsl::WslWorkspace::connect(&config, &absolute)
+            .await
+            .unwrap();
+        for name in [".env", ".gitignore"] {
+            workspace
+                .create(name, crate::workspace::EntryKind::File)
+                .await
+                .unwrap();
+            assert!(workspace
+                .list_dir("")
+                .await
+                .unwrap()
+                .iter()
+                .any(|entry| entry.name == name && !entry.is_dir));
+            let file = workspace.read(name).await.unwrap();
+            workspace
+                .write(name, b"example=value\n", &file.revision)
+                .await
+                .unwrap();
+            assert_eq!(
+                workspace.read(name).await.unwrap().content,
+                "example=value\n"
+            );
+            workspace.rename(name, "visible.txt").await.unwrap();
+            workspace.rename("visible.txt", name).await.unwrap();
+            workspace.delete(name).await.unwrap();
+        }
+        workspace
+            .create(".config", crate::workspace::EntryKind::Dir)
+            .await
+            .unwrap();
+        workspace
+            .create(".config/.env", crate::workspace::EntryKind::File)
+            .await
+            .unwrap();
+        assert!(workspace
+            .list_dir("")
+            .await
+            .unwrap()
+            .iter()
+            .any(|entry| entry.name == ".config" && entry.is_dir));
+        assert_eq!(workspace.list_dir(".config").await.unwrap()[0].name, ".env");
+        workspace.delete(".config").await.unwrap();
     }
     let mut cleanup = python("import shutil,sys; shutil.rmtree(sys.argv[1])");
     cleanup.arg(&absolute);
@@ -550,12 +597,21 @@ async fn upload_is_literal_and_rejects_existing_or_redirected_destinations() {
     ));
     let (_tx, mut rx) = mpsc::unbounded_channel();
     let mut output = Vec::new();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    upload_with_command(
+        real_helper(),
+        &remote,
+        filesync::collect(&root).unwrap(),
+        &cancel,
+    )
+    .await
+    .unwrap();
     let result = execute_with_command(
         real_helper(),
         &req,
         &remote,
-        false,
-        filesync::collect(&root).unwrap(),
+        true,
+        Vec::new(),
         &mut rx,
         |event| {
             if let Event::Output { data, .. } = event {
@@ -572,6 +628,11 @@ async fn upload_is_literal_and_rejects_existing_or_redirected_destinations() {
         String::from_utf8_lossy(&output).contains(&format!("{:x}", sha2::Sha256::digest(&payload)))
     );
     assert!(String::from_utf8_lossy(&output).contains("True"));
+    assert!(
+        upload_with_command(real_helper(), &remote, Vec::new(), &cancel)
+            .await
+            .is_err()
+    );
     // Reusing an existing run directory is forbidden.
     assert!(execute_with_command(
         real_helper(),
@@ -588,6 +649,24 @@ async fn upload_is_literal_and_rejects_existing_or_redirected_destinations() {
     let anchor = format!("{remote}-anchor");
     let setup = format!("import os; os.mkdir({anchor:?}); os.mkdir({anchor:?} + '/target'); os.symlink('target', {anchor:?} + '/link')");
     assert!(python(&setup).status().await.unwrap().success());
+    assert!(upload_with_command(
+        real_helper(),
+        &format!("{anchor}/link/staged"),
+        filesync::collect(&root).unwrap(),
+        &cancel
+    )
+    .await
+    .is_err());
+    #[cfg(windows)]
+    {
+        let config = WslConfig {
+            distribution: std::env::var("REMOTE_RUNNER_TEST_WSL").unwrap(),
+            user: String::new(),
+        };
+        assert!(remove_workspace(&config, &format!("{anchor}/link/staged"))
+            .await
+            .is_err());
+    }
     assert!(execute_with_command(
         real_helper(),
         &req,
@@ -602,8 +681,199 @@ async fn upload_is_literal_and_rejects_existing_or_redirected_destinations() {
     .is_err());
     let check = format!("import os,shutil; assert not os.listdir({anchor:?} + '/target'); shutil.rmtree({anchor:?})");
     assert!(python(&check).status().await.unwrap().success());
-    let cleanup = format!("import shutil; shutil.rmtree({remote:?})");
-    assert!(python(&cleanup).status().await.unwrap().success());
+    #[cfg(windows)]
+    remove_workspace(
+        &WslConfig {
+            distribution: std::env::var("REMOTE_RUNNER_TEST_WSL").unwrap(),
+            user: String::new(),
+        },
+        &remote,
+    )
+    .await
+    .unwrap();
+    #[cfg(not(windows))]
+    {
+        let cleanup = format!("import shutil; shutil.rmtree({remote:?})");
+        assert!(python(&cleanup).status().await.unwrap().success());
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "requires an explicitly selected local WSL distribution"
+)]
+async fn workspace_cwd_is_verified_and_keeps_script_entries_relative_to_the_root() {
+    let remote = format!("/tmp/rr-wsl-cwd-{}", uuid::Uuid::new_v4());
+    let root = temporary();
+    std::fs::create_dir(root.join("data")).unwrap();
+    std::fs::write(root.join("data/payload"), b"CWD_OK").unwrap();
+    std::fs::write(
+        root.join("main.py"),
+        b"from pathlib import Path\nprint(Path('payload').read_text())\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("main.sh"), b"cat payload\n").unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    upload_with_command(
+        real_helper(),
+        &remote,
+        filesync::collect(&root).unwrap(),
+        &cancel,
+    )
+    .await
+    .unwrap();
+    let (_tx, mut controls) = mpsc::unbounded_channel();
+    for (kind, entry, module) in [
+        ("python", "main.py", false),
+        ("shell", "main.sh", false),
+        ("python", "app", true),
+    ] {
+        if module {
+            let mut create = python("import pathlib,sys; pathlib.Path(sys.argv[1], 'data', 'app.py').write_text('from pathlib import Path; print(Path(\"payload\").read_text())')");
+            create.arg(&remote);
+            assert!(create.status().await.unwrap().success());
+        }
+        let req: RunRequest = serde_json::from_value(json!({
+            "device_id":"test", "workspace":{"type":"local","dir":root.to_string_lossy()},
+            "kind":kind, "entry":entry, "module":module, "cwd":"data", "console_mode":"pipe"
+        }))
+        .unwrap();
+        let mut output = Vec::new();
+        let result = execute_with_command(
+            real_helper(),
+            &req,
+            &remote,
+            true,
+            Vec::new(),
+            &mut controls,
+            |event| {
+                if let Event::Output { data, .. } = event {
+                    output.extend(data);
+                }
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            result.code,
+            Some(0),
+            "{kind}: {}",
+            String::from_utf8_lossy(&output)
+        );
+        assert!(String::from_utf8_lossy(&output).contains("CWD_OK"));
+    }
+    let mut create = python("import os,sys; os.symlink('/tmp', sys.argv[1] + '/redirect')");
+    create.arg(&remote);
+    assert!(create.status().await.unwrap().success());
+    for cwd in ["missing", "../", "/tmp", "redirect"] {
+        let mut req = request("printf SHOULD_NOT_RUN");
+        req.workspace = Some(crate::workspace_ref::WorkspaceRef::local(
+            root.to_string_lossy(),
+        ));
+        req.cwd = cwd.into();
+        assert!(
+            execute_with_command(
+                real_helper(),
+                &req,
+                &remote,
+                true,
+                Vec::new(),
+                &mut controls,
+                |_| {},
+                None
+            )
+            .await
+            .is_err(),
+            "{cwd}"
+        );
+    }
+    let mut cleanup = python("import shutil,sys; shutil.rmtree(sys.argv[1])");
+    cleanup.arg(&remote);
+    assert!(cleanup.status().await.unwrap().success());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "requires an explicitly selected local WSL distribution"
+)]
+async fn a_persistent_helper_reports_every_exec_completion() {
+    let mut bridge = Bridge::launch(real_helper()).await.unwrap();
+    for index in 0..3 {
+        let argv = vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            format!("printf 'round-{index}'; exit {index}"),
+        ];
+        let result = tokio::time::timeout(
+            Duration::from_secs(3),
+            exec_managed(&mut bridge, &argv, &[], None, &[]),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.code, Some(index));
+        assert_eq!(result.stdout, format!("round-{index}").as_bytes());
+    }
+}
+
+#[tokio::test]
+async fn upload_cancellation_interrupts_a_pending_ack_without_sending_more_files() {
+    let Some(python) = host_python() else {
+        return;
+    };
+    let root = temporary();
+    let marker = root.join("received");
+    let source = format!("import json,sys,time,pathlib\nprint(json.dumps(dict(type='ready',version=1,info='fake',home='/tmp')),flush=True)\nrequest=json.loads(sys.stdin.readline())\nassert request['type']=='init' and request['in_place'] is False\nprint(json.dumps(dict(type='ack')),flush=True)\nrequest=json.loads(sys.stdin.readline())\nassert request['type']=='file'\npathlib.Path({:?}).write_text('waiting')\ntime.sleep(30)\n", marker.to_string_lossy());
+    let mut helper = Command::new(python);
+    helper.args(["-I", "-u", "-c", &source]);
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let changed = cancel.clone();
+    let task = tokio::spawn(async move {
+        upload_with_command(
+            helper,
+            "/tmp/upload-test",
+            vec![
+                filesync::Entry {
+                    path: "first".into(),
+                    data: Some(vec![1; 100]),
+                    mode: 0o600,
+                    source_bytes: 100,
+                },
+                filesync::Entry {
+                    path: "second".into(),
+                    data: Some(vec![2; 100]),
+                    mode: 0o600,
+                    source_bytes: 100,
+                },
+            ],
+            &changed,
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !marker.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    let result = tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        result,
+        Err(RunnerError::ManagedRuntime {
+            code: crate::runtime::code::CANCELED,
+            ..
+        })
+    ));
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -717,6 +987,99 @@ async fn run_manager_records_wsl_output_and_history_without_ssh() {
     assert!(manager.list_running().is_empty());
     let (tx, _) = crate::events::channel();
     assert_eq!(RunManager::new(&root, tx).history()[0].run_id, id);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(windows)]
+#[tokio::test]
+#[ignore = "requires an explicitly selected local WSL distribution"]
+async fn workspace_run_manager_stages_scripts_and_records_the_actual_cwd() {
+    use crate::runner::{RunEvent, RunManager};
+    use crate::workspace_ref::WorkspaceRef;
+    let root = temporary();
+    let source = root.join("source");
+    std::fs::create_dir_all(source.join("data")).unwrap();
+    std::fs::write(
+        source.join("main.py"),
+        "from pathlib import Path\nprint(Path('payload').read_text())\n",
+    )
+    .unwrap();
+    std::fs::write(source.join("main.sh"), "cat payload\n").unwrap();
+    std::fs::write(source.join("data/payload"), "WORKSPACE_RUN_OK").unwrap();
+    let remote_root = format!("/tmp/rr-workspace-manager-{}", uuid::Uuid::new_v4());
+    let device: DeviceProfile = serde_json::from_value(json!({"id":"test", "name":"WSL test", "transport":"wsl",
+        "workspace_root":remote_root, "wsl":{"distribution":std::env::var("REMOTE_RUNNER_TEST_WSL").unwrap()}})).unwrap();
+    let (tx, mut events) = crate::events::channel();
+    let manager = RunManager::new(&root, tx);
+    for (kind, entry_type, entry) in [
+        ("python", "python_script", "main.py"),
+        ("shell", "bash_script", "main.sh"),
+    ] {
+        let intent: crate::workspace_run::Request = serde_json::from_value(json!({
+            "workspace":WorkspaceRef::local(source.to_string_lossy()), "device_id":"test",
+            "device_revision":crate::workspace_run::device_revision(&device),
+            "command":{"entry":{"type":entry_type,"path":entry},"args":[]}, "python":"device_default",
+            "settings":{"cwd":"data","console_mode":"pipe","timeout_secs":10}
+        })).unwrap();
+        let mut req: RunRequest = serde_json::from_value(json!({
+            "device_id":"test", "workspace":intent.workspace, "kind":kind, "entry":entry,
+            "cwd":"data", "console_mode":"pipe", "timeout_secs":10
+        }))
+        .unwrap();
+        req.workspace_context = Some(crate::workspace_run::Context {
+            request: intent,
+            source_device: None,
+            config_dir: root.clone(),
+        });
+        let id = manager
+            .start(req, device.clone(), root.clone(), None)
+            .unwrap();
+        let mut output = Vec::new();
+        tokio::time::timeout(Duration::from_secs(20), async {
+            while let Ok(event) = events.recv().await {
+                match event {
+                    RunEvent::Output { run_id, data, .. } if run_id == id => {
+                        output.extend(STANDARD.decode(data).unwrap())
+                    }
+                    RunEvent::Status { status }
+                        if status.run_id == id && status.ended_at.is_some() =>
+                    {
+                        assert_eq!(status.state, RunState::Exited, "{:?}", status.error);
+                        assert_eq!(status.exit_code, Some(0));
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(String::from_utf8_lossy(&output).contains("WORKSPACE_RUN_OK"));
+        assert_eq!(
+            manager.workspace_session(&id).unwrap()["launch"]["cwd"],
+            format!("{remote_root}/{id}/data")
+        );
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let mut store = crate::workspace_run::Store::open(
+                &WorkspaceRef::local(source.to_string_lossy()),
+                None,
+                &root,
+            )
+            .await
+            .unwrap();
+            if store.commands().await.unwrap().entries.len() == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let mut cleanup = python("import shutil,sys; shutil.rmtree(sys.argv[1])");
+    cleanup.arg(&remote_root);
+    assert!(cleanup.status().await.unwrap().success());
     std::fs::remove_dir_all(root).unwrap();
 }
 

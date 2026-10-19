@@ -96,6 +96,9 @@ interface AppState {
 let loadSequence = 0;
 /** 工作区被替换后作废仍在进行的目录加载与变更响应 */
 let workspaceSequence = 0;
+export const getWorkspaceGeneration = () => workspaceSequence;
+/** Session-only preset context. Never reconstructed from the old run history. */
+export const presetRunSessions = new Map<string, RunRequest>();
 
 /** Preserve an explicit current choice; otherwise prefer the configured default. */
 export function selectedDeviceAfterLoad(devices: DeviceProfile[], current: string | null): string | null {
@@ -148,6 +151,7 @@ function pruneRuns(state: Pick<AppState, "runs" | "history" | "outputBuffers" | 
   pending.slice(-32).forEach((id) => keep.add(id));
   Object.values(state.runs).filter(isActiveRun).forEach((r) => keep.add(r.run_id));
   if (state.activeRunId) keep.add(state.activeRunId);
+  for (const id of presetRunSessions.keys()) if (!keep.has(id)) presetRunSessions.delete(id);
   const entries = Object.entries(state.runs).filter(([id]) => keep.has(id));
   const runs = entries.length === Object.keys(state.runs).length ? state.runs : Object.fromEntries(entries);
   const outputBuffers = Object.fromEntries(Object.entries(state.outputBuffers).filter(([id]) => keep.has(id)));
@@ -336,6 +340,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ workspaceMutating: true, workspaceError: null });
     try {
       await api.renameWorkspaceEntry(root, path, target);
+      await api.renameWorkspaceCommands(root, path, target).catch((error) => {
+        if (sequence === workspaceSequence) set({ workspaceError: errorMessage(error) });
+      });
       if (sequence !== workspaceSequence) return false;
       // 同一个条目换了路径：缓存子树改键，所有受影响的标签与入口草稿跟随移动
       set((s) => {
@@ -543,9 +550,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!workspaceRefEquals(request.workspace ?? null, state.workspace)) throw new Error(i18n.t("run.errorWorkspaceChanged"));
     if (!request.device_id || (request.kind === "command" ? !request.command?.trim() : !request.entry)) throw new Error(i18n.t("run.errorMissingTarget"));
     set({ starting: true });
+    const generation = workspaceSequence;
     try {
       if (!await get().saveAllDirty() || anyDirty(get())) throw new Error(get().editorError ?? i18n.t("run.errorSaveIncomplete"));
-      const runId = await api.runScript({ ...request, ...get().consoleSize });
+      if (generation !== workspaceSequence || !workspaceRefEquals(request.workspace ?? null, get().workspace)) throw new Error(i18n.t("run.errorWorkspaceChanged"));
+      const target = get().selectedDeviceId ?? request.device_id;
+      const submitted = { ...request, device_id: target, console_mode: get().devices.find((device) => device.id === target)?.transport === "serial" ? "pty" as const : request.console_mode, ...get().consoleSize };
+      const runId = await api.runScript(submitted);
+      if (request.kind === "command") presetRunSessions.set(runId, submitted);
       // Events may arrive before invoke returns. Fetch status only when missing;
       // use preparing as a fallback so no save slips through before the first event.
       if (!get().runs[runId]) {
@@ -585,7 +597,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             const buffer = outputBuffers[id] ?? { chunks: [], bytes: 0, start: 0 };
             outputBuffers[id] = { chunks: [], bytes: 0, start: buffer.start + buffer.chunks.length, gaps: (buffer.gaps ?? 0) + 1 };
           }
-        } else {
+        } else if (ev.type === "status") {
           const status = newestStatus(runs[ev.status.run_id], ev.status);
           runs = { ...runs, [status.run_id]: status };
           if (!isActiveRun(status)) {

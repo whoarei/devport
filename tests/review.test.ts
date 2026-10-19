@@ -68,27 +68,26 @@ test("running tasks remain selectable and stoppable while viewing completed hist
   assert.match(renderToStaticMarkup(createElement(RunToolbar)), /■ 停止/);
 });
 
-test("run drafts survive panel remount and layout reset; workspace switch clears only entry", async (t) => {
+test("legacy drafts no longer expose arbitrary commands or argument forms in the toolbar", async (t) => {
   const s = setup(t);
   useAppStore.setState({ openTabs: [mainTab("disk", "disk")] });
   s.setRunDraft({ mode: "command", entry: "other.py", command: "echo retained", argsText: "a b", consoleMode: "pipe", timeoutSecs: 42 });
   s.setLayout(panelVisibilityPatch(useAppStore.getState().layout, "console", false));
   s.resetLayout();
   const markup = renderToStaticMarkup(createElement(RunToolbar));
-  assert.match(markup, /echo retained/);
-  assert.match(markup, /value="42"/);
-  assert.match(markup, /value="pipe" selected/);
+  assert.doesNotMatch(markup, /echo retained|value="42"|args-input|command-input|run-entry-select/);
+  assert.match(markup, /运行设置/);
   t.mock.method(api, "listWorkspaceDir", async () => []);
   await s.setWorkspace(localWorkspace("/new"));
   assert.equal(useAppStore.getState().runDraft.entry, "");
   assert.equal(useAppStore.getState().runDraft.command, "echo retained");
 });
 
-test("toolbar hides completed status while preserving live progress and failure details", (t) => {
+test("toolbar shows selected task status, live progress and failure details", (t) => {
   const s = setup(t);
   s.handleRunEvents([{ type: "status", status: status("task") }]);
   s.setActiveRun("task");
-  assert.doesNotMatch(renderToStaticMarkup(createElement(RunToolbar)), /已退出|state-exited/);
+  assert.match(renderToStaticMarkup(createElement(RunToolbar)), /state-exited/);
 
   s.handleRunEvents([{ type: "status", status: { ...status("live", "preparing"), phase: "syncing_dependencies" } }]);
   s.setActiveRun("live");

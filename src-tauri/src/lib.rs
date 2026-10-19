@@ -16,7 +16,10 @@ pub mod update;
 pub mod usb;
 pub mod verbatim;
 pub mod workspace;
+pub mod workspace_commands;
+pub mod workspace_probe;
 pub mod workspace_ref;
+pub mod workspace_run;
 pub mod workspace_upload;
 pub mod wsl;
 
@@ -91,6 +94,19 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            workspace_commands::read_runner_config,
+            workspace_commands::save_runner_config,
+            workspace_commands::list_workspace_commands,
+            workspace_commands::delete_workspace_command,
+            workspace_commands::edit_workspace_command_entry,
+            workspace_commands::inspect_workspace_python,
+            workspace_commands::runner_lock_info,
+            workspace_commands::recover_runner_lock,
+            workspace_commands::run_workspace,
+            workspace_commands::get_workspace_run,
+            workspace_commands::retry_workspace_history,
+            workspace_commands::probe_python_environment,
+            workspace_commands::rename_workspace_commands,
             commands::transfer_list_dir,
             commands::transfer_create_dir,
             commands::transfer_plan,

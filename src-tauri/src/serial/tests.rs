@@ -196,6 +196,118 @@ async fn end(stream: &mut DuplexStream, nonce: &str, code: u32) {
 }
 
 #[tokio::test]
+async fn workspace_python_checks_the_planned_lf_upload_and_rejects_later_metadata_changes() {
+    use crate::workspace_ref::WorkspaceRef;
+    use crate::workspace_run::{Context, Entry, Store};
+    use sha2::{Digest, Sha256};
+    for changed in [false, true] {
+        let root = std::env::temp_dir().join(format!("rr-serial-crlf-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("test.py"), "print('ok')\r\n").unwrap();
+        std::fs::write(
+            root.join("pyproject.toml"),
+            "[project]\r\nname='original'\r\n",
+        )
+        .unwrap();
+        let workspace = WorkspaceRef::local(root.to_string_lossy());
+        let mut store = Store::open(&workspace, None, &root).await.unwrap();
+        let inputs = store
+            .inputs(
+                &Entry::PythonScript {
+                    path: "test.py".into(),
+                },
+                false,
+                ".",
+            )
+            .await
+            .unwrap();
+        let raw_hash = inputs.hashes[0].1.clone();
+        if changed {
+            std::fs::write(
+                root.join("pyproject.toml"),
+                "[project]\r\nname='changed'\r\n",
+            )
+            .unwrap();
+        }
+        let files = serial::filesync::collect(&root).unwrap();
+        let uploaded_hash = files
+            .iter()
+            .find_map(|entry| match entry {
+                serial::filesync::UploadEntry::File(file) if file.relative == "pyproject.toml" => {
+                    Some(format!("{:x}", Sha256::digest(&file.data)))
+                }
+                _ => None,
+            })
+            .unwrap();
+        let upload_count = files
+            .iter()
+            .map(|file| file.commands("/tmp/workspace").count())
+            .sum::<usize>();
+        let (client, mut device) = tokio::io::duplex(4096);
+        let fake = tokio::spawn(async move {
+            for _ in 0..(2 + upload_count) {
+                let (_, nonce) = read_command(&mut device).await;
+                begin(&mut device, &nonce).await;
+                end(&mut device, &nonce, 0).await;
+            }
+            let (command, nonce) = read_command(&mut device).await;
+            assert!(!command.contains(&raw_hash));
+            assert_eq!(command.contains(&uploaded_hash), !changed);
+            begin(&mut device, &nonce).await;
+            if changed {
+                end(&mut device, &nonce, 1).await;
+                return;
+            }
+            let probe_nonce = command
+                .split("RR_PROBE_")
+                .nth(1)
+                .unwrap()
+                .chars()
+                .take(32)
+                .collect::<String>();
+            let probe =
+                serde_json::json!({"program":"/usr/bin/python3","version":"3.12.9","env":{}});
+            device
+                .write_all(format!("\x1eRR_PROBE_{probe_nonce}{probe}\x1f").as_bytes())
+                .await
+                .unwrap();
+            end(&mut device, &nonce, 0).await;
+            let (command, nonce) = read_command(&mut device).await;
+            assert!(command.contains("/usr/bin/python3"));
+            begin(&mut device, &nonce).await;
+            end(&mut device, &nonce, 0).await;
+        });
+        let mut req: RunRequest = serde_json::from_value(serde_json::json!({"device_id":"serial","kind":"python","entry":"test.py","workspace":workspace})).unwrap();
+        req.project_inputs = Some(inputs);
+        req.workspace_context = Some(Context {
+            request: serde_json::from_value(serde_json::json!({"workspace":workspace,"device_id":"serial","device_revision":"test","command":{"entry":{"type":"python_script","path":"test.py"},"args":[]},"python":"device_default","settings":{"cwd":".","env":{},"console_mode":"pty","timeout_secs":0}})).unwrap(),
+            source_device: None, config_dir: root.clone(),
+        });
+        let (_tx, mut rx) = mpsc::unbounded_channel();
+        let result = serial::execute(
+            client,
+            115200,
+            &req,
+            "/tmp/workspace",
+            files,
+            &mut rx,
+            |_| {},
+        )
+        .await;
+        fake.await.unwrap();
+        if changed {
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("project input probe failed"));
+        } else {
+            assert_eq!(result.unwrap().code, Some(0));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[tokio::test]
 async fn full_workspace_run_hides_setup_and_echo_and_preserves_exit_code() {
     let (client, mut device) = tokio::io::duplex(128);
     let fake = tokio::spawn(async move {
@@ -238,6 +350,7 @@ async fn full_workspace_run_hides_setup_and_echo_and_preserves_exit_code() {
         )],
         &mut rx,
         |event| match event {
+            serial::Event::Launch(_) => {}
             serial::Event::Output { data, .. } => output.lock().unwrap().extend(data),
             serial::Event::State(state) => states.lock().unwrap().push(state.as_str()),
         },

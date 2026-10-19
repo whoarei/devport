@@ -12,27 +12,73 @@ use crate::runtime::manifest::{
 use crate::runtime::prepare::{self, NetworkConfig, PrepareEvents};
 use crate::runtime::{ProjectEnvironmentInfo, RuntimeReady};
 use parking_lot::Mutex;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-/// 活跃 Run 持有的 Environment lease（进程内）
-#[derive(Default)]
+/// 环境准备和活跃 Run 共用的实例 lease（进程内）。
+#[derive(Default, Debug)]
 pub struct LeaseSet {
-    leased: Mutex<HashSet<String>>,
+    leased: Arc<Mutex<HashMap<String, usize>>>,
+    maintenance: tokio::sync::Mutex<()>,
+}
+
+/// Held from before an instance is inspected/created through its launch handoff.
+#[derive(Debug)]
+pub struct EnvironmentLease {
+    leased: Arc<Mutex<HashMap<String, usize>>>,
+    id: String,
+}
+impl Drop for EnvironmentLease {
+    fn drop(&mut self) {
+        let mut leased = self.leased.lock();
+        if let Some(count) = leased.get_mut(&self.id) {
+            *count -= 1;
+            if *count == 0 {
+                leased.remove(&self.id);
+            }
+        }
+    }
 }
 
 impl LeaseSet {
+    pub async fn acquire(
+        &self,
+        environment_id: &str,
+        cancel: &AtomicBool,
+    ) -> Result<Arc<EnvironmentLease>> {
+        // Register atomically with respect to a cleanup's check and removal.
+        let _maintenance = tokio::select! {
+            biased;
+            _ = crate::runtime::host::cancelled(cancel) => return Err(crate::runtime::host::canceled_error()),
+            guard = self.maintenance.lock() => guard,
+        };
+        self.lease(environment_id);
+        Ok(Arc::new(EnvironmentLease {
+            leased: self.leased.clone(),
+            id: environment_id.into(),
+        }))
+    }
     pub fn lease(&self, environment_id: &str) {
-        self.leased.lock().insert(environment_id.to_string());
+        *self
+            .leased
+            .lock()
+            .entry(environment_id.to_string())
+            .or_default() += 1;
     }
 
     pub fn release(&self, environment_id: &str) {
-        self.leased.lock().remove(environment_id);
+        let mut leased = self.leased.lock();
+        if let Some(count) = leased.get_mut(environment_id) {
+            *count -= 1;
+            if *count == 0 {
+                leased.remove(environment_id);
+            }
+        }
     }
 
     pub fn is_leased(&self, environment_id: &str) -> bool {
-        self.leased.lock().contains(environment_id)
+        self.leased.lock().contains_key(environment_id)
     }
 }
 
@@ -114,6 +160,7 @@ pub async fn delete_environment(
     leases: &LeaseSet,
     environment_id: &str,
 ) -> Result<()> {
+    let _maintenance = leases.maintenance.lock().await;
     if !valid_env_id(environment_id) {
         return Err(RunnerError::InvalidInput(format!(
             "invalid environment id {environment_id:?}"
@@ -122,7 +169,7 @@ pub async fn delete_environment(
     if leases.is_leased(environment_id) {
         return Err(RunnerError::managed(
             code::CLEANUP,
-            format!("environment {environment_id} is in use by an active run"),
+            format!("environment {environment_id} is being prepared or used by an active run"),
         ));
     }
     let root = resolve_or_local_root(&host).await;
@@ -139,7 +186,7 @@ pub async fn delete_environment(
     Ok(())
 }
 
-/// 重建环境：删除（若存在）后走完整准备流水线；下次运行也可自动重建
+/// 重建环境：创建新一代实例并更新配方绑定，已有实例保持在原路径。
 pub async fn rebuild_environment(
     host: Arc<dyn RuntimeHost + Send + Sync>,
     leases: &LeaseSet,
@@ -152,33 +199,10 @@ pub async fn rebuild_environment(
     owner: &str,
     cancel: &AtomicBool,
     events: &mut PrepareEvents,
+    verify_inputs: Option<&prepare::InputVerifier>,
 ) -> Result<crate::runtime::PreparedEnvironment> {
-    // 以项目输入重算 Environment ID，删除现有环境（不持 lease 才能删）
-    let root = ready.profile.runtime_root.clone();
-    let envs_root = host.join(&root, "envs");
-    // 通过预计算 ID 找出目录（与 prepare_environment 一致）
-    let environment_id = crate::runtime::envid::compute(
-        &ready.uv_version,
-        &ready.profile.platform_key(),
-        &project.python_version,
-        &ready.python_build,
-        &ready.profile.os,
-        &ready.profile.arch,
-        ready.profile.libc.as_deref(),
-        &project.lock_sha256,
-        &project.groups,
-        &project.extras,
-        &project.package_source_identity,
-    );
-    if valid_env_id(&environment_id) && !leases.is_leased(&environment_id) {
-        let env_dir = host.join(&envs_root, &environment_id);
-        ensure_inside(&root, &env_dir)?;
-        if host.exists(&env_dir).await {
-            host.remove(&env_dir).await?;
-        }
-    }
-    // prepare_environment 内部对缺失环境走创建路径
-    prepare::prepare_environment(
+    // Rebinding to a new generation leaves every leased instance at its final path.
+    prepare::prepare_generation(
         host,
         ready,
         project,
@@ -188,6 +212,9 @@ pub async fn rebuild_environment(
         owner,
         cancel,
         events,
+        true,
+        verify_inputs,
+        leases,
     )
     .await
 }
@@ -200,6 +227,7 @@ pub async fn clean_cache(
     catalog: &RuntimeCatalog,
     cancel: &AtomicBool,
 ) -> Result<u64> {
+    let _maintenance = leases.maintenance.lock().await;
     let root = resolve_or_local_root(&host).await;
     let mut removed = 0u64;
 
@@ -229,6 +257,7 @@ pub async fn clean_cache(
         }
     }
 
+    drop(_maintenance);
     // 3. uv dependency cache prune（best effort，uv 未部署时跳过）
     let uv_path = host.join(
         &host.join(
@@ -266,6 +295,30 @@ mod tests {
             Arc::new(LocalHost::new(root.to_string_lossy().into_owned()).unwrap()),
             root,
         )
+    }
+
+    #[tokio::test]
+    async fn preparation_can_cancel_while_waiting_for_cache_maintenance() {
+        let leases = Arc::new(LeaseSet::default());
+        let cancel = Arc::new(AtomicBool::new(false));
+        let maintenance = leases.maintenance.lock().await;
+        let waiting_leases = leases.clone();
+        let waiting_cancel = cancel.clone();
+        let task = tokio::spawn(async move {
+            waiting_leases
+                .acquire(&"e".repeat(32), &waiting_cancel)
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished());
+        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(result.is_err());
+        assert!(!leases.is_leased(&"e".repeat(32)));
+        drop(maintenance);
     }
 
     #[tokio::test]

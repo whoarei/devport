@@ -61,6 +61,7 @@ pub struct Outcome {
 
 /// Transport-independent progress contract consumed by RunManager.
 pub enum ExecutionEvent {
+    Launch(crate::workspace_run::Launch),
     State(RunState),
     Output { stream: OutputStream, data: Vec<u8> },
 }
