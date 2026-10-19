@@ -12,17 +12,21 @@
 
 ## 执行循环与停止升级
 
-`execute()` 与 `RunManager::await_transport` 的契约同 WSL：用户停止（含控制台 Ctrl+C → `send_input([3])` → `stop()`）经 control 通道送达 `SessionControl::Interrupt`；超时由循环内 deadline 触发。升级节奏 INT → 3 s → TERM → 2 s → KILL → 3 s → 放弃等待（按当前停止原因收尾，避免不可杀进程把 run 卡死）。
+`execute()` 与 `RunManager::await_transport` 的契约同 WSL：停止按钮经 control 通道送达 `SessionControl::Stop`；超时由循环内 deadline 触发。升级节奏 INT → 3 s → TERM → 2 s → KILL → 3 s → 放弃等待（按当前停止原因收尾，避免不可杀进程把 run 卡死）。控制台 Ctrl+C → `send_input([3])` → `SessionControl::Interrupt` 只发送一次中断，不设置停止原因、不改变 running 状态、不启动升级计时；程序捕获中断后可以继续输入和运行。
 
 平台映射：
 
-- Interrupt：PTY 写 `0x03`（Unix 终端驱动 / ConPTY 分别转成 SIGINT / Ctrl+C）；pipe-Unix 对进程组发 SIGINT；**pipe-Windows 无等价语义，`interrupt()` 返回 false，直接进入 Terminate**。
+- Interrupt：PTY 写 `0x03`（Unix 终端驱动 / ConPTY 分别转成 SIGINT / Ctrl+C）；pipe-Unix 对进程组发 SIGINT。**pipe-Windows 无等价语义：单次 Ctrl+C 在 RunManager 边界返回错误，控制台提示使用 PTY 或停止按钮，任务继续运行；只有停止/超时流程在 `interrupt()` 返回 false 时直接进入 Terminate**。
 - Terminate：Unix `SIGTERM` 进程组；Windows 与 Kill 相同（无跨进程温和终止）。
 - Kill：Unix `SIGKILL` 进程组（pipe 的 setsid / PTY 的 forkpty 都保证子进程 pid == pgid）；Windows 用系统 `taskkill.exe /PID <pid> /T /F` 杀整棵树，再补 `child.kill()`。
 
 退出判定只认 `try_wait()` 观察到的子进程退出；输出通道 EOF 不是成功信号。观察到退出后按 `expected_readers`（pty=1、pipe=2）等待读取线程 EOF 排空输出，宽限 300 ms；停止/超时路径额外无条件 `force_kill()` 一次以清理同组后代。
 
 ## 已验证的平台行为（踩坑记录）
+
+### Windows Python 控制台输入中断边界
+
+2026-10-19 并行回归中，CPython 3.12 在 `input()` 等待时出现过一次单次写入 `0x03` 却先后抛出两次 `KeyboardInterrupt` 的情况，单独运行同一用例通过。CPython 的 [Windows 控制台读取实现](https://github.com/python/cpython/blob/3.12/Parser/myreadline.c) 同时处理 ReadConsole 中止和另一个线程触发的 SIGINT，存在时序边界。运行器只发送一次终端中断，不向用户 Python 代码注入信号处理补丁。本机回归通过可中断的 `sleep` 等待验证捕获中断后存活超过升级期限，再通过 `input()` 验证后续输入；WSL pipe/PTY 回归同时覆盖直接在 `input()` 中捕获中断。
 
 ### ConPTY 启动 DSR 握手（关键）
 

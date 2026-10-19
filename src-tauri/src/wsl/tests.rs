@@ -432,6 +432,60 @@ async fn pty_supports_input_and_live_resize() {
     windows,
     ignore = "requires an explicitly selected local WSL distribution"
 )]
+async fn interrupt_allows_python_to_continue_in_pipe_and_pty() {
+    let script = "import time\ntry:\n    print('CHILD_READY', flush=True)\n    input()\nexcept KeyboardInterrupt:\n    print('PARENT_READY', flush=True)\ntime.sleep(4)\nprint('CONTINUE_READY', flush=True)\nprint('GOT:' + input(), flush=True)\n";
+    for mode in [
+        crate::process::ConsoleMode::Pipe,
+        crate::process::ConsoleMode::Pty,
+    ] {
+        let mut req = request(&format!(
+            "exec python3 -u -c {}",
+            crate::runner::sh_quote(script)
+        ));
+        req.console_mode = mode;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut output = Vec::new();
+        let mut interrupted = false;
+        let mut continued = false;
+        let mut stopping = false;
+        let result = run(
+            &req,
+            |event| match event {
+                Event::Output { data, .. } => {
+                    output.extend(data);
+                    let text = String::from_utf8_lossy(&output);
+                    if !interrupted && text.contains("CHILD_READY") {
+                        interrupted = true;
+                        tx.send(SessionControl::Interrupt).unwrap();
+                    }
+                    if !continued && text.contains("CONTINUE_READY") {
+                        continued = true;
+                        tx.send(SessionControl::Input(b"next\n".to_vec())).unwrap();
+                    }
+                }
+                Event::State(RunState::Stopping) => stopping = true,
+                _ => {}
+            },
+            &mut rx,
+        )
+        .await
+        .unwrap();
+        let output = String::from_utf8_lossy(&output);
+        assert_eq!(result.code, Some(0), "{mode:?}: {output}");
+        assert_eq!(result.stopped, None);
+        assert!(
+            continued && output.contains("PARENT_READY") && output.contains("GOT:next"),
+            "{output}"
+        );
+        assert!(!stopping);
+    }
+}
+
+#[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "requires an explicitly selected local WSL distribution"
+)]
 async fn stop_and_timeout_escalate_for_uncooperative_process_groups() {
     for timeout in [false, true] {
         let mut req = request("exec python3 -u -c 'import signal,time; signal.signal(signal.SIGINT,signal.SIG_IGN); signal.signal(signal.SIGTERM,signal.SIG_IGN); print(\"READY\"); time.sleep(60)'");
@@ -446,7 +500,7 @@ async fn stop_and_timeout_escalate_for_uncooperative_process_groups() {
                     output.extend(data);
                     if !timeout && !sent && String::from_utf8_lossy(&output).contains("READY") {
                         sent = true;
-                        tx.send(SessionControl::Interrupt).unwrap();
+                        tx.send(SessionControl::Stop).unwrap();
                     }
                 }
             },
@@ -897,7 +951,7 @@ async fn eof_without_completion_is_failure_and_prelaunch_stop_executes_nothing()
     .await;
     assert!(result.is_err());
     let (tx, mut rx) = mpsc::unbounded_channel();
-    tx.send(SessionControl::Interrupt).unwrap();
+    tx.send(SessionControl::Stop).unwrap();
     let result = run(
         &request("exit 99"),
         |_| panic!("stopped before launch"),

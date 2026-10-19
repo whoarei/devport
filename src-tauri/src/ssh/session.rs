@@ -112,7 +112,7 @@ pub async fn spawn(
                                 tracing::warn!("resize failed: {e}");
                             }
                         }
-                        Some(SessionControl::Interrupt) => {
+                        Some(SessionControl::Interrupt | SessionControl::Stop) => {
                             let res = if pty {
                                 channel.data(&[0x03u8][..]).await
                             } else {

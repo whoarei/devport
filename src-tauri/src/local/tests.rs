@@ -381,7 +381,7 @@ async fn user_stop_escalates_and_cancels_a_long_run() {
     let task = tokio::spawn(async move { execute(&config2, &req, &mut rx, emit).await.unwrap() });
     tokio::time::sleep(Duration::from_millis(500)).await;
     let started = std::time::Instant::now();
-    tx.send(SessionControl::Interrupt).unwrap();
+    tx.send(SessionControl::Stop).unwrap();
     let outcome = tokio::time::timeout(Duration::from_secs(20), task)
         .await
         .unwrap()
@@ -493,7 +493,7 @@ async fn login_shells_keep_the_workspace_as_cwd() {
 }
 
 #[tokio::test]
-async fn pty_resize_and_ctrl_c_reach_the_workload() {
+async fn pty_resize_and_stop_reach_the_workload() {
     let Some(config) = available(fallback_id()) else {
         eprintln!("SKIP: no fallback shell");
         return;
@@ -517,7 +517,7 @@ async fn pty_resize_and_ctrl_c_reach_the_workload() {
         rows: 30,
     })
     .unwrap();
-    tx.send(SessionControl::Interrupt).unwrap();
+    tx.send(SessionControl::Stop).unwrap();
     let outcome = tokio::time::timeout(Duration::from_secs(20), task)
         .await
         .unwrap()
@@ -534,4 +534,86 @@ async fn test_device_reports_shell_version() {
     let info = test_device(&config).await.unwrap();
     assert!(info.starts_with("Local "), "{info}");
     assert!(!info.trim_end().ends_with(')'), "{info}");
+}
+
+#[tokio::test]
+async fn python_package_catches_interrupt_and_accepts_more_input_without_stopping() {
+    let python = std::env::var_os("REMOTE_RUNNER_TEST_PYTHON")
+        .map(PathBuf::from)
+        .or_else(|| shells::find_on_path(if cfg!(windows) { "python" } else { "python3" }));
+    let Some(python) = python.filter(|p| !p.to_string_lossy().contains("WindowsApps")) else {
+        eprintln!("SKIP: set REMOTE_RUNNER_TEST_PYTHON to an installed interpreter");
+        return;
+    };
+    let Some(config) = available(fallback_id()) else {
+        return;
+    };
+    let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir_all(root.join("wizard")).unwrap();
+    // Windows ReadConsole aborts and the asynchronous SIGINT can race under
+    // parallel test load. Wait for the signal outside that separate input path;
+    // subsequent input still verifies that the PTY remains usable after Ctrl+C.
+    let wait = if cfg!(windows) {
+        "while True: time.sleep(0.05)"
+    } else {
+        "input()"
+    };
+    std::fs::write(root.join("wizard/__main__.py"), format!("import time\ntry:\n    print('CHILD_READY', flush=True)\n    {wait}\nexcept KeyboardInterrupt:\n    print('PARENT_READY', flush=True)\ntime.sleep(4)\nprint('CONTINUE_READY', flush=True)\nprint('GOT:' + input(), flush=True)\n")).unwrap();
+    for mode in [ConsoleMode::Pty, ConsoleMode::Pipe] {
+        if cfg!(windows) && mode == ConsoleMode::Pipe {
+            continue;
+        }
+        let mut req = command_request("unused");
+        req.kind = ScriptKind::Python;
+        req.entry = Some("wizard".into());
+        req.module = true;
+        req.command = None;
+        req.workspace = Some(crate::workspace_ref::WorkspaceRef::local(
+            root.to_string_lossy(),
+        ));
+        req.managed_env_python = Some(python.to_string_lossy().into_owned());
+        req.console_mode = mode;
+        req.timeout_secs = 15;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut output = Vec::new();
+        let mut interrupted = false;
+        let mut continued = false;
+        let mut stopping = false;
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(25),
+            execute(&config, &req, &mut rx, |event| match event {
+                Event::Output { data, .. } => {
+                    output.extend(data);
+                    let text = String::from_utf8_lossy(&output);
+                    if !interrupted && text.contains("CHILD_READY") {
+                        interrupted = true;
+                        tx.send(SessionControl::Interrupt).unwrap();
+                    }
+                    if !continued && text.contains("CONTINUE_READY") {
+                        continued = true;
+                        tx.send(SessionControl::Input(if mode == ConsoleMode::Pty {
+                            b"next\r".to_vec()
+                        } else {
+                            b"next\n".to_vec()
+                        }))
+                        .unwrap();
+                    }
+                }
+                Event::State(RunState::Stopping) => stopping = true,
+                _ => {}
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let output = String::from_utf8_lossy(&output);
+        assert_eq!(outcome.code, Some(0), "{mode:?}: {output}");
+        assert_eq!(outcome.stopped, None);
+        assert!(
+            continued && output.contains("PARENT_READY") && output.contains("GOT:next"),
+            "{output}"
+        );
+        assert!(!stopping);
+    }
+    std::fs::remove_dir_all(root).unwrap();
 }

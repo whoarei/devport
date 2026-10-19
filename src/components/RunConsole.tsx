@@ -3,7 +3,7 @@ import type { MouseEvent } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { api } from "../api";
+import { api, errorMessage } from "../api";
 import { useAppStore } from "../store";
 import { isActiveRun, runStateLabel } from "../runState";
 import { PanelTitle } from "./PanelTitle";
@@ -11,6 +11,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useTranslation } from "react-i18next";
 import { createConsoleReplay } from "../consoleReplay";
 import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
+import { handleRunConsoleKey } from "../runConsoleInput";
 
 /**
  * Run Console：绑定的是“远程进程”的 stdin/stdout/stderr，不是 SSH shell。
@@ -22,6 +23,7 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const replayRef = useRef<ReturnType<typeof createConsoleReplay> | null>(null);
+  const [inputError, setInputError] = useState<{ runId: string; message: string } | null>(null);
 
   const { activeRunId, buffer, activeRun } = useAppStore(useShallow((s) => ({
     activeRunId: s.activeRunId, buffer: s.activeRunId ? s.outputBuffers[s.activeRunId] : undefined,
@@ -43,30 +45,19 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
     fit.fit();
     useAppStore.getState().setConsoleSize(term.cols, term.rows);
 
-    const input = term.onData((data) => {
+    const sendInput = (data: string) => {
       const { activeRunId: runId, runs } = useAppStore.getState();
       if (runId && runs[runId]?.state === "running") {
-        void api.sendRunInput(runId, data).catch(() => {});
+        setInputError(null);
+        void api.sendRunInput(runId, data).catch((error) => {
+          setInputError({ runId, message: errorMessage(error) });
+        });
       }
-    });
+    };
+    const input = term.onData(sendInput);
 
-    // Ctrl+C：优先作为远程进程的 SIGINT（无选中文本时）
-    term.attachCustomKeyEventHandler((ev) => {
-      if (ev.type !== "keydown") return true;
-      if (ev.ctrlKey && ev.key === "c") {
-        const sel = term.getSelection();
-        if (sel) {
-          void navigator.clipboard.writeText(sel).catch(() => {});
-          return false;
-        }
-        if (!sel) {
-          const runId = useAppStore.getState().activeRunId;
-          if (runId) void api.stopRun(runId).catch(() => {});
-          return false;
-        }
-      }
-      return true;
-    });
+    term.attachCustomKeyEventHandler((ev) => handleRunConsoleKey(ev, term.getSelection(), sendInput,
+      (text) => { void navigator.clipboard.writeText(text).catch(() => {}); }));
 
     termRef.current = term;
     fitRef.current = fit;
@@ -164,6 +155,7 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
           </span>
         )}
       </PanelTitle>}
+      {inputError?.runId === activeRunId && <div className="terminal-error" role="alert">{t("console.inputFailed", { error: inputError.message })}</div>}
       <div ref={containerRef} className={`console-body${collapsed ? " collapsed" : ""}`} onContextMenu={openMenu} />
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
     </div>

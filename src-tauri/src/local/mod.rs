@@ -351,7 +351,7 @@ pub async fn execute(
         tokio::select! {
             biased;
             Some(control) = controls.recv() => {
-                if matches!(control, SessionControl::Interrupt | SessionControl::Terminate | SessionControl::Kill) {
+                if matches!(control, SessionControl::Stop | SessionControl::Terminate | SessionControl::Kill) {
                     return Ok(canceled());
                 }
                 pending_controls.push(control);
@@ -365,7 +365,10 @@ pub async fn execute(
         match control {
             SessionControl::Input(data) => session.input(data),
             SessionControl::Resize { cols, rows } => session.resize(cols, rows)?,
-            SessionControl::Interrupt | SessionControl::Terminate | SessionControl::Kill => {}
+            SessionControl::Interrupt => {
+                session.interrupt();
+            }
+            SessionControl::Stop | SessionControl::Terminate | SessionControl::Kill => {}
         }
     }
 
@@ -388,7 +391,8 @@ pub async fn execute(
             Some(control) = controls.recv() => match control {
                 SessionControl::Input(data) if stop_reason.is_none() => session.input(data),
                 SessionControl::Resize { cols, rows } if stop_reason.is_none() => session.resize(cols, rows)?,
-                SessionControl::Interrupt | SessionControl::Terminate | SessionControl::Kill if stop_reason.is_none() => {
+                SessionControl::Interrupt if stop_reason.is_none() => { session.interrupt(); }
+                SessionControl::Stop | SessionControl::Terminate | SessionControl::Kill if stop_reason.is_none() => {
                     stop_reason = Some(StopReason::User);
                     emit(Event::State(RunState::Stopping));
                     // 无温和中断语义的平台/模式（pipe-Windows）直接进入第二阶段

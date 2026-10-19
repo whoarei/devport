@@ -541,7 +541,7 @@ pub(crate) async fn execute_with_command(
     let mut bridge = loop {
         tokio::select! {
             biased;
-            Some(control) = controls.recv() => if matches!(control, SessionControl::Interrupt | SessionControl::Terminate | SessionControl::Kill) { return Ok(canceled()); },
+            Some(control) = controls.recv() => if matches!(control, SessionControl::Stop | SessionControl::Terminate | SessionControl::Kill) { return Ok(canceled()); },
             result = &mut launch => break result?,
         }
     };
@@ -571,7 +571,7 @@ pub(crate) async fn execute_with_command(
         loop {
             tokio::select! {
                 biased;
-                Some(control) = controls.recv() => if matches!(control, SessionControl::Interrupt | SessionControl::Terminate | SessionControl::Kill) { return Ok(canceled()); },
+                Some(control) = controls.recv() => if matches!(control, SessionControl::Stop | SessionControl::Terminate | SessionControl::Kill) { return Ok(canceled()); },
                 result = &mut prepare => { result?; break; },
             }
         }
@@ -611,11 +611,14 @@ pub(crate) async fn execute_with_command(
                 SessionControl::Input(data) if !stopping => {
                     for chunk in data.chunks(16 * 1024) { bridge.send(json!({"type":"input", "data":STANDARD.encode(chunk)})).await?; }
                 }
+                SessionControl::Interrupt if !stopping => {
+                    bridge.send(json!({"type":"interrupt"})).await?;
+                }
                 SessionControl::Resize { cols, rows } => {
                     if cols == 0 || rows == 0 || cols > 4096 || rows > 4096 { return Err(failure("invalid terminal dimensions")); }
                     bridge.send(json!({"type":"resize", "cols":cols, "rows":rows})).await?;
                 }
-                SessionControl::Interrupt | SessionControl::Terminate | SessionControl::Kill if !stopping => {
+                SessionControl::Stop | SessionControl::Terminate | SessionControl::Kill if !stopping => {
                     stopping = true;
                     deadline = Some(tokio::time::Instant::now() + Duration::from_secs(15));
                     emit(Event::State(RunState::Stopping));

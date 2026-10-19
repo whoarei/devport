@@ -70,6 +70,7 @@ pub enum ExecutionEvent {
 pub struct Capabilities {
     pub pipe: bool,
     pub resize: bool,
+    pub interrupt: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,8 +103,10 @@ pub enum SessionControl {
         cols: u32,
         rows: u32,
     },
-    /// Ctrl+C 语义：PTY 下发 0x03；pipe 下发 SIGINT
+    /// 单次中断：PTY 下发 0x03；pipe 下发 SIGINT，不进入停止流程。
     Interrupt,
+    /// 用户停止：由 transport 执行既有的分级终止流程。
+    Stop,
     Terminate,
     /// 尽力发送 KILL 并关闭 channel；远程进程仍需上层按 PID 清理。
     Kill,

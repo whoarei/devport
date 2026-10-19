@@ -193,6 +193,7 @@ export const zh = {
     managed: "uv {{uv}} · Python {{python}} · 环境 {{env}}",
   },
   console: {
+    inputFailed: "发送输入失败：{{error}}",
     serialNoTerminal: "（暂不支持终端）",
     noDevices: "暂无可用设备",
     expand: "展开控制台",

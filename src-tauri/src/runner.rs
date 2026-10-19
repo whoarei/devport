@@ -452,7 +452,22 @@ impl RunManager {
             ));
         }
         if data == [3] {
-            return self.stop(run_id);
+            let handles = self.handles.lock();
+            let h = handles
+                .get(run_id)
+                .ok_or_else(|| RunnerError::RunNotFound(run_id.to_string()))?;
+            if h.status.state != RunState::Running {
+                return Err(RunnerError::InvalidInput("run is not running".into()));
+            }
+            if !h.capabilities.interrupt {
+                return Err(RunnerError::InvalidInput(
+                    "Ctrl+C is unavailable for local Windows pipe runs; use PTY mode or the Stop button".into(),
+                ));
+            }
+            return h
+                .control
+                .send(SessionControl::Interrupt)
+                .map_err(|_| RunnerError::RunNotFound(run_id.to_string()));
         }
         self.control(run_id)?
             .send(SessionControl::Input(data))
@@ -802,7 +817,10 @@ impl RunManager {
                 .retain(|id, _| keep.contains(id));
             // The source identity is retained before any cross-device staging.
         }
-        let capabilities = device.transport.capabilities();
+        let mut capabilities = device.transport.capabilities();
+        capabilities.interrupt = !(cfg!(windows)
+            && device.transport == TransportKind::Local
+            && req.console_mode == ConsoleMode::Pipe);
         if req.console_mode == ConsoleMode::Pipe && !capabilities.pipe {
             return Err(RunnerError::InvalidInput(
                 "serial shell has one combined console stream; pipe mode is not supported".into(),
@@ -1172,9 +1190,11 @@ impl RunManager {
         )
         .await?;
 
-        // 替换占位 control sender
+        // Pipe interrupts need the actual workload's process-group PID, rather
+        // than an SSH signal request (which servers may ignore).
+        let (control_tx, mut control_rx) = mpsc::unbounded_channel();
         if let Some(h) = self.handles.lock().get_mut(run_id) {
-            h.control = proc.control.clone();
+            h.control = control_tx;
         }
         self.set_state(run_id, RunState::Running);
 
@@ -1195,8 +1215,17 @@ impl RunManager {
         let mut stop_stage: u8 = 0;
         let mut interrupt_sent = false;
         let mut stop_deadline: Option<tokio::time::Instant> = None;
+        let mut pending_interrupts = 0usize;
 
         loop {
+            if stop_kind.is_none() {
+                if let Some(pid) = remote_pid {
+                    while pending_interrupts > 0 {
+                        kill_remote_tree(&conn, pid, "INT", true).await;
+                        pending_interrupts -= 1;
+                    }
+                }
+            }
             // Pipe runs live in their own session. Signal the actual PID marker's
             // group, not the SSH/setsid supervisor, including Stop before the marker.
             if stop_kind.is_some() && !interrupt_sent {
@@ -1224,6 +1253,15 @@ impl RunManager {
             };
 
             tokio::select! {
+                Some(control) = control_rx.recv() => {
+                    if stop_kind.is_none() {
+                        if group_kill && matches!(control, SessionControl::Interrupt) {
+                            pending_interrupts += 1;
+                        } else {
+                            let _ = proc.control.send(control);
+                        }
+                    }
+                }
                 ev = session_rx.recv() => {
                     let Some(ev) = ev else { break };
                     match ev {
@@ -1746,7 +1784,7 @@ async fn await_transport(
     let result = loop {
         tokio::select! {
             biased;
-            _ = stops.recv(), if !stop_sent => { stop_sent = true; let _ = control.send(SessionControl::Interrupt); }
+            _ = stops.recv(), if !stop_sent => { stop_sent = true; let _ = control.send(SessionControl::Stop); }
             result = &mut execution => break result?,
         }
     };
@@ -2421,6 +2459,58 @@ mod tests {
             log_truncated: false,
             log_failed: false,
         }
+    }
+
+    #[test]
+    fn ctrl_c_only_interrupts_and_explicit_stop_still_cancels() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (events, _events_rx) = crate::events::channel();
+        let manager = RunManager::new(&root, events);
+        let (control, mut input_rx) = mpsc::unbounded_channel();
+        let (stop_tx, mut stop_rx) = mpsc::unbounded_channel();
+        let mut handle = test_handle("run");
+        handle.control = control;
+        handle.stop_tx = stop_tx;
+        handle.status.state = RunState::Running;
+        let canceled = handle.runtime_cancel.clone();
+        manager.handles.lock().insert("run".into(), handle);
+
+        manager.send_input("run", vec![3]).unwrap();
+        assert!(matches!(
+            input_rx.try_recv().unwrap(),
+            SessionControl::Interrupt
+        ));
+        assert!(input_rx.try_recv().is_err());
+        assert!(stop_rx.try_recv().is_err());
+        assert_eq!(manager.status("run").unwrap().state, RunState::Running);
+        assert!(!canceled.load(Ordering::Relaxed));
+        manager.send_input("run", b"next\n".to_vec()).unwrap();
+        assert!(
+            matches!(input_rx.try_recv().unwrap(), SessionControl::Input(data) if data == b"next\n")
+        );
+
+        manager
+            .handles
+            .lock()
+            .get_mut("run")
+            .unwrap()
+            .capabilities
+            .interrupt = false;
+        assert!(manager
+            .send_input("run", vec![3])
+            .unwrap_err()
+            .to_string()
+            .contains("PTY"));
+        assert!(input_rx.try_recv().is_err());
+        assert!(stop_rx.try_recv().is_err());
+        assert_eq!(manager.status("run").unwrap().state, RunState::Running);
+
+        manager.stop("run").unwrap();
+        assert_eq!(stop_rx.try_recv().unwrap(), StopKind::User);
+        assert_eq!(manager.status("run").unwrap().state, RunState::Stopping);
+        assert!(canceled.load(Ordering::Relaxed));
+        assert!(manager.send_input("run", vec![3]).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

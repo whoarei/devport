@@ -637,6 +637,14 @@ def main():
                             os.set_blocking(fd, False)
                         start = time.monotonic()
                         emit("started")
+                    elif kind == "interrupt" and process is not None:
+                        if not stopped and process.poll() is None:
+                            # A single interrupt belongs to the workload. Do not
+                            # arm stop escalation or discard subsequent input.
+                            if master is not None:
+                                pending[:0] = b"\x03"
+                            else:
+                                kill_group(signal.SIGINT)
                     elif kind == "input" and process is not None:
                         if not stopped and process.poll() is None and stdin_fd is not None:
                             pending.extend(base64.b64decode(message["data"], validate=True))

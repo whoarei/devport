@@ -405,6 +405,52 @@ async fn interactive_input_reaches_process_without_shell_commands() {
     fake.await.unwrap();
 }
 
+#[tokio::test(start_paused = true)]
+async fn interrupt_allows_continued_input_without_a_stop_deadline() {
+    let (client, mut device) = tokio::io::duplex(128);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let interrupt_tx = tx.clone();
+    let fake = tokio::spawn(async move {
+        let (_, nonce) = read_command(&mut device).await;
+        begin(&mut device, &nonce).await;
+        // Wait until the run consumes its start marker before interrupting.
+        device.write_all(b"READY").await.unwrap();
+        assert_eq!(device.read_u8().await.unwrap(), 3);
+        device.write_all(b"PARENT").await.unwrap();
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        tx.send(SessionControl::Input(b"next\n".to_vec())).unwrap();
+        let mut input = [0; 5];
+        device.read_exact(&mut input).await.unwrap();
+        assert_eq!(&input, b"next\n");
+        end(&mut device, &nonce, 0).await;
+    });
+    let mut states = Vec::new();
+    let mut output = Vec::new();
+    let mut sent = false;
+    let result = ShellSession::new(client, 115200)
+        .execute(
+            "wizard",
+            Some((80, 24)),
+            None,
+            &mut rx,
+            |data| {
+                output.extend(data);
+                if !sent && output.ends_with(b"READY") {
+                    sent = true;
+                    interrupt_tx.send(SessionControl::Interrupt).unwrap();
+                }
+            },
+            |state| states.push(state),
+        )
+        .await
+        .unwrap();
+    assert!(sent);
+    assert_eq!(result.code, 0);
+    assert_eq!(result.stopped, None);
+    assert!(!states.contains(&crate::process::RunState::Stopping));
+    fake.await.unwrap();
+}
+
 #[tokio::test]
 async fn home_workspace_is_resolved_before_upload_and_execution() {
     let (client, mut device) = tokio::io::duplex(4096);
@@ -596,7 +642,7 @@ async fn user_stop_is_forwarded_as_ctrl_c() {
             |_| {},
             |state| {
                 if state == crate::process::RunState::Running {
-                    tx.send(SessionControl::Interrupt).unwrap();
+                    tx.send(SessionControl::Stop).unwrap();
                 }
             },
         )
@@ -613,7 +659,7 @@ async fn partial_submission_stop_requires_remote_confirmation() {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let fake = tokio::spawn(async move {
         assert_eq!(device.read_u8().await.unwrap(), b's');
-        tx.send(SessionControl::Interrupt).unwrap();
+        tx.send(SessionControl::Stop).unwrap();
         loop {
             let byte = device.read_u8().await.unwrap();
             assert_ne!(
@@ -640,7 +686,7 @@ async fn partial_submission_stop_requires_remote_confirmation() {
 async fn stop_before_io_never_touches_the_device() {
     let (client, mut device) = tokio::io::duplex(128);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    tx.send(SessionControl::Interrupt).unwrap();
+    tx.send(SessionControl::Stop).unwrap();
     let result = ShellSession::new(client, 115200)
         .execute("true", None, None, &mut rx, |_| {}, |_| {})
         .await
@@ -659,7 +705,7 @@ async fn stopping_discards_early_input_even_when_begin_arrives_late() {
         .unwrap();
     let fake = tokio::spawn(async move {
         let (_, nonce) = read_command(&mut device).await;
-        tx.send(SessionControl::Interrupt).unwrap();
+        tx.send(SessionControl::Stop).unwrap();
         begin(&mut device, &nonce).await;
         assert_eq!(device.read_u8().await.unwrap(), 3);
         end(&mut device, &nonce, 130).await;
@@ -800,7 +846,7 @@ async fn continuous_output_does_not_starve_stop_writes() {
             |_| {},
             |state| {
                 if state == crate::process::RunState::Running {
-                    tx.send(SessionControl::Interrupt).unwrap();
+                    tx.send(SessionControl::Stop).unwrap();
                 }
             },
         ),

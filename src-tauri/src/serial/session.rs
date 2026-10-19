@@ -89,7 +89,14 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ShellSession<T> {
                                 queued_input.extend(data);
                             }
                         }
-                        Some(SessionControl::Interrupt | SessionControl::Terminate | SessionControl::Kill) | None => {
+                        Some(SessionControl::Interrupt) if dimensions.is_some() && stopped.is_none() && parser.started => {
+                            // Deliver one terminal interrupt without changing the
+                            // completion marker, run deadline, or stop state.
+                            pending.drain(..offset);
+                            offset = 0;
+                            pending.insert(0, 3);
+                        }
+                        Some(SessionControl::Stop | SessionControl::Terminate | SessionControl::Kill) | None => {
                             if control.is_none() { controls_open = false; }
                             if stopped.is_none() {
                                 state(RunState::Stopping);

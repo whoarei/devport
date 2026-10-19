@@ -17,6 +17,7 @@ impl TransportKind {
         crate::process::Capabilities {
             pipe: self != Self::Serial,
             resize: self != Self::Serial,
+            interrupt: true,
         }
     }
 }

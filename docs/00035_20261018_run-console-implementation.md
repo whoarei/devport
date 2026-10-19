@@ -20,6 +20,10 @@
 
 ## 代码入口
 
+2026-10-19 调整运行控制台中断语义：Ctrl+C 无选区时只发送一次 `0x03`，键盘长按重复事件不重复发送；有选区时保留复制。后端将该输入转换为单次 `SessionControl::Interrupt`，不设置取消标志或 stopping 状态。停止按钮继续调用 `stop_run`，通过独立 `SessionControl::Stop` 执行既有升级流程。SSH pipe 根据实际 PID 标记向进程组发送一次 SIGINT（早于 PID 的中断等待标记），PTY 透传终端中断；WSL 使用独立 helper 消息，串口保留 nonce 完成协议。本机 Windows pipe 不支持单次中断，明确报错并保留任务运行，需使用 PTY 或停止按钮。
+
+此次验证：前端 172 项、Rust 库测试 229 项及 loopback 集成测试 18 项通过；19 项 opt-in 默认忽略，其中 WSL 相关 25 项（含普通及 opt-in 用例）已在 Ubuntu-24.04 显式运行通过。回归覆盖捕获中断后等待超过原停止升级期限、继续输入与正常退出、SSH PID 标记延迟、串口不启动停止倒计时，以及既有停止/超时升级。前端构建、Rust 格式及差异空白检查通过。运行中的开发版占用默认输出文件，全量 Rust 验证使用独立 `target/ctrl-c-check` 构建目录；未执行 SSH 真机或物理串口验证。Windows CPython 3.12 控制台输入的时序边界见 `00024_20260913_local-shell-implementation.md`。
+
 前端由 `workspaceRunStore.ts` 管理设置、快照和会话摘要，`workspaceRunMenu.ts` 组装右键入口，`WorkspaceRunDialogs.tsx` 提供设置、参数和历史对话框。新 IPC 位于 `workspace_commands.rs`；模型、安全状态存储和项目输入读取位于 `workspace_run.rs`，解释器探测位于 `workspace_probe.rs`。
 
 环境缓存提示只表示匹配版本、锁和 groups/extras 的就绪缓存存在；实际执行前仍校验 manifest、解释器与输入，不保证外部更改后的缓存可直接复用。

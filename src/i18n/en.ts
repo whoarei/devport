@@ -192,6 +192,7 @@ export const en: Messages = {
     managed: "uv {{uv}} · Python {{python}} · env {{env}}",
   },
   console: {
+    inputFailed: "Could not send input: {{error}}",
     serialNoTerminal: " (terminal not supported)",
     noDevices: "No devices available",
     expand: "Expand console",

@@ -12,9 +12,14 @@ enum Behavior {
     DelayedExit,
     CloseWithoutExit,
     Hang,
+    InteractivePty,
+    InteractivePipe,
 }
 
-struct TestServer(Behavior);
+struct TestServer {
+    behavior: Behavior,
+    workload: Option<ChannelId>,
+}
 
 impl server::Handler for TestServer {
     type Error = russh::Error;
@@ -44,7 +49,11 @@ impl server::Handler for TestServer {
         _: &[(russh::Pty, u32)],
         session: &mut server::Session,
     ) -> Result<(), Self::Error> {
-        session.channel_failure(channel)?;
+        if matches!(self.behavior, Behavior::InteractivePty) {
+            session.channel_success(channel)?;
+        } else {
+            session.channel_failure(channel)?;
+        }
         Ok(())
     }
 
@@ -54,15 +63,19 @@ impl server::Handler for TestServer {
         data: &[u8],
         session: &mut server::Session,
     ) -> Result<(), Self::Error> {
-        if matches!(self.0, Behavior::RejectExec) {
+        if matches!(self.behavior, Behavior::RejectExec) {
             session.channel_failure(channel)?;
             return Ok(());
         }
-        if matches!(self.0, Behavior::DelayedExit) {
+        if matches!(self.behavior, Behavior::DelayedExit) {
             session.data(channel, b"early".to_vec())?;
         }
         session.channel_success(channel)?;
         let wire = String::from_utf8_lossy(data);
+        if wire.starts_with("kill -INT -- -123 ") {
+            assert!(matches!(self.behavior, Behavior::InteractivePipe));
+            session.data(self.workload.unwrap(), b"PARENT\n".to_vec())?;
+        }
         use base64::Engine;
         let decoded = wire
             .split("echo ")
@@ -82,8 +95,23 @@ impl server::Handler for TestServer {
             session.close(channel)?;
             return Ok(());
         };
+        if matches!(
+            self.behavior,
+            Behavior::InteractivePty | Behavior::InteractivePipe
+        ) {
+            self.workload = Some(channel);
+            // A user can interrupt before the PID marker reaches RunManager.
+            session.data(channel, b"READY\n".to_vec())?;
+            let handle = session.handle();
+            let marker = format!("{prefix}123__\n");
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let _ = handle.data(channel, marker.into_bytes()).await;
+            });
+            return Ok(());
+        }
         session.data(channel, format!("{prefix}123__\nhello").into_bytes())?;
-        match self.0 {
+        match self.behavior {
             Behavior::DelayedExit => {
                 session.eof(channel)?;
                 let handle = session.handle();
@@ -97,6 +125,25 @@ impl server::Handler for TestServer {
                 session.close(channel)?;
             }
             _ => {}
+        }
+        Ok(())
+    }
+
+    async fn data(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut server::Session,
+    ) -> Result<(), Self::Error> {
+        assert_eq!(Some(channel), self.workload);
+        if data == [3] {
+            assert!(matches!(self.behavior, Behavior::InteractivePty));
+            session.data(channel, b"PARENT\n".to_vec())?;
+        } else {
+            assert_eq!(data, b"next\n");
+            session.data(channel, b"CONTINUED\n".to_vec())?;
+            session.exit_status_request(channel, 0)?;
+            session.close(channel)?;
         }
         Ok(())
     }
@@ -118,9 +165,16 @@ async fn run_case(behavior: Behavior, timeout: u64) -> (RunStatus, Vec<u8>) {
     });
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
-        let connection = server::run_stream(config, stream, TestServer(behavior))
-            .await
-            .unwrap();
+        let connection = server::run_stream(
+            config,
+            stream,
+            TestServer {
+                behavior,
+                workload: None,
+            },
+        )
+        .await
+        .unwrap();
         let _ = connection.await;
     });
     let device = DeviceProfile {
@@ -143,13 +197,15 @@ async fn run_case(behavior: Behavior, timeout: u64) -> (RunStatus, Vec<u8>) {
     let manager = RunManager::new(&root, tx);
     let request: RunRequest = serde_json::from_value(serde_json::json!({
         "device_id": "test", "kind": "command", "command": "test",
-        "console_mode": if matches!(behavior, Behavior::RejectPty) { "pty" } else { "pipe" },
+        "console_mode": if matches!(behavior, Behavior::RejectPty | Behavior::InteractivePty) { "pty" } else { "pipe" },
         "timeout_secs": timeout
     }))
     .unwrap();
     let id = manager.start(request, device, root.clone(), None).unwrap();
     let result = tokio::time::timeout(Duration::from_secs(15), async {
         let mut output = Vec::new();
+        let mut interrupted = false;
+        let mut continued = false;
         loop {
             match rx.recv().await.unwrap() {
                 RunEvent::Output { data, .. } => {
@@ -159,6 +215,22 @@ async fn run_case(behavior: Behavior, timeout: u64) -> (RunStatus, Vec<u8>) {
                             .decode(data)
                             .unwrap(),
                     );
+                    if matches!(
+                        behavior,
+                        Behavior::InteractivePty | Behavior::InteractivePipe
+                    ) {
+                        let text = String::from_utf8_lossy(&output);
+                        if !interrupted && text.contains("READY") {
+                            interrupted = true;
+                            manager.send_input(&id, vec![3]).unwrap();
+                        }
+                        if !continued && text.contains("PARENT") {
+                            continued = true;
+                            tokio::time::sleep(Duration::from_secs(4)).await;
+                            assert_eq!(manager.status(&id).unwrap().state, RunState::Running);
+                            manager.send_input(&id, b"next\n".to_vec()).unwrap();
+                        }
+                    }
                 }
                 RunEvent::Status { status } if status.ended_at.is_some() => break (status, output),
                 _ => {}
@@ -211,4 +283,16 @@ async fn timeout_escalates_and_finishes() {
     let (status, _) = run_case(Behavior::Hang, 1).await;
     assert_eq!(status.state, RunState::Failed);
     assert_eq!(status.error.as_deref(), Some("timeout after 1s"));
+}
+
+#[tokio::test]
+async fn single_interrupt_preserves_ssh_run_and_subsequent_input() {
+    for behavior in [Behavior::InteractivePty, Behavior::InteractivePipe] {
+        let (status, output) = run_case(behavior, 0).await;
+        assert_eq!(status.state, RunState::Exited);
+        assert_eq!(status.exit_code, Some(0));
+        let output = String::from_utf8_lossy(&output);
+        assert_eq!(output.matches("PARENT").count(), 1, "{output}");
+        assert!(output.contains("CONTINUED"), "{output}");
+    }
 }
