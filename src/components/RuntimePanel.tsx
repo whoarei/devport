@@ -101,7 +101,7 @@ export function RuntimePanel({ collapsed, onToggleCollapse }: { collapsed: boole
           {runtime && (
             <div className="runtime-row" title={runtime.uv_path}>
               <span>uv {runtime.uv_version}</span>
-              <span className="history-meta">{runtime.platform}</span>
+              <span className="secondary-text">{runtime.platform}</span>
               <span className={`run-state ${runtime.present ? "state-running" : "state-failed"}`}>
                 {runtime.present ? t("runtime.present") : t("runtime.absent")}
               </span>
@@ -110,18 +110,18 @@ export function RuntimePanel({ collapsed, onToggleCollapse }: { collapsed: boole
         </div>
         <div className="runtime-section">
           <div className="runtime-heading">{t("runtime.envHeading")}</div>
-          <ul className="history-list">
+          <ul className="runtime-environments">
             {envs.map((env) => (
               <li key={env.id} title={env.path}>
                 <span className={`run-state ${env.ready ? "state-running" : "state-preparing"}`}>
                   {env.ready ? t("runtime.ready") : t("runtime.notReady")}
                 </span>
-                <span className="history-label">
+                <span className="runtime-environment-name">
                   {env.id.slice(0, 8)}
                   {env.manifest ? ` · Python ${env.manifest.python_version}` : ""}
                   {env.leased ? ` · ${t("runtime.leased")}` : ""}
                 </span>
-                <span className="history-meta">
+                <span className="secondary-text">
                   {env.manifest
                     ? `uv ${env.manifest.uv_version} · lock ${env.manifest.lock_sha256.slice(0, 8)} · ${new Date(env.manifest.last_used_at).toLocaleString()}`
                     : t("runtime.noManifest")}
@@ -165,7 +165,7 @@ export function RuntimePanel({ collapsed, onToggleCollapse }: { collapsed: boole
             </button>
           </div>
           {device && !isSerial && (
-            <div className="history-meta runtime-device">{device.name}</div>
+            <div className="secondary-text runtime-device">{device.name}</div>
           )}
           {error && <div className="runtime-error">{error}</div>}
           {content}

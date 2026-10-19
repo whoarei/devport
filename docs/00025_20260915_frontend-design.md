@@ -69,7 +69,7 @@ SSH、串口、WSL、本机 Shell 通过图标卡片切换，连接字段按组�
   等重组件按需载入（`<Suspense>` 包裹）。
 - 新增面板 = registry 加一项 + components 加一行；dock 渲染、视图菜单、标题
   栏切换按钮、布局持久化全部自动适配。
-- 两个 dock：`sidebar`（Workspace / Commands / History 堆叠，左/右可换位）与
+- 两个 dock：`sidebar`（Workspace / Commands / Runtime 堆叠，左/右可换位）与
   `center`（Editor / Console 平等结构，按 `splits.center` 分高）。
 
 ## 纯逻辑模块
@@ -87,7 +87,6 @@ SSH、串口、WSL、本机 Shell 通过图标卡片切换，连接字段按组�
 | `workspaceHistory.ts` | 最近工作区列表（localStorage，去重，上限 10） |
 | `workspacePicker.ts` | 目录选择对话框 → `setWorkspaceDir` 的编排（依赖 store，属边界编排层） |
 | `presetCommands.ts` | 预置命令模型与 normalize（数量 / 名称 / 命令长度 / 超时上限），localStorage 持久化 |
-| `historyExport.ts` | 历史导出：默认文件名（清洗非法字符 + 时间戳）、记录 JSON、输出导出可行性判定 |
 | `terminalIO.ts` | 交互终端读取泵：xterm 消费完上一批才 drain 下一批，隐藏页共用同一泵，出错退避 1s |
 | `appLifecycle.ts` | 统一退出流程：前置到前台 → 忙/脏守卫 → 未保存确认 → 关闭全部终端 → `destroy()` |
 | `updateStatus.ts` | 更新展示态纯逻辑：安装阻塞判定（忙 / 脏 / 有活跃 run）、按钮文案、进度格式化、`installWithProgress` |
@@ -101,7 +100,7 @@ SSH、串口、WSL、本机 Shell 通过图标卡片切换，连接字段按组�
 `api.ts` 中的 `api` 对象是全部 `invoke` 的唯一出口，按域分组：设备
 （list/save/delete/test、串口 / WSL 发行版 / 本机 shell 枚举）、工作区文件
 （list/read/write/create/rename/delete）、运行（run_script / stop / input /
-resize / status / history / export / clear）、交互终端（open / read / input /
+resize / status / history）、交互终端（open / read / input /
 resize / close）、应用更新（check / install）。
 
 约定：
@@ -198,14 +197,13 @@ xterm（await write 回调）才发下一次读；有数据立即续读、无数
   全量重放。
 - 控制台尺寸经 `setConsoleSize` 记录，随 `run_script` 一起下发（cols/rows）。
 
-### 历史与导出
+### 控制台任务状态
 
 - history 由事件流终态条目与 `loadRuns`（live + saved 快照合并，按 ended_at
   排序，上限 200）维护；快照拉取期间到达的事件用 `newestStatus` 保护不被旧
   快照覆盖。
-- 导出走 `historyExport.ts` + plugin-dialog `save()`：记录 JSON 前端拼好经
-  `export_run_record` 落盘；原始输出由后端 `export_run_output` 从持久化
-  run 日志导出（`output_bytes > 0` 才可用，含截断标记展示）。
+- 2026-10-19 移除侧栏运行历史面板、菜单项、分割条、导出与清空流程及专用 IPC。
+  控制台继续使用上述状态缓存、日志回放和任务选择，工作区历史命令独立保留。
 
 ### 应用生命周期
 
@@ -247,7 +245,7 @@ xterm（await write 回调）才发下一次读；有数据立即续读、无数
 
 `npm test`：esbuild 把 `tests/*.test.ts` 打包成 CJS 后交给 `node --test`。
 覆盖 store 动作序列、布局归一化/迁移、输出缓冲与回放、工作区树操作、预置命
-令、历史导出、更新流程、终端泵、设备表单等纯逻辑；浏览器相关行为另有
+令、工作区历史命令、更新流程、终端泵、设备表单等纯逻辑；浏览器相关行为另有
 `tests/editor-browser.html` 手动验证页与 `.editor-native-check`。约定：测试
 不依赖 Tauri 运行时（`api` 可注入 mock），不依赖真实设备。
 

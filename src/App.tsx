@@ -124,29 +124,22 @@ export default function App() {
 
   const layout = useAppStore((state) => state.layout);
   const setLayout = useAppStore((state) => state.setLayout);
-  const sideRef = useRef<HTMLElement>(null);
   const centerRef = useRef<HTMLDivElement>(null);
 
   const visible = (id: PanelId) => layout.panelVisible[id];
   const collapsed = (id: PanelId) => layout.panelCollapsed[id];
   const toggleCollapse = (id: PanelId) => () => setLayout(panelCollapsePatch(layout, id, !layout.panelCollapsed[id]));
-  const setSplit = (dock: keyof typeof layout.splits, ratio: number) =>
-    setLayout({ splits: { ...layout.splits, [dock]: clampSplit(ratio, DEFAULT_LAYOUT.splits[dock]) } });
+  const setCenterSplit = (ratio: number) =>
+    setLayout({ splits: { center: clampSplit(ratio, DEFAULT_LAYOUT.splits.center) } });
 
-  // ---- 侧栏 dock：面板按注册表顺序堆叠；高度分配沿用既有语义 ----
-  // Workspace 与 History 同时展开时按 splits.sidebar 分比例并显示分割条；
+  // ---- 侧栏 dock：面板按注册表顺序堆叠，展开面板分配可用高度 ----
   // 预置命令面板不参与比例分配：有其他展开面板时限制最大高度，独占侧栏时占满。
   const sidebarPanels = panelsInDock("sidebar");
   const sidebarShown = layout.sidebarVisible && sidebarPanels.some((panel) => visible(panel.id));
-  const bothSideExpanded = visible("workspace") && visible("history") && !collapsed("workspace") && !collapsed("history");
-  const otherSideExpanded =
-    (visible("workspace") && !collapsed("workspace")) ||
-    (visible("history") && !collapsed("history"));
+  const otherSideExpanded = sidebarPanels.some((panel) => panel.id !== "commands" && visible(panel.id) && !collapsed(panel.id));
 
   const sideSectionStyle = (id: PanelId): CSSProperties | undefined => {
     if (collapsed(id)) return { flex: "0 0 auto" };
-    if (id === "workspace" && bothSideExpanded) return { flexGrow: layout.splits.sidebar, flexBasis: 0 };
-    if (id === "history" && bothSideExpanded) return { flexGrow: 1 - layout.splits.sidebar, flexBasis: 0 };
     if (id === "commands" && !otherSideExpanded) return { flex: 1, maxHeight: "none" };
     return undefined;
   };
@@ -163,30 +156,17 @@ export default function App() {
   const sidebarDock = sidebarShown && (
     <>
       {layout.sidebarPosition === "right" && sidebarHandle}
-      <aside className="dock dock-side" style={{ width: layout.sidebarWidth }} ref={sideRef}>
+      <aside className="dock dock-side" style={{ width: layout.sidebarWidth }}>
         {sidebarPanels.map((panel) => {
           const Component = PANEL_COMPONENTS[panel.id];
           return (
-            <Fragment key={panel.id}>
-              {panel.id === "history" && bothSideExpanded && (
-                <SplitHandle
-                  direction="horizontal"
-                  label={t("app.resizeSideSplit")}
-                  onDelta={(delta) => {
-                    const height = sideRef.current?.clientHeight ?? 0;
-                    if (height > 0) setSplit("sidebar", layout.splits.sidebar + delta / height);
-                  }}
-                  onReset={() => setLayout({ splits: { ...layout.splits, sidebar: DEFAULT_LAYOUT.splits.sidebar } })}
-                />
-              )}
-              {visible(panel.id) && (
-                <div className={`dock-section${panel.id === "commands" ? " commands-section" : ""}`} style={sideSectionStyle(panel.id)}>
-                  <Suspense fallback={null}>
-                    <Component visible collapsed={collapsed(panel.id)} onToggleCollapse={toggleCollapse(panel.id)} />
-                  </Suspense>
-                </div>
-              )}
-            </Fragment>
+            visible(panel.id) && (
+              <div key={panel.id} className={`dock-section${panel.id === "commands" ? " commands-section" : ""}`} style={sideSectionStyle(panel.id)}>
+                <Suspense fallback={null}>
+                  <Component visible collapsed={collapsed(panel.id)} onToggleCollapse={toggleCollapse(panel.id)} />
+                </Suspense>
+              </div>
+            )
           );
         })}
       </aside>
@@ -220,7 +200,7 @@ export default function App() {
                 label={t("app.resizeCenter")}
                 onDelta={(delta) => {
                   const height = centerRef.current?.clientHeight ?? 0;
-                  if (height > 0) setSplit("center", layout.splits.center + delta / height);
+                  if (height > 0) setCenterSplit(layout.splits.center + delta / height);
                 }}
                 onReset={() => setLayout({ splits: { ...layout.splits, center: DEFAULT_LAYOUT.splits.center } })}
               />

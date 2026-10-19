@@ -1,6 +1,6 @@
 # Remote Runner：跨传输脚本运行工具
 
-Remote Runner 是基于 Tauri 的桌面脚本运行工具，通过统一界面在 SSH 设备、已登录 Shell 的串口设备、本机 WSL 发行版或本机 Shell 中运行脚本和命令。它提供本地工作区、CodeMirror 编辑器、xterm 控制台、独立终端、运行状态与历史记录，React 前端通过统一接口调用 Rust 后端。
+Remote Runner 是基于 Tauri 的桌面脚本运行工具，通过统一界面在 SSH 设备、已登录 Shell 的串口设备、本机 WSL 发行版或本机 Shell 中运行脚本和命令。它提供本地工作区、CodeMirror 编辑器、xterm 控制台、独立终端、运行状态与工作区历史命令，React 前端通过统一接口调用 Rust 后端。
 
 ## 当前进度
 
@@ -14,7 +14,7 @@ Remote Runner 是基于 Tauri 的桌面脚本运行工具，通过统一界面�
 | Windows USB 共享到 WSL2 / 远程 Linux | 已实现（需 usbipd-win） |
 | 本机 Shell 直接执行（pwsh / cmd / msys2 等） | 已实现 |
 | 工作区文件管理与 CodeMirror 多标签保存 | 已实现 |
-| 运行历史、原始输出持久化与导出 | 已实现 |
+| 控制台任务切换与原始输出持久化 | 已实现 |
 | SSH / WSL / Local 独立终端 | 已实现 |
 | 托盘、自启动、单实例与应用内更新 | 已实现 |
 | Python uv 托管运行时（Managed Runtime） | 已实现 |
@@ -38,7 +38,7 @@ Remote Runner 是基于 Tauri 的桌面脚本运行工具，通过统一界面�
 - Windows 的「文件 → USB 共享…」可将本机 USB 转交给 WSL2 或已保存的 SSH Linux 设备。支持检查、连接、断开、取消共享和访问验证；远程模式通过 IPv4 TCP 3240 直连，Linux 需 Python 3.8+、usbip、vhci_hcd 和 root / 无需密码 sudo。详见 [远程 Linux USB](docs/00032_20261012_usb-remote-linux.md)。
 - 本机 Shell 直接在本机以指定 shell 运行（Windows：pwsh、powershell、cmd、msys2、Git Bash；macOS/Linux：bash、zsh、sh），工作区原地执行，支持 PTY、pipe、交互输入、缩放、停止与超时。
 - SSH、WSL 和本机 Shell 支持与运行控制台隔离的多标签交互终端；串口暂不支持独立终端。
-- 运行历史最多保存 200 条，单次运行原始输出最多持久化 2 MiB，可导出记录与输出。
+- 运行控制台支持任务切换；后端最多保留 200 条已完成任务状态，单次运行原始输出最多持久化 2 MiB。侧栏运行历史面板及其导出、清空功能已移除；工作区右键菜单中的历史命令继续可用。
 - 支持系统托盘、关闭到托盘、开机自启动、单实例和 Windows 安装版签名更新；portable 版本回退到手动下载。
 - 支持通过 `Ctrl/Cmd + +`、`Ctrl/Cmd + -` 缩放整个界面，`Ctrl/Cmd + 0` 恢复 100%；缩放比例会自动保存。
 

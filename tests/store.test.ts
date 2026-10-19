@@ -348,20 +348,3 @@ test("editor language detection does not change execution inference", () => {
   assert.equal(inferLanguage("run.BASH"), "shell");
   assert.equal(inferLanguage("config.txt"), "text");
 });
-
-test("clearHistory empties history and drops finished runs and their buffers", async (t) => {
-  const previous = useAppStore.getState();
-  t.after(() => useAppStore.setState(previous, true));
-  t.mock.method(api, "clearRunHistory", async () => {});
-  const finished = { run_id: "done-clear", device_name: "device", label: "test", state: "exited", exit_code: 0, error: null, started_at: "now", ended_at: "now" };
-  useAppStore.setState({ activeRunId: null });
-  useAppStore.getState().handleRunEvent({ type: "status", status: finished });
-  useAppStore.getState().handleRunEvent({ type: "output", run_id: "done-clear", stream: "stdout", data: btoa("x") });
-  assert.equal(useAppStore.getState().history.some((h) => h.run_id === "done-clear"), true);
-
-  await useAppStore.getState().clearHistory();
-  const state = useAppStore.getState();
-  assert.equal(state.history.length, 0);
-  assert.equal(state.runs["done-clear"], undefined);
-  assert.equal(state.outputBuffers["done-clear"], undefined);
-});

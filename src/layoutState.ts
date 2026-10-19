@@ -1,4 +1,4 @@
-import { PANELS, type DockId, type PanelId } from "./panels/registry";
+import { PANELS, type PanelId } from "./panels/registry";
 
 const STORAGE_KEY = "remote-runner.layout.v1";
 
@@ -18,12 +18,8 @@ export interface LayoutState {
   sidebarPosition: "left" | "right";
   /** 侧栏 dock 整体显隐：隐藏时保留各面板自身的显隐设置，恢复时原样展示 */
   sidebarVisible: boolean;
-  /**
-   * 各 dock 内主分割比例（0..1）：
-   * - sidebar：Workspace 面板占侧栏高度的比例（剩余部分归 History）
-   * - center：文件编辑区占中间区高度的比例（剩余部分归控制面板区）
-   */
-  splits: Record<DockId, number>;
+  /** 中间 dock 两个展开面板的分割比例（0..1） */
+  splits: { center: number };
 }
 
 function defaultPanelVisible(): Record<PanelId, boolean> {
@@ -40,7 +36,7 @@ export const DEFAULT_LAYOUT: LayoutState = {
   sidebarWidth: 260,
   sidebarPosition: "left",
   sidebarVisible: true,
-  splits: { sidebar: 0.6, center: 0.6 },
+  splits: { center: 0.6 },
 };
 
 /** v1 旧字段名 → 面板 id，用于迁移已持久化的布局数据 */
@@ -48,7 +44,6 @@ const LEGACY_VISIBLE_KEYS: Record<PanelId, string> = {
   transfer: "transferVisible",
   workspace: "workspaceVisible",
   commands: "commandsVisible",
-  history: "historyVisible",
   runtime: "runtimeVisible",
   editor: "editorVisible",
   console: "consoleVisible",
@@ -58,7 +53,6 @@ const LEGACY_COLLAPSED_KEYS: Record<PanelId, string> = {
   transfer: "transferCollapsed",
   workspace: "workspaceCollapsed",
   commands: "commandsCollapsed",
-  history: "historyCollapsed",
   runtime: "runtimeCollapsed",
   editor: "editorCollapsed",
   console: "consoleCollapsed",
@@ -138,8 +132,6 @@ export function normalizeLayout(value: unknown): LayoutState {
     sidebarPosition: source.sidebarPosition === "right" ? "right" : "left",
     sidebarVisible: clampBoolean(source.sidebarVisible, DEFAULT_LAYOUT.sidebarVisible),
     splits: {
-      // v1 的 sideSplit 迁移为 sidebar dock 比例；v1 的 consoleHeight（像素）无法换算为比例，回落默认值
-      sidebar: clampSplit((splits.sidebar ?? source.sideSplit) as number, DEFAULT_LAYOUT.splits.sidebar),
       center: clampSplit(splits.center as number, DEFAULT_LAYOUT.splits.center),
     },
   };

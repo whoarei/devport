@@ -35,8 +35,8 @@ export function RunToolbar() {
         </select>
       </label>
       <button disabled={!workspace} onClick={() => useWorkspaceRunStore.setState({ settingsOpen: true })}>{t("workspaceRun.settings")}</button>
-      {feature.checking && <span className="history-meta">{t("workspaceRun.loading")}</span>}
-      {feature.info?.project && !feature.checking && <span className="history-meta">{t(feature.cached ? "runnerEntry.cached" : "runnerEntry.notPrepared")}</span>}
+      {feature.checking && <span className="secondary-text">{t("workspaceRun.loading")}</span>}
+      {feature.info?.project && !feature.checking && <span className="secondary-text">{t(feature.cached ? "runnerEntry.cached" : "runnerEntry.notPrepared")}</span>}
       {feature.infoError && <span className="runtime-error" title={feature.infoError}>{t("workspaceRun.invalidConfig")}</span>}
     </div>
     <div className="run-toolbar-options">

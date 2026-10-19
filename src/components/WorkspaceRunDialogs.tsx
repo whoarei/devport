@@ -23,9 +23,9 @@ function ArgsDialog() {
   const close = () => useWorkspaceRunStore.setState({ args: null });
   const entry = draft?.module ? { type: "python_module" as const, name } : draft?.editingId && draft.command.entry.type !== "python_module" ? { ...draft.command.entry, path: name } : draft?.command.entry;
   return <Modal open={!!draft} title={t("workspaceRun.withArgs")} close={close}>
-    <div className="history-meta">{workspaceLabel(draft?.workspace ?? null, devices)} · {devices.find((d) => d.id === selectedDeviceId)?.name} · {selectedDeviceId && state.preferences.python[selectedDeviceId] === "project" ? t("workspaceRun.project") : t("workspaceRun.system")}</div>
+    <div className="secondary-text">{workspaceLabel(draft?.workspace ?? null, devices)} · {devices.find((d) => d.id === selectedDeviceId)?.name} · {selectedDeviceId && state.preferences.python[selectedDeviceId] === "project" ? t("workspaceRun.project") : t("workspaceRun.system")}</div>
     {draft?.module || draft?.editingId ? <label>{t(draft.module ? "workspaceRun.moduleName" : "runnerEntry.entryPath")}<input autoFocus value={name} onChange={(e) => setName(e.target.value)} /></label> : <code>{draft ? commandLabel(draft.command) : ""}</code>}
-    <p className="history-meta">{t("workspaceRun.argsHelp")}</p>
+    <p className="secondary-text">{t("workspaceRun.argsHelp")}</p>
     <div className="runner-arguments">{args.map((value, index) => <div className="runner-argument" key={index}><span>{index + 1}</span><input disabled={!!draft?.editingId} aria-label={t("workspaceRun.argument", { index: index + 1 })} value={value} onChange={(e) => setArgs(args.map((v, i) => i === index ? e.target.value : v))} /><button disabled={!!draft?.editingId} aria-label={t("workspaceRun.removeArgument")} onClick={() => setArgs(args.filter((_, i) => i !== index))}>×</button></div>)}</div>
     {!draft?.editingId && <button onClick={() => setArgs([...args, ""])}>{t("workspaceRun.addArgument")}</button>}
     <pre className="runner-preview">{JSON.stringify([...(entry?.type === "python_module" ? ["-m", name] : [entry?.path]), ...args], null, 2)}</pre>
@@ -74,7 +74,7 @@ function PreparationStatus() {
     {active && progress && <div className="runner-preparation-progress">{progress}</div>}
     {error && <div className="runtime-error" role="alert">{error}</div>}
     {text && <details open className="runner-preparation-details"><summary>{t("workspaceRun.preparationLog")}</summary><pre ref={log} onScroll={() => { const el = log.current; if (el) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}>{text}</pre></details>}
-    {active && <div className="runner-inline-actions"><button className="danger" disabled={!p.runId || p.stopping || status?.state === "stopping"} onClick={() => void cancel()}>{t(p.stopping || status?.state === "stopping" ? "workspaceRun.preparationStopping" : "workspaceRun.cancelPreparation")}</button><span className="history-meta">{t("workspaceRun.preparationBackground")}</span></div>}
+    {active && <div className="runner-inline-actions"><button className="danger" disabled={!p.runId || p.stopping || status?.state === "stopping"} onClick={() => void cancel()}>{t(p.stopping || status?.state === "stopping" ? "workspaceRun.preparationStopping" : "workspaceRun.cancelPreparation")}</button><span className="secondary-text">{t("workspaceRun.preparationBackground")}</span></div>}
   </section>;
 }
 

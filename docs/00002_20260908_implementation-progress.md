@@ -19,7 +19,7 @@
 | 工作区同步 | **已实现** SSH / WSL 固定目录与 SHA-256 增量同步、Serial 文本上传、Local 原地执行 | 同目录运行串行；Serial 保持全量上传；旧 UUID 目录不清理；见 00036 |
 | 工作区文件管理 | **已实现** 递归目录树、读写、新建、重命名、删除和路径边界校验 | 仅编辑 UTF-8 普通文件，单文件上限 1 MiB；运行同步敏感阶段阻止变更 |
 | 编辑器 | **已实现** CodeMirror 6、Python / Shell / text 高亮、保存、revision 冲突检测、多标签和未保存保护 | 无另存为、自动保存、草稿恢复、格式化、LSP、诊断和调试器 |
-| 运行状态与历史 | **已实现** 活动任务、200 条历史、原始输出日志、记录/输出导出和清空 | 单次持久化输出上限 2 MiB；不恢复应用退出前仍在远端运行的进程 |
+| 运行状态与日志 | **已实现** 控制台任务切换、200 条已完成状态缓存与原始输出日志 | 2026-10-19 已移除侧栏运行历史面板及导出、清空功能；单次持久化输出上限 2 MiB，不恢复应用退出前仍在远端运行的进程 |
 | 独立终端 | **已实现** SSH / WSL / Local 多标签终端，最多 8 个 | Serial 不支持独立终端；终端与 RunManager / 工作区相互独立 |
 | 桌面集成 | **已实现** 托盘、关闭到托盘、开机自启、单实例、应用内更新 | updater 的签名发布和真实覆盖升级仍需发布环境验收 |
 | 前端体验 | **已实现** 模块化 Dock / Panel 布局、最近工作区、预置命令、zh/en i18n、UI 缩放、Ctrl+Tab MRU | 持久化使用 localStorage；没有独立 Settings / Environment 页面 |
@@ -45,7 +45,7 @@ commands.rs → RunManager → process.rs 共同状态与控制契约
 | 优先领域 | 未实现能力 | 现有替代或影响 |
 |---|---|---|
 | 环境管理 | Node project environment、Container mode | Python 的 uv-only Managed Runtime 已实现（[00027](00027_20260916_uv-managed-python-runtime.md) / [00028](00028_20260916_uv-runtime-implementation-progress.md)）；未启用托管模式时仍依赖目标系统解释器或用户命令；Node 与容器无方案 |
-| Artifact | 按 glob 收集、远端产物枚举/下载、Artifact 元数据 | 只能导出 Remote Runner 已记录的控制台输出；Local 产物因原地运行会直接留在工作区 |
+| Artifact | 按 glob 收集、远端产物枚举/下载、Artifact 元数据 | Local 产物因原地运行会直接留在工作区；运行控制台输出可查看和复制 |
 | 同步与清理 | 增量同步、hash 缓存、SSH / Serial / WSL 运行目录自动清理 | 每次全量处理，远端目录可能累积；没有 CleanupManager |
 | 执行模型 | Node / Binary 专用入口、`none` / `auto` console mode、项目级 `.devrunner/project.yaml` | 需使用 Command 模式并逐次填写参数 |
 | 自动化 | Expect、Task Template、批量运行 | 预置命令只能启动单个 Command run，不是任务编排系统 |

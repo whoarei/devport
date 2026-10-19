@@ -6,7 +6,6 @@ import { api, localWorkspace, RunStatus } from "../src/api";
 import { useAppStore } from "../src/store";
 import { panelVisibilityPatch } from "../src/layoutState";
 import i18n from "../src/i18n";
-import { HistoryPanel } from "../src/components/HistoryPanel";
 import { RunToolbar } from "../src/components/RunToolbar";
 import { MAX_OUTPUT_BYTES, MAX_TOTAL_OUTPUT_BYTES } from "../src/outputBuffer";
 import { createConsoleReplay } from "../src/consoleReplay";
@@ -54,16 +53,14 @@ test("canceling a workspace switch invalidates the in-flight read and preserves 
   assert.equal(await s.saveFile(), true);
 });
 
-test("running tasks remain selectable and stoppable while viewing completed history", (t) => {
+test("running tasks remain selectable and stoppable from the console while viewing a completed task", (t) => {
   const s = setup(t);
   s.handleRunEvents([{ type: "status", status: status("long-task", "running") }, { type: "status", status: status("old-task") }]);
   s.setActiveRun("old-task");
-  const history = renderToStaticMarkup(createElement(HistoryPanel, { collapsed: true, onToggleCollapse: () => {} }));
-  assert.match(history, /long-task/);
-  assert.match(history, /停止 long-task/);
   const toolbar = renderToStaticMarkup(createElement(RunToolbar));
   assert.match(toolbar, /选择运行中的任务/);
   assert.match(toolbar, /value="long-task"/);
+  assert.match(toolbar, /value="old-task"/);
   s.setActiveRun("long-task");
   assert.match(renderToStaticMarkup(createElement(RunToolbar)), /■ 停止/);
 });

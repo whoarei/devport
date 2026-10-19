@@ -416,40 +416,6 @@ impl RunManager {
         self.history.lock().iter().cloned().collect()
     }
 
-    /// 清空历史：删除全部历史条目的输出日志并持久化空历史；运行中的任务不受影响
-    pub fn clear_history(&self) -> Result<()> {
-        {
-            let mut hist = self.history.lock();
-            for old in hist.iter() {
-                remove_log(&self.logs_dir, &old.run_id);
-            }
-            hist.clear();
-        }
-        if let Some(parent) = self.history_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&self.history_path, "[]")?;
-        Ok(())
-    }
-
-    /// 把某次运行持久化的输出日志原样复制到用户选择的路径
-    pub fn export_output(&self, run_id: &str, path: &str) -> Result<()> {
-        if path.trim().is_empty() {
-            return Err(RunnerError::InvalidInput(
-                "export path must not be empty".into(),
-            ));
-        }
-        let src = log_path(&self.logs_dir, run_id)
-            .ok_or_else(|| RunnerError::InvalidInput(format!("invalid run id: {run_id}")))?;
-        if !src.is_file() {
-            return Err(RunnerError::RunNotFound(format!(
-                "no saved output for run {run_id}"
-            )));
-        }
-        std::fs::copy(&src, path)?;
-        Ok(())
-    }
-
     pub fn send_input(&self, run_id: &str, data: Vec<u8>) -> Result<()> {
         if data.len() > 64 * 1024 {
             return Err(RunnerError::InvalidInput(
@@ -2736,66 +2702,6 @@ mod tests {
         assert_eq!(status.run_id, "r1");
         assert_eq!(status.output_bytes, 0);
         assert!(!status.output_truncated);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn export_output_validates_input_and_copies_raw_bytes() {
-        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
-        let (tx, _rx) = crate::events::channel();
-        let manager = RunManager::new(&root, tx);
-        manager
-            .handles
-            .lock()
-            .insert("run".into(), test_handle("run"));
-        manager.emit_output("run", OutputStream::Stdout, b"\xffraw\nbytes");
-        let target = root.join("export.log");
-
-        assert!(manager
-            .export_output("../escape", target.to_str().unwrap())
-            .is_err());
-        assert!(manager
-            .export_output("missing", target.to_str().unwrap())
-            .is_err());
-        assert!(manager.export_output("run", "").is_err());
-        manager
-            .export_output("run", target.to_str().unwrap())
-            .unwrap();
-        assert_eq!(std::fs::read(&target).unwrap(), b"\xffraw\nbytes");
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn clear_history_removes_logs_and_keeps_active_runs() {
-        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
-        let (tx, _rx) = crate::events::channel();
-        let manager = RunManager::new(&root, tx);
-        for id in ["done1", "done2"] {
-            manager.handles.lock().insert(id.into(), test_handle(id));
-            manager.emit_output(id, OutputStream::Stdout, b"x");
-            manager.finish(id, RunState::Exited, Some(0), None);
-        }
-        // 运行中的任务带日志，清空历史不应触碰
-        manager
-            .handles
-            .lock()
-            .insert("live".into(), test_handle("live"));
-        manager.emit_output("live", OutputStream::Stdout, b"x");
-
-        manager.clear_history().unwrap();
-        assert!(manager.history().is_empty());
-        assert_eq!(
-            std::fs::read_to_string(root.join("history.json")).unwrap(),
-            "[]"
-        );
-        assert!(!root.join("run_logs/done1.log").exists());
-        assert!(!root.join("run_logs/done2.log").exists());
-        assert!(root.join("run_logs/live.log").is_file());
-
-        // 重启后历史仍为空（清空结果已持久化）
-        let (tx2, _rx2) = crate::events::channel();
-        let manager2 = RunManager::new(&root, tx2);
-        assert!(manager2.history().is_empty());
         std::fs::remove_dir_all(root).unwrap();
     }
 

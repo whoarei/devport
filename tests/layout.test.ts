@@ -48,7 +48,7 @@ test("panel flags cover every registered panel and default to visible", () => {
     assert.equal(DEFAULT_LAYOUT.panelVisible[panel.id], panel.defaultVisible);
     assert.equal(DEFAULT_LAYOUT.panelCollapsed[panel.id], false);
   }
-  assert.deepEqual(Object.keys(DEFAULT_LAYOUT.splits), ["sidebar", "center"]);
+  assert.deepEqual(Object.keys(DEFAULT_LAYOUT.splits), ["center"]);
   assert.deepEqual(panelsInDock("center").map((panel) => panel.id), ["editor", "console", "transfer"]);
 });
 
@@ -65,8 +65,8 @@ test("normalizeLayout keeps valid fields and fills missing ones", () => {
   assert.equal(layout.panelCollapsed.workspace, true);
   assert.equal(layout.panelCollapsed.editor, true);
   assert.equal(layout.panelVisible.workspace, DEFAULT_LAYOUT.panelVisible.workspace);
-  assert.equal(layout.panelCollapsed.history, false);
-  assert.equal(layout.splits.sidebar, DEFAULT_LAYOUT.splits.sidebar);
+  assert.equal(layout.panelCollapsed.runtime, false);
+  assert.equal(layout.splits.center, DEFAULT_LAYOUT.splits.center);
 });
 
 test("normalizeLayout migrates v1 legacy fields", () => {
@@ -81,7 +81,6 @@ test("normalizeLayout migrates v1 legacy fields", () => {
   assert.equal(layout.panelVisible.console, false);
   assert.equal(layout.panelCollapsed.editor, true);
   assert.equal(layout.panelCollapsed.console, true);
-  assert.equal(layout.splits.sidebar, 0.7);
   // v1 没有编辑区显隐字段，回落默认值
   assert.equal(layout.panelVisible.editor, DEFAULT_LAYOUT.panelVisible.editor);
   // v1 的 consoleHeight 像素值无法换算为比例，回落默认值
@@ -91,6 +90,27 @@ test("normalizeLayout migrates v1 legacy fields", () => {
 test("new-format panel flags take precedence over legacy fields", () => {
   const layout = normalizeLayout({ panelVisible: { workspace: true }, workspaceVisible: false });
   assert.equal(layout.panelVisible.workspace, true);
+});
+
+test("saved layouts discard the removed history panel and sidebar split while preserving other preferences", (t) => {
+  const data = mockLocalStorage(t);
+  for (const oldFields of [
+    { historyVisible: true, historyCollapsed: true, sideSplit: 0.7 },
+    { panelVisible: { history: true, commands: false }, panelCollapsed: { history: true }, splits: { sidebar: 0.7, center: 0.4 } },
+  ]) {
+    data.set("remote-runner.layout.v1", JSON.stringify({ sidebarWidth: 320, sidebarPosition: "right", ...oldFields }));
+    const layout = loadLayout();
+    assert.equal("history" in layout.panelVisible, false);
+    assert.equal("history" in layout.panelCollapsed, false);
+    assert.equal("sidebar" in layout.splits, false);
+    assert.equal(layout.sidebarWidth, 320);
+    assert.equal(layout.sidebarPosition, "right");
+    assert.equal(layout.panelVisible.commands, oldFields.panelVisible?.commands ?? true);
+    assert.equal(layout.splits.center, oldFields.splits?.center ?? DEFAULT_LAYOUT.splits.center);
+    saveLayout(layout);
+    assert.deepEqual(loadLayout(), layout);
+    assert.doesNotMatch(data.get("remote-runner.layout.v1")!, /history|sideSplit/);
+  }
 });
 
 test("normalizeLayout clamps out-of-range values and rejects wrong types", () => {
@@ -103,7 +123,6 @@ test("normalizeLayout clamps out-of-range values and rejects wrong types", () =>
   });
   assert.equal(layout.sidebarWidth, SIDEBAR_MAX);
   assert.equal(layout.sidebarPosition, "left");
-  assert.equal(layout.splits.sidebar, SPLIT_MIN);
   assert.equal(layout.splits.center, SPLIT_MAX);
   assert.equal(layout.panelVisible.workspace, DEFAULT_LAYOUT.panelVisible.workspace);
   assert.equal(layout.panelCollapsed.editor, false);
@@ -186,10 +205,10 @@ test("store setLayout merges patches, normalizes, and persists", (t) => {
   t.after(() => useAppStore.setState({ layout: original }));
 
   const { setLayout, resetLayout } = useAppStore.getState();
-  setLayout({ sidebarWidth: 280, ...panelVisibilityPatch(useAppStore.getState().layout, "history", false) });
+  setLayout({ sidebarWidth: 280, ...panelVisibilityPatch(useAppStore.getState().layout, "commands", false) });
   let layout = useAppStore.getState().layout;
   assert.equal(layout.sidebarWidth, 280);
-  assert.equal(layout.panelVisible.history, false);
+  assert.equal(layout.panelVisible.commands, false);
   assert.equal(layout.panelVisible.workspace, DEFAULT_LAYOUT.panelVisible.workspace);
   assert.deepEqual(loadLayout(), layout);
 

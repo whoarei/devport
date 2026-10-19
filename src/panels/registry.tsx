@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
  * 本文件只含元数据（不 import 组件实现），保证 layoutState.ts 可以安全引用。
  */
 
-export type PanelId = "workspace" | "commands" | "history" | "runtime" | "editor" | "console" | "transfer";
+export type PanelId = "workspace" | "commands" | "runtime" | "editor" | "console" | "transfer";
 
 /** dock 槽位：sidebar 由 sidebarPosition 决定占据左/右，center 居中默认占主宽度 */
 export type DockId = "sidebar" | "center";
@@ -31,7 +31,6 @@ export interface PanelDef {
 export const PANELS: PanelDef[] = [
   { id: "workspace", dock: "sidebar", titleKey: "menu.workspacePanel", defaultVisible: true },
   { id: "commands", dock: "sidebar", titleKey: "menu.commandsPanel", defaultVisible: true },
-  { id: "history", dock: "sidebar", titleKey: "menu.historyPanel", defaultVisible: true },
   { id: "runtime", dock: "sidebar", titleKey: "menu.runtimePanel", defaultVisible: false },
   { id: "editor", dock: "center", titleKey: "menu.editorPanel", manualVisibility: false, defaultVisible: false },
   {

@@ -594,39 +594,6 @@ pub fn get_run_history(state: tauri::State<'_, AppState>) -> Result<Vec<RunStatu
     Ok(state.run_manager.history())
 }
 
-/// 导出单条历史记录的元数据 JSON 到用户选择的路径
-#[tauri::command]
-pub fn export_run_record(path: String, contents: String) -> Result<()> {
-    if path.trim().is_empty() {
-        return Err(crate::error::RunnerError::InvalidInput(
-            "export path must not be empty".into(),
-        ));
-    }
-    if contents.len() > 32 * 1024 * 1024 {
-        return Err(crate::error::RunnerError::InvalidInput(
-            "export contents must not exceed 32 MiB".into(),
-        ));
-    }
-    std::fs::write(&path, contents)?;
-    Ok(())
-}
-
-/// 导出某次运行持久化的输出日志到用户选择的路径
-#[tauri::command]
-pub fn export_run_output(
-    state: tauri::State<'_, AppState>,
-    run_id: String,
-    path: String,
-) -> Result<()> {
-    state.run_manager.export_output(&run_id, &path)
-}
-
-/// 清空全部运行历史及其输出日志
-#[tauri::command]
-pub fn clear_run_history(state: tauri::State<'_, AppState>) -> Result<()> {
-    state.run_manager.clear_history()
-}
-
 // ---------- Managed Python Runtime（00027 §17）----------
 
 /// 校验并返回 uv 项目契约（pyproject.toml / uv.lock / .python-version）

@@ -63,7 +63,7 @@
 
 ### run_logs/ — 运行输出日志
 
-每次运行的输出（原始字节，stdout/stderr 按到达顺序合并）在推送前端事件的同时追加写入 `run_logs/<run_id>.log`，单个 run 上限 2 MiB，超限截断并在 `output_truncated` 中标记；写入失败仅放弃该 run 的落盘，不影响运行。日志随历史淘汰删除（`finish()` 淘汰、启动截断、孤儿文件清理），最坏磁盘占用约 200 × 2 MiB = 400 MB。历史面板右键可将记录元数据导出为 JSON、将输出日志原样复制到用户选择的路径。
+每次运行的输出（原始字节，stdout/stderr 按到达顺序合并）在推送前端事件的同时追加写入 `run_logs/<run_id>.log`，单个 run 上限 2 MiB，超限截断并在 `output_truncated` 中标记；写入失败仅放弃该 run 的落盘，不影响运行。日志随历史淘汰删除（`finish()` 淘汰、启动截断、孤儿文件清理），最坏磁盘占用约 200 × 2 MiB = 400 MB。2026-10-19 移除侧栏运行历史面板及导出、清空接口；这些状态与日志继续支持运行控制台的任务切换、状态恢复和输出回放。
 
 ### transfers.json / transfer-journal/ — 文件传输历史与检查点
 
@@ -90,7 +90,7 @@ WebView 的 localStorage 使用带版本后缀的键保存界面偏好：
 
 | 键 | 内容 | 上限 |
 | --- | --- | --- |
-| `remote-runner.layout.v1` | 界面布局：工作区/历史/控制台三个面板的显隐与折叠、编辑区折叠、侧栏宽度（200–480 px）与左右位置、侧栏上下分割比（0.2–0.8）、控制台高度（120–720 px） | 单对象 |
+| `remote-runner.layout.v1` | 已注册面板的显隐与折叠、侧栏整体显隐、宽度（200–480 px）与左右位置、中间区分割比（0.2–0.8）；旧运行历史面板字段与侧栏上下分割比在读取时丢弃 | 单对象 |
 | `remote-runner.recent-workspaces.v2` | 最近打开的工作区（`WorkspaceRef` 对象数组：`{type:"local",dir}` 或 `{type:"device",device_id,path}`，去重、保留首次出现顺序） | 10 条 |
 | `remote-runner.recent-workspaces.v1` | v2 之前的旧键（裸路径字符串数组）；读取时迁移到 v2 并删除本键 | 迁移后不再写入 |
 | `remote-runner.ui-zoom.v1` | 整个 WebView 的界面缩放百分比；允许 70%–200% 的预设档位 | 单个数值 |
