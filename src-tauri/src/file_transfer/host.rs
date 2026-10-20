@@ -120,6 +120,21 @@ fn open_local(path: &Path, create: bool) -> Result<tokio::fs::File> {
 }
 
 impl Host {
+    pub(crate) fn ssh_connection(&self) -> Option<crate::ssh::client::SshConnection> {
+        match self {
+            Self::Ssh(host) => Some(host.connection()),
+            _ => None,
+        }
+    }
+
+    pub(crate) async fn from_ssh(
+        connection: crate::ssh::client::SshConnection,
+        root: &str,
+    ) -> Result<Self> {
+        Ok(Self::Ssh(
+            SshHost::from_connection(connection, root, false).await?,
+        ))
+    }
     /// Run synchronization creates its configured root without following links.
     pub(crate) async fn open_create(
         endpoint: &WorkspaceRef,

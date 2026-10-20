@@ -123,6 +123,7 @@ pub(crate) struct SshHost {
     pub hardlink: bool,
     fsync: bool,
     hash_acceleration: Option<bool>,
+    inspect_acceleration: Option<bool>,
 }
 
 fn map(e: Error) -> crate::workspace::FileError {
@@ -178,6 +179,18 @@ impl SshHost {
         let connection = SshConnection::connect(device, config)
             .await
             .map_err(|e| error("io", e.to_string()))?;
+        Self::from_connection(connection, path, create).await
+    }
+
+    pub(crate) fn connection(&self) -> SshConnection {
+        self._connection.clone()
+    }
+
+    pub(crate) async fn from_connection(
+        connection: SshConnection,
+        path: &str,
+        create: bool,
+    ) -> Result<Self> {
         let channel = connection
             .handle
             .channel_open_session()
@@ -258,6 +271,7 @@ impl SshHost {
             hardlink: has("hardlink@openssh.com"),
             fsync: has("fsync@openssh.com"),
             hash_acceleration: None,
+            inspect_acceleration: None,
         };
         if host.stat("").await?.is_none_or(|a| a.kind != "dir") {
             return Err(error("path", "Root is not a directory"));
@@ -569,6 +583,89 @@ impl SshHost {
         let _ = channel.close().await;
         self.hash_acceleration = Some(hash.is_some());
         Ok(hash)
+    }
+
+    pub(super) async fn inspect(
+        &mut self,
+        paths: &[String],
+        limit: u64,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<Option<Vec<Option<super::inspect::Fingerprint>>>> {
+        use super::inspect;
+        if self.inspect_acceleration == Some(false) {
+            return Ok(None);
+        }
+        inspect::check_cancel(cancel)?;
+        let marker = format!("RR_INSPECT_{}", uuid::Uuid::new_v4().simple());
+        let command = inspect::script(&self.root, paths, limit, &marker);
+        if command.len() > 24 * 1024 {
+            return Ok(None);
+        }
+        let open = self._connection.handle.channel_open_session();
+        let mut channel = tokio::select! {
+            biased;
+            _ = crate::runtime::host::cancelled(cancel) => return Err(error("canceled", "Workspace inspection canceled")),
+            result = tokio::time::timeout(std::time::Duration::from_secs(10), open) => match result {
+                Ok(Ok(channel)) => channel,
+                _ => { self.inspect_acceleration = Some(false); return Ok(None); }
+            }
+        };
+        let attempt = async {
+            channel.exec(true, command).await.ok()?;
+            let mut bytes = Vec::new();
+            let mut success = false;
+            while let Some(message) = channel.wait().await {
+                match message {
+                    russh::ChannelMsg::Data { data } => {
+                        if bytes.len() + data.len() > 64 * 1024 {
+                            return None;
+                        }
+                        bytes.extend_from_slice(&data);
+                    }
+                    russh::ChannelMsg::ExitStatus { exit_status } => success = exit_status == 0,
+                    russh::ChannelMsg::Failure => return None,
+                    _ => {}
+                }
+            }
+            if !success {
+                return None;
+            }
+            inspect::parse(&bytes, &marker, paths.len(), limit)
+        };
+        let outcome = tokio::select! {
+            biased;
+            _ = crate::runtime::host::cancelled(cancel) => Err(error("canceled", "Workspace inspection canceled")),
+            result = tokio::time::timeout(std::time::Duration::from_secs(30), attempt) => Ok(result.ok().flatten()),
+        };
+        if outcome.is_err() {
+            let _ = channel.signal(russh::Sig::TERM).await;
+        }
+        let _ = channel.close().await;
+        let mut values = outcome?;
+        // Some SFTP servers omit uid/gid, permissions or timestamps, or expose
+        // a different namespace from exec. Confirm the representation on one
+        // path per batch before using shell attributes in SFTP write checks.
+        if let Some(batch) = &values {
+            let sample = batch.iter().position(Option::is_some);
+            let mut compatible = true;
+            for (index, value) in batch.iter().enumerate() {
+                // Shell `test -e` cannot distinguish ENOENT from every access
+                // restriction. Confirm ALL missing paths through SFTP, so a
+                // permission error cannot turn into a planned new upload.
+                if value.is_none() || Some(index) == sample {
+                    let observed = self.stat(&paths[index]).await?;
+                    if observed.as_ref() != value.as_ref().map(|value| &value.attrs) {
+                        compatible = false;
+                        break;
+                    }
+                }
+            }
+            if !compatible {
+                values = None;
+            }
+        }
+        self.inspect_acceleration = Some(values.is_some());
+        Ok(values)
     }
 }
 

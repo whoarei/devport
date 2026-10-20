@@ -24,6 +24,21 @@ struct Behavior {
     slow: bool,
     fail_workspace_commit_once: Option<Arc<std::sync::atomic::AtomicBool>>,
     hash_exec: bool,
+    run_exec: bool,
+    corrupt_batch: bool,
+    incompatible_batch: bool,
+    hide_batch_path: bool,
+    hang_batch: bool,
+    counts: Arc<Counts>,
+}
+
+#[derive(Default)]
+struct Counts {
+    connections: std::sync::atomic::AtomicUsize,
+    lstat: std::sync::atomic::AtomicUsize,
+    reads: std::sync::atomic::AtomicUsize,
+    batch_exec: std::sync::atomic::AtomicUsize,
+    single_hash: std::sync::atomic::AtomicUsize,
 }
 
 struct Sftp {
@@ -107,6 +122,10 @@ impl russh_sftp::server::Handler for Sftp {
         })
     }
     async fn lstat(&mut self, id: u32, path: String) -> Result<p::Attrs, StatusCode> {
+        self.behavior
+            .counts
+            .lstat
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(p::Attrs {
             id,
             attrs: attributes(&fs::symlink_metadata(self.path(&path)?).map_err(io)?),
@@ -185,6 +204,10 @@ impl russh_sftp::server::Handler for Sftp {
         offset: u64,
         len: u32,
     ) -> Result<p::Data, StatusCode> {
+        self.behavior
+            .counts
+            .reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let file = self.handles.get_mut(&handle).ok_or(StatusCode::Failure)?;
         file.seek(SeekFrom::Start(offset)).map_err(io)?;
         let mut data = vec![0; len as usize];
@@ -431,7 +454,7 @@ async fn workspace_sync_lease_queues_until_release_and_is_not_stolen_after_disco
 }
 
 #[tokio::test]
-async fn workspace_sync_hash_acceleration_preserves_literal_paths_and_detects_remote_edits() {
+async fn changed_sources_inspect_remote_content_and_preserve_literal_paths() {
     use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
     let f = Fixture::new(Behavior {
         hash_exec: true,
@@ -462,6 +485,7 @@ async fn workspace_sync_hash_acceleration_preserves_literal_paths_and_detects_re
         .join(lease.destination.trim_start_matches("/data/"))
         .join("a' $.py");
     fs::write(&file, b"evil").unwrap();
+    fs::write(f.local.join("a' $.py"), b"new source").unwrap();
     assert_eq!(
         lease
             .synchronize(&f.local, SSH, cancel)
@@ -470,8 +494,282 @@ async fn workspace_sync_hash_acceleration_preserves_literal_paths_and_detects_re
             .updated,
         1
     );
-    assert_eq!(fs::read(file).unwrap(), b"good");
+    assert_eq!(fs::read(file).unwrap(), b"new source");
     lease.release().await.unwrap();
+}
+
+#[tokio::test]
+async fn manifest_skips_unchanged_paths_and_batches_only_changed_sources() {
+    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+    let counts = Arc::new(Counts::default());
+    let f = Fixture::new(Behavior {
+        hash_exec: true,
+        counts: counts.clone(),
+        ..Default::default()
+    })
+    .await;
+    for index in 0..37 {
+        fs::write(f.local.join(format!("file-{index}.bin")), [index as u8]).unwrap();
+    }
+    fs::create_dir(f.local.join("empty")).unwrap();
+    let device = DeviceStore::new(&f.config).get("test").unwrap();
+    let source = WorkspaceRef::local(f.local.to_string_lossy());
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut lease = Lease::acquire(&source, None, &device, &f.config, "batch", &cancel)
+        .await
+        .unwrap();
+    lease
+        .synchronize(&f.local, SSH, cancel.clone())
+        .await
+        .unwrap();
+    let before = (
+        counts.batch_exec.load(Relaxed),
+        counts.lstat.load(Relaxed),
+        counts.reads.load(Relaxed),
+        counts.single_hash.load(Relaxed),
+    );
+    let report = lease
+        .synchronize(&f.local, SSH, cancel.clone())
+        .await
+        .unwrap();
+    assert_eq!((report.skipped, report.uploaded_bytes), (37, 0));
+    assert_eq!(counts.batch_exec.load(Relaxed), before.0);
+    assert!(counts.lstat.load(Relaxed) - before.1 < 100);
+    assert!(
+        counts.reads.load(Relaxed) - before.2 <= 4,
+        "only the manifest is read over SFTP"
+    );
+    assert_eq!(counts.single_hash.load(Relaxed), before.3);
+    // Metadata changes on 17 sources require just two preflight batches. Their
+    // identical content needs no upload, and the other 20 files/dir stay skipped.
+    for index in 0..17 {
+        fs::File::options()
+            .write(true)
+            .open(f.local.join(format!("file-{index}.bin")))
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(
+                std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000),
+            ))
+            .unwrap();
+    }
+    let report = lease
+        .synchronize(&f.local, SSH, cancel.clone())
+        .await
+        .unwrap();
+    assert_eq!((report.skipped, report.uploaded_bytes), (37, 0));
+    assert_eq!(counts.batch_exec.load(Relaxed) - before.0, 2);
+    let report = lease.synchronize(&f.local, SSH, cancel).await.unwrap();
+    assert_eq!((report.skipped, report.uploaded_bytes), (37, 0));
+    assert_eq!(counts.batch_exec.load(Relaxed) - before.0, 2);
+    assert_eq!(counts.connections.load(Relaxed), 1);
+    lease.release().await.unwrap();
+}
+
+#[tokio::test]
+async fn malformed_or_incompatible_batch_falls_back_for_changed_sources() {
+    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+    for incompatible in [false, true] {
+        let counts = Arc::new(Counts::default());
+        let f = Fixture::new(Behavior {
+            hash_exec: true,
+            corrupt_batch: !incompatible,
+            incompatible_batch: incompatible,
+            counts: counts.clone(),
+            ..Default::default()
+        })
+        .await;
+        fs::write(f.local.join("a.py"), b"good").unwrap();
+        let device = DeviceStore::new(&f.config).get("test").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut lease = Lease::acquire(
+            &WorkspaceRef::local(f.local.to_string_lossy()),
+            None,
+            &device,
+            &f.config,
+            "fallback",
+            &cancel,
+        )
+        .await
+        .unwrap();
+        lease
+            .synchronize(&f.local, SSH, cancel.clone())
+            .await
+            .unwrap();
+        fs::File::options()
+            .write(true)
+            .open(f.local.join("a.py"))
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(
+                std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000),
+            ))
+            .unwrap();
+        lease
+            .synchronize(&f.local, SSH, cancel.clone())
+            .await
+            .unwrap();
+        let attempts = counts.batch_exec.load(Relaxed);
+        let file = f
+            .remote
+            .join(lease.destination.trim_start_matches("/data/"))
+            .join("a.py");
+        fs::write(&file, b"evil").unwrap();
+        fs::write(f.local.join("a.py"), b"new source").unwrap();
+        let report = lease.synchronize(&f.local, SSH, cancel).await.unwrap();
+        assert_eq!(report.updated, 1);
+        assert_eq!(fs::read(file).unwrap(), b"new source");
+        assert_eq!(
+            counts.batch_exec.load(Relaxed),
+            attempts,
+            "disable unsupported acceleration for this session"
+        );
+        assert!(counts.single_hash.load(Relaxed) > 0);
+        lease.release().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn missing_batch_entries_cannot_bypass_the_complete_conflict_preflight() {
+    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    let f = Fixture::new(Behavior {
+        hash_exec: true,
+        hide_batch_path: true,
+        ..Default::default()
+    })
+    .await;
+    fs::write(f.local.join("a.py"), b"old").unwrap();
+    let device = DeviceStore::new(&f.config).get("test").unwrap();
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut lease = Lease::acquire(
+        &WorkspaceRef::local(f.local.to_string_lossy()),
+        None,
+        &device,
+        &f.config,
+        "hidden",
+        &cancel,
+    )
+    .await
+    .unwrap();
+    lease
+        .synchronize(&f.local, SSH, cancel.clone())
+        .await
+        .unwrap();
+    let target = f
+        .remote
+        .join(lease.destination.trim_start_matches("/data/"));
+    fs::write(f.local.join("a.py"), b"updated").unwrap();
+    fs::write(f.local.join("z.py"), b"source").unwrap();
+    fs::write(target.join("z.py"), b"unmanaged artifact").unwrap();
+    assert!(lease
+        .synchronize(&f.local, SSH, cancel)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("conflicts"));
+    assert_eq!(fs::read(target.join("a.py")).unwrap(), b"old");
+    assert_eq!(
+        fs::read(target.join("z.py")).unwrap(),
+        b"unmanaged artifact"
+    );
+    lease.release().await.unwrap();
+}
+
+#[tokio::test]
+async fn canceling_a_pending_batch_keeps_the_connection_usable_for_lease_release() {
+    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+    let counts = Arc::new(Counts::default());
+    let f = Fixture::new(Behavior {
+        hash_exec: true,
+        hang_batch: true,
+        counts: counts.clone(),
+        ..Default::default()
+    })
+    .await;
+    fs::write(f.local.join("a.py"), b"source").unwrap();
+    let device = DeviceStore::new(&f.config).get("test").unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut lease = Lease::acquire(
+        &WorkspaceRef::local(f.local.to_string_lossy()),
+        None,
+        &device,
+        &f.config,
+        "cancel",
+        &cancel,
+    )
+    .await
+    .unwrap();
+    let trigger = async {
+        while counts.batch_exec.load(Relaxed) == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        cancel.store(true, Relaxed);
+    };
+    let (result, _) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(lease.synchronize(&f.local, SSH, cancel.clone()), trigger)
+    })
+    .await
+    .unwrap();
+    assert!(result.unwrap_err().to_string().contains("canceled"));
+    lease.release().await.unwrap();
+}
+
+#[tokio::test]
+async fn run_reuses_the_authenticated_sync_connection_for_launch_checks_and_execution() {
+    use remote_runner::{
+        runner::{RunManager, RunRequest},
+        workspace_run,
+    };
+    use std::sync::atomic::Ordering::Relaxed;
+    let counts = Arc::new(Counts::default());
+    let f = Fixture::new(Behavior {
+        hash_exec: true,
+        run_exec: true,
+        counts: counts.clone(),
+        ..Default::default()
+    })
+    .await;
+    fs::write(f.local.join("main.sh"), b"true\n").unwrap();
+    let device = DeviceStore::new(&f.config).get("test").unwrap();
+    let mut req: RunRequest = serde_json::from_value(serde_json::json!({
+        "device_id":"test", "workspace":WorkspaceRef::local(f.local.to_string_lossy()),
+        "kind":"shell", "entry":"main.sh", "console_mode":"pipe",
+    }))
+    .unwrap();
+    req.workspace_context = Some(workspace_run::Context {
+        request: serde_json::from_value(serde_json::json!({
+            "workspace":req.workspace, "device_id":"test", "device_revision":workspace_run::device_revision(&device),
+            "command":{"entry":{"type":"bash_script","path":"main.sh"},"args":[]},
+            "python":"device_default", "settings":{"cwd":".","console_mode":"pipe","timeout_secs":0},
+        })).unwrap(),
+        source_device: None, config_dir: f.config.clone(),
+    });
+    let (events, _) = tokio::sync::broadcast::channel(1024);
+    let manager = RunManager::new(&f.config, events);
+    let id = manager.start(req, device, f.config.clone(), None).unwrap();
+    let status = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let status = manager.status(&id).unwrap();
+            if !status.state.is_active() {
+                break status;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        status.state,
+        remote_runner::process::RunState::Exited,
+        "{:?}",
+        status.error
+    );
+    assert_eq!(
+        counts.connections.load(Relaxed),
+        1,
+        "sync, metadata, bash probe and run share one SSH authentication"
+    );
 }
 
 #[tokio::test]
@@ -617,11 +915,106 @@ impl server::Handler for Ssh {
         data: &[u8],
         session: &mut server::Session,
     ) -> Result<(), Self::Error> {
+        let command = std::str::from_utf8(data).unwrap();
+        if command.contains("RR_INSPECT_") {
+            self.behavior
+                .counts
+                .batch_exec
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if !self.behavior.hash_exec {
+                session.channel_failure(channel)?;
+                return Ok(());
+            }
+            session.channel_success(channel)?;
+            if self.behavior.hang_batch {
+                return Ok(());
+            }
+            let marker = command
+                .lines()
+                .find_map(|line| {
+                    line.strip_prefix("printf 'RR_INSPECT_")
+                        .and_then(|s| s.strip_suffix("\\n'"))
+                })
+                .unwrap();
+            let mut reply = format!("RR_INSPECT_{marker}\n");
+            for line in command
+                .lines()
+                .filter_map(|line| line.strip_prefix("rr_one "))
+            {
+                let (index, quoted) = line.split_once(' ').unwrap();
+                let relative = quoted
+                    .strip_suffix(" || exit 1")
+                    .unwrap()
+                    .strip_prefix('\'')
+                    .unwrap()
+                    .strip_suffix('\'')
+                    .unwrap()
+                    .replace("'\\''", "'");
+                assert!(!relative.contains("..") && !relative.starts_with('/'));
+                let path = self.root.join(relative);
+                if self.behavior.hide_batch_path
+                    && path.file_name().is_some_and(|name| name == "z.py")
+                {
+                    reply.push_str(&format!("{index} M\n"));
+                    continue;
+                }
+                match fs::symlink_metadata(&path) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        reply.push_str(&format!("{index} M\n"))
+                    }
+                    Ok(meta) => {
+                        let a = attributes(&meta);
+                        let uid = if self.behavior.incompatible_batch {
+                            999
+                        } else {
+                            1000
+                        };
+                        let fields = format!(
+                            "{:x} {} {} {uid} 1000 1 2",
+                            a.permissions.unwrap(),
+                            meta.len(),
+                            a.mtime.unwrap()
+                        );
+                        if meta.is_dir() {
+                            reply.push_str(&format!("{index} D {fields}\n"));
+                        } else {
+                            use sha2::{Digest, Sha256};
+                            let hash = format!("{:x}", Sha256::digest(fs::read(path).unwrap()));
+                            reply.push_str(&format!("{index} F {fields} {hash}\n"));
+                        }
+                    }
+                    Err(e) => panic!("{e}"),
+                }
+            }
+            if self.behavior.corrupt_batch {
+                reply.truncate(reply.len() / 2);
+            }
+            session.data(channel, reply.into_bytes())?;
+            session.exit_status_request(channel, 0)?;
+            session.eof(channel)?;
+            session.close(channel)?;
+            self.channels.remove(&channel);
+            return Ok(());
+        }
+        if self.behavior.run_exec && !command.starts_with("LC_ALL=C sha256sum < ") {
+            session.channel_success(channel)?;
+            if command.contains("command -v bash") {
+                session.data(channel, b"/bin/bash\n".to_vec())?;
+            }
+            session.exit_status_request(channel, 0)?;
+            session.eof(channel)?;
+            session.close(channel)?;
+            self.channels.remove(&channel);
+            return Ok(());
+        }
+        self.behavior
+            .counts
+            .single_hash
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if !self.behavior.hash_exec {
             session.channel_failure(channel)?;
             return Ok(());
         }
-        let command = std::str::from_utf8(data).unwrap();
         let quoted = command
             .strip_prefix("LC_ALL=C sha256sum < ")
             .unwrap()
@@ -765,6 +1158,10 @@ impl Fixture {
         let listener = tokio::spawn(async move {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
+                behavior
+                    .counts
+                    .connections
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let config = server_config.clone();
                 let root = remote_root.clone();
                 let behavior = behavior.clone();

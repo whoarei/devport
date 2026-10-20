@@ -1,5 +1,6 @@
 //! Binary file transfers, independent of editor and run-upload limits.
 pub(crate) mod host;
+mod inspect;
 mod manager;
 mod ssh;
 #[cfg(test)]

@@ -1,5 +1,6 @@
 """Private bounded binary transfer service, prepended to the WSL helper."""
 import base64
+import hashlib
 import os
 import stat
 import subprocess
@@ -43,6 +44,46 @@ class TransferService:
             os.close(self.root)
             self.root = None
 
+    def inspect(self, path, limit):
+        try:
+            parent, name = self.parent(path)
+        except FileNotFoundError:
+            return None
+        fd = None
+        try:
+            try:
+                st = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                return None
+            attrs = transfer_attrs(st)
+            if stat.S_ISDIR(st.st_mode):
+                return dict(attrs=attrs, sha256=None)
+            if not stat.S_ISREG(st.st_mode) or st.st_size > limit:
+                raise ValueError("expected a regular file within workspace limit")
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+            before = os.fstat(fd)
+            if transfer_attrs(before) != attrs:
+                raise ValueError("managed file changed while opening")
+            digest = hashlib.sha256()
+            total = 0
+            while True:
+                data = os.read(fd, TF_CHUNK)
+                if not data:
+                    break
+                total += len(data)
+                if total > limit:
+                    raise ValueError("managed file grew beyond hash limit")
+                digest.update(data)
+            after = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            if (transfer_attrs(os.fstat(fd)) != attrs or transfer_attrs(after) != attrs
+                    or before.st_ctime_ns != os.fstat(fd).st_ctime_ns):
+                raise ValueError("managed file changed while hashing")
+            return dict(attrs=attrs, sha256=digest.hexdigest())
+        finally:
+            if fd is not None:
+                os.close(fd)
+            os.close(parent)
+
     def handle(self, message):
         kind = message["type"]
         path = message.get("path", "")
@@ -68,6 +109,15 @@ class TransferService:
             return dict(root=root_path, windows_path=windows_path)
         if self.root is None:
             raise ValueError("transfer root is not open")
+        if kind == "tf_inspect":
+            paths = message["paths"]
+            limit = message["limit"]
+            if (not isinstance(paths, list) or len(paths) > 16
+                    or not isinstance(limit, int) or not 0 <= limit <= 64 * 1024 * 1024):
+                raise ValueError("workspace inspection exceeds limits")
+            for item in paths:
+                parts(item)
+            return [self.inspect(item, limit) for item in paths]
         if kind == "tf_stat":
             if not path:
                 return transfer_attrs(os.fstat(self.root))

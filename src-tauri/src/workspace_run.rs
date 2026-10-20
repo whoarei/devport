@@ -407,11 +407,32 @@ impl Store {
         source: Option<&DeviceProfile>,
         config: &Path,
     ) -> Result<Self> {
+        Self::open_with_ssh(workspace, source, config, None).await
+    }
+
+    pub(crate) async fn open_with_ssh(
+        workspace: &WorkspaceRef,
+        source: Option<&DeviceProfile>,
+        config: &Path,
+        connection: Option<crate::ssh::client::SshConnection>,
+    ) -> Result<Self> {
         if let Some((_, path)) = workspace.device_ref() {
             crate::workspace_ref::validate_device_path(path).map_err(|m| error("path", m))?;
         }
         Ok(Self {
-            host: Host::open(workspace, source, config).await?,
+            host: match connection {
+                Some(connection) => {
+                    Host::from_ssh(
+                        connection,
+                        workspace
+                            .device_ref()
+                            .ok_or_else(|| error("path", "Expected SSH workspace"))?
+                            .1,
+                    )
+                    .await?
+                }
+                None => Host::open(workspace, source, config).await?,
+            },
         })
     }
     pub async fn read(&mut self, path: &str, limit: usize) -> Result<Option<Vec<u8>>> {
@@ -834,6 +855,16 @@ pub fn input_verifier(
     root: &str,
     hashes: Vec<(String, String)>,
 ) -> Box<crate::runtime::prepare::InputVerifier> {
+    input_verifier_with_ssh(device, config, root, hashes, None)
+}
+
+pub(crate) fn input_verifier_with_ssh(
+    device: &DeviceProfile,
+    config: &Path,
+    root: &str,
+    hashes: Vec<(String, String)>,
+    connection: Option<crate::ssh::client::SshConnection>,
+) -> Box<crate::runtime::prepare::InputVerifier> {
     let endpoint = if device.transport == crate::device::TransportKind::Local {
         WorkspaceRef::local(root)
     } else {
@@ -842,6 +873,7 @@ pub fn input_verifier(
     let device = device.clone();
     let config = config.to_path_buf();
     Box::new(move || {
+        let connection = connection.clone();
         let (endpoint, device, config, hashes) = (
             endpoint.clone(),
             device.clone(),
@@ -849,7 +881,7 @@ pub fn input_verifier(
             hashes.clone(),
         );
         Box::pin(async move {
-            let mut store = Store::open(&endpoint, Some(&device), &config)
+            let mut store = Store::open_with_ssh(&endpoint, Some(&device), &config, connection)
                 .await
                 .map_err(|e| crate::error::RunnerError::InvalidInput(e.to_string()))?;
             store

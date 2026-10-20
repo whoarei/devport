@@ -33,6 +33,9 @@ fn failure(message: impl Into<String>) -> RunnerError {
     RunnerError::TaskFailed(format!("workspace sync: {}", message.into()))
 }
 fn map(error: crate::workspace::FileError) -> RunnerError {
+    if error.code == "canceled" {
+        return crate::runtime::host::canceled_error();
+    }
     failure(error.to_string())
 }
 fn digest(bytes: &[u8]) -> String {
@@ -73,6 +76,12 @@ struct SourceStamp {
 }
 
 impl SourceStamp {
+    fn matches_cache(&self, other: &Self) -> bool {
+        self.version == other.version
+            && self.size == other.size
+            && self.modified_ns == other.modified_ns
+    }
+
     fn from_metadata(meta: &std::fs::Metadata) -> Option<Self> {
         let modified_ns = meta
             .modified()
@@ -356,6 +365,9 @@ pub struct Lease {
     _queue: OwnedMutexGuard<()>,
 }
 impl Lease {
+    pub(crate) fn ssh_connection(&self) -> Option<crate::ssh::client::SshConnection> {
+        self.host.ssh_connection()
+    }
     pub async fn acquire(
         source: &WorkspaceRef,
         source_device: Option<&DeviceProfile>,
@@ -603,59 +615,20 @@ async fn fingerprint(
     policy: Policy,
     cancel: &AtomicBool,
 ) -> Result<Option<(String, Attributes)>> {
-    check_cancel(cancel)?;
-    let Some(attrs) = host.stat(path).await.map_err(map)? else {
-        return Ok(None);
-    };
-    if attrs.kind != "file" || attrs.size > policy.file_limit {
-        return Err(failure(format!(
-            "not a regular file within workspace limit: {path}"
-        )));
-    }
-    let hash = match host
-        .remote_digest(path, policy.file_limit)
+    let result = host
+        .inspect(&[path.to_owned()], policy.file_limit, cancel)
         .await
         .map_err(map)?
-    {
-        Some(hash) => hash,
-        None => {
-            let (mut handle, opened) = host.open_read(path).await.map_err(map)?;
-            let result = async {
-                if attrs != opened {
-                    return Err(failure("file changed while opening"));
-                }
-                let mut hasher = Sha256::new();
-                let mut offset = 0;
-                loop {
-                    check_cancel(cancel)?;
-                    let bytes = host.read(&mut handle, offset).await.map_err(map)?;
-                    if bytes.is_empty() {
-                        break;
-                    }
-                    offset += bytes.len() as u64;
-                    if offset > policy.file_limit {
-                        return Err(failure("remote file grew beyond limit"));
-                    }
-                    hasher.update(bytes);
-                }
-                Ok(format!("{:x}", hasher.finalize()))
-            }
-            .await;
-            let close = host.close(handle, false, None).await.map_err(map);
-            let value = result?;
-            close?;
-            value
-        }
-    };
-    if hash.len() != 64
-        || !hash.bytes().all(|b| b.is_ascii_hexdigit())
-        || host.stat(path).await.map_err(map)? != Some(attrs.clone())
-    {
-        return Err(failure(
-            "remote file changed while hashing or returned an invalid hash",
-        ));
-    }
-    Ok(Some((hash, attrs)))
+        .pop()
+        .unwrap();
+    result
+        .map(|value| {
+            let hash = value
+                .sha256
+                .ok_or_else(|| failure(format!("expected a regular file: {path}")))?;
+            Ok((hash, value.attrs))
+        })
+        .transpose()
 }
 
 struct Snapshot {
@@ -685,7 +658,13 @@ fn snapshot(
         // Only a complete stamp from this version may bypass content reads.
         // Serial's UTF-8 validation must always read the content.
         let cached = previous.entries.get(&source.relative).filter(|old| {
-            !policy.text_only && !old.directory && stamp.is_some() && old.source == stamp
+            !policy.text_only
+                && !old.directory
+                && old
+                    .source
+                    .as_ref()
+                    .zip(stamp.as_ref())
+                    .is_some_and(|(old, current)| old.matches_cache(current))
         });
         let record = if source.directory {
             Record {
@@ -700,6 +679,7 @@ fn snapshot(
             total += source.metadata.len() as usize;
             Record {
                 mode: source.mode,
+                source: stamp,
                 ..cached.clone()
             }
         } else {
@@ -895,27 +875,80 @@ async fn synchronize(
     host.mkdir(&format!("{prefix}/workspace"))
         .await
         .map_err(map)?;
+    // Trust the committed manifest for unchanged sources. Recovery must inspect
+    // actual targets: an interrupted upload may have published a newer version.
+    let unchanged: std::collections::BTreeSet<_> = next
+        .entries
+        .iter()
+        .filter(|(path, desired)| {
+            pending.is_none()
+                && !policy.text_only
+                && old.entries.get(*path).is_some_and(|previous| {
+                    previous.directory == desired.directory
+                        && previous.mode == desired.mode
+                        && (desired.directory
+                            || (previous.sha256 == desired.sha256
+                                && previous.size == desired.size
+                                && previous
+                                    .source
+                                    .as_ref()
+                                    .zip(desired.source.as_ref())
+                                    .is_some_and(|(old, current)| old.matches_cache(current))))
+                })
+        })
+        .map(|(path, _)| path.clone())
+        .collect();
     let remote_path = |path: &str| format!("{prefix}/workspace/{path}");
+    let paths: Vec<_> = next
+        .entries
+        .keys()
+        .chain(owned.keys())
+        .filter(|path| !unchanged.contains(*path))
+        .map(|path| remote_path(path))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let started = std::time::Instant::now();
+    let inspected = host
+        .inspect(&paths, policy.file_limit, &cancel)
+        .await
+        .map_err(map)?;
+    let mut inspected: BTreeMap<_, _> = paths.into_iter().zip(inspected).collect();
+    tracing::info!(
+        paths = inspected.len(),
+        manifest_skipped = unchanged.len(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "workspace remote preflight"
+    );
     let mut actions = Vec::new();
     let mut report = Report::default();
-    // Preflight ALL paths before recording intentions or changing workload data.
+    // Preflight all remaining paths before changing workload data.
     for (path, desired) in &next.entries {
         check_cancel(&cancel)?;
+        if unchanged.contains(path) {
+            if !desired.directory {
+                report.skipped += 1;
+            }
+            continue;
+        }
         let target = remote_path(path);
-        let attrs = host.stat(&target).await.map_err(map)?;
+        let current = inspected.remove(&target).unwrap();
         if desired.directory {
-            match attrs {
+            match current.map(|value| value.attrs) {
                 None => actions.push(Action::Directory(path.clone())),
                 Some(attrs) if attrs.kind == "dir" => {}
                 _ => return Err(failure(format!("file/directory conflict: {path}"))),
             }
             continue;
         }
-        let current = if attrs.is_some() {
-            fingerprint(host, &target, policy, &cancel).await?
-        } else {
-            None
-        };
+        let current = current
+            .map(|value| {
+                let hash = value
+                    .sha256
+                    .ok_or_else(|| failure(format!("file/directory conflict: {path}")))?;
+                Ok::<_, RunnerError>((hash, value.attrs))
+            })
+            .transpose()?;
         if let Some((hash, attrs)) = &current {
             let trusted = old.entries.get(path).is_some_and(|e| !e.directory)
                 || owned
@@ -968,15 +1001,19 @@ async fn synchronize(
             continue;
         }
         let target = remote_path(path);
-        let Some(attrs) = host.stat(&target).await.map_err(map)? else {
+        let Some(current) = inspected.remove(&target).unwrap() else {
             continue;
         };
+        let attrs = current.attrs;
         if previous.directory {
             if attrs.kind != "dir" {
                 return Err(failure(format!("managed directory changed type: {path}")));
             }
             actions.push(Action::RemoveDirectory(path.clone()));
-        } else if let Some((hash, attrs)) = fingerprint(host, &target, policy, &cancel).await? {
+        } else {
+            let hash = current
+                .sha256
+                .ok_or_else(|| failure(format!("managed file changed type: {path}")))?;
             let pending_hash = pending
                 .as_ref()
                 .and_then(|p| p.next.entries.get(path))
@@ -1454,7 +1491,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn actual_remote_hash_repairs_same_size_edits_and_missing_files() {
+    async fn unchanged_sources_trust_manifest_until_source_attributes_change() {
         let mut f = Fixture::new();
         f.write("a.py", b"one");
         f.write("b.py", b"two");
@@ -1462,8 +1499,79 @@ mod tests {
         std::fs::write(f.remote("a.py"), b"bad").unwrap();
         std::fs::remove_file(f.remote("b.py")).unwrap();
         let r = f.sync().await.unwrap();
-        assert_eq!((r.updated, r.added, r.uploaded_bytes), (1, 1, 6));
+        assert_eq!(
+            (r.skipped, r.updated, r.added, r.uploaded_bytes),
+            (2, 0, 0, 0)
+        );
+        assert_eq!(std::fs::read(f.remote("a.py")).unwrap(), b"bad");
+        assert!(!f.remote("b.py").exists());
+
+        // Changed sources still inspect targets, repairing modified or missing
+        // managed files instead of trusting their old manifest entries.
+        f.write("a.py", b"one updated");
+        f.write("b.py", b"two updated");
+        let r = f.sync().await.unwrap();
+        assert_eq!((r.updated, r.added, r.uploaded_bytes), (1, 1, 22));
+        assert_eq!(std::fs::read(f.remote("a.py")).unwrap(), b"one updated");
+        assert_eq!(std::fs::read(f.remote("b.py")).unwrap(), b"two updated");
+    }
+
+    #[tokio::test]
+    async fn preserved_size_and_mtime_reuse_cache_even_if_identity_changes() {
+        use std::fs::{File, FileTimes};
+        let mut f = Fixture::new();
+        f.write("a.py", b"one");
+        f.sync().await.unwrap();
+        let mut old = f.manifest();
+        let stamp = old
+            .entries
+            .get_mut("a.py")
+            .unwrap()
+            .source
+            .as_mut()
+            .unwrap();
+        stamp.identity = "previous-file-identity".into();
+        let modified = std::fs::metadata(f.source.join("a.py"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        f.write("a.py", b"two");
+        File::options()
+            .write(true)
+            .open(f.source.join("a.py"))
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(modified))
+            .unwrap();
+        std::fs::write(
+            f.target.join("rr-test/.sync/manifest.json"),
+            serde_json::to_vec(&old).unwrap(),
+        )
+        .unwrap();
+        let snapshot = scan(&f, &old);
+        assert_eq!((snapshot.cached_files, snapshot.hashed_files), (1, 0));
+        let r = f.sync().await.unwrap();
+        assert_eq!((r.skipped, r.uploaded_bytes), (1, 0));
         assert_eq!(std::fs::read(f.remote("a.py")).unwrap(), b"one");
+        assert_ne!(
+            f.manifest().entries["a.py"].source,
+            old.entries["a.py"].source
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_inspects_unchanged_sources_even_when_manifest_matches() {
+        let mut f = Fixture::new();
+        f.write("a.py", b"old");
+        f.sync().await.unwrap();
+        let old = f.manifest();
+        let mut interrupted = old.clone();
+        interrupted.entries.get_mut("a.py").unwrap().sha256 = digest(b"new");
+        std::fs::write(f.remote("a.py"), b"new").unwrap();
+        f.journal(old.clone(), interrupted, old.entries.clone());
+        let r = f.sync().await.unwrap();
+        assert_eq!((r.updated, r.skipped, r.uploaded_bytes), (1, 0, 3));
+        assert_eq!(std::fs::read(f.remote("a.py")).unwrap(), b"old");
+        assert!(!f.target.join("rr-test/.sync/pending.json").exists());
     }
 
     #[tokio::test]
@@ -1691,6 +1799,13 @@ mod tests {
         assert_eq!((r.permissions, r.uploaded_bytes), (1, 0));
         std::fs::remove_file(f.remote("a.sh")).unwrap();
         symlink(f.source.join("a.sh"), f.remote("a.sh")).unwrap();
+        // Unchanged targets are trusted; a required update must still reject
+        // links before writing anything through them.
+        std::fs::set_permissions(
+            f.source.join("a.sh"),
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
         assert!(f.sync().await.is_err());
         assert_eq!(std::fs::read(f.source.join("a.sh")).unwrap(), b"echo ok");
     }
@@ -1767,7 +1882,27 @@ mod tests {
             .await
             .workspace_sync
             .unwrap();
-        assert_eq!((modes.permissions, modes.uploaded_bytes), (1, 0));
+        assert_eq!(
+            (modes.permissions, modes.skipped, modes.uploaded_bytes),
+            (0, 2, 0)
+        );
+        // Touching the source enables target inspection and permission repair.
+        std::fs::File::options()
+            .write(true)
+            .open(f.source.join("main.py"))
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(
+                std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000),
+            ))
+            .unwrap();
+        let id = manager
+            .start(req("true"), device.clone(), config.clone(), None)
+            .unwrap();
+        let repaired = state(&manager, &id, RunState::Exited)
+            .await
+            .workspace_sync
+            .unwrap();
+        assert_eq!((repaired.permissions, repaired.uploaded_bytes), (1, 0));
         f.write("main.py", b"print('updated')\n");
         std::fs::remove_file(f.source.join("old.py")).unwrap();
         let id = manager
@@ -1797,6 +1932,7 @@ mod tests {
         let mut change = crate::wsl::wsl_command().unwrap();
         change.args(["--distribution",&distribution,"--exec","python3","-I","-c","import os,sys; from pathlib import Path; assert all(p.startswith('/tmp/rr-incremental-test-') for p in sys.argv[1:]); Path(sys.argv[2]).write_text('outside'); os.unlink(sys.argv[1]); os.symlink(sys.argv[2],sys.argv[1])",&format!("{}/main.py",third.destination),&format!("{remote}/outside.py")]);
         assert!(change.status().await.unwrap().success());
+        f.write("main.py", b"print('changed again')\n");
         let id = manager
             .start(req("python3 main.py"), device.clone(), config.clone(), None)
             .unwrap();

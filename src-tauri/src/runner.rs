@@ -945,6 +945,7 @@ impl RunManager {
         }
         // 0. 跨设备工作区（00029）：先暂存到本机临时目录，再走既有本机工作区管线；
         //    同设备工作区（SSH/WSL）由各自 transport 分支原地运行。
+        let mut source_ssh = None;
         if let Some(context) = &req.workspace_context {
             let check = async {
                 let mut store = crate::workspace_run::Store::open(
@@ -954,6 +955,9 @@ impl RunManager {
                 )
                 .await
                 .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
+                if context.request.workspace.is_on_device(&device.id) {
+                    source_ssh = store.host.ssh_connection();
+                }
                 if let Some(revision) = &context.request.config_revision {
                     if store
                         .config()
@@ -1077,10 +1081,17 @@ impl RunManager {
                 .await;
         }
         // 1. 建立 SSH 连接
-        let conn = tokio::select! {
+        let existing = workspace_lease
+            .as_ref()
+            .and_then(|lease| lease.ssh_connection())
+            .or(source_ssh);
+        let conn = match existing {
+            Some(connection) => connection,
+            None => tokio::select! {
             biased;
             _ = stop_rx.recv() => return Ok(RunOutcome::Canceled { code: None }),
             conn = SshConnection::connect(device, config_dir) => conn?,
+            },
         };
 
         // 2. Managed Runtime（项目无关部分）：probe + 部署/验证 uv + 安装/验证 Python
@@ -1153,11 +1164,12 @@ impl RunManager {
         // 4. Managed Runtime：workspace 可见后执行 locked environment sync，回填启动参数
         let mut _env_lease = None;
         if let Some((project, host, ready)) = managed {
-            let verify = crate::workspace_run::input_verifier(
+            let verify = crate::workspace_run::input_verifier_with_ssh(
                 device,
                 config_dir,
                 &remote_dir,
                 project.input_hashes.clone(),
+                Some(conn.clone()),
             );
             let env = self
                 .managed_prepare_environment(
@@ -1181,8 +1193,15 @@ impl RunManager {
             return Ok(RunOutcome::Canceled { code: None });
         }
 
-        self.resolve_workspace_launch(run_id, &mut req, device, config_dir, &remote_dir)
-            .await?;
+        self.resolve_workspace_launch(
+            run_id,
+            &mut req,
+            device,
+            config_dir,
+            &remote_dir,
+            Some(&conn),
+        )
+        .await?;
         if Self::preparation_only(&req) {
             return Ok(RunOutcome::Exited { code: Some(0) });
         }
@@ -1467,7 +1486,7 @@ impl RunManager {
         if stop_rx.try_recv().is_ok() {
             return Ok(RunOutcome::Canceled { code: None });
         }
-        self.resolve_workspace_launch(run_id, &mut req, device, config_dir, &remote)
+        self.resolve_workspace_launch(run_id, &mut req, device, config_dir, &remote, None)
             .await?;
         if Self::preparation_only(&req) {
             return Ok(RunOutcome::Exited { code: Some(0) });
@@ -1623,7 +1642,7 @@ impl RunManager {
             .and_then(|w| w.local_dir())
             .unwrap_or("")
             .to_string();
-        self.resolve_workspace_launch(run_id, &mut req, device, config_dir, &root)
+        self.resolve_workspace_launch(run_id, &mut req, device, config_dir, &root, None)
             .await?;
         if Self::preparation_only(&req) {
             return Ok(RunOutcome::Exited { code: Some(0) });
@@ -1660,18 +1679,25 @@ impl RunManager {
         device: &DeviceProfile,
         config: &std::path::Path,
         root: &str,
+        ssh: Option<&SshConnection>,
     ) -> Result<()> {
         if req.workspace_context.is_none() {
             return Ok(());
         }
+        let started = std::time::Instant::now();
         let endpoint = if device.transport == TransportKind::Local {
             WorkspaceRef::local(root)
         } else {
             WorkspaceRef::device(&device.id, root)
         };
-        let mut store = crate::workspace_run::Store::open(&endpoint, Some(device), config)
-            .await
-            .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
+        let mut store = crate::workspace_run::Store::open_with_ssh(
+            &endpoint,
+            Some(device),
+            config,
+            ssh.cloned(),
+        )
+        .await
+        .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
         if let Some(inputs) = &req.project_inputs {
             store
                 .verify(inputs)
@@ -1687,12 +1713,18 @@ impl RunManager {
         } else {
             format!("{}/{}", root.trim_end_matches(['/', '\\']), req.cwd)
         };
+        let runtime_host = ssh.map(|connection| {
+            Arc::new(crate::runtime::hosts::ssh::SshHost::from_arc(
+                connection.handle.clone(),
+                crate::runtime::manage::remote_root(),
+            )) as Arc<dyn RuntimeHost + Send + Sync>
+        });
         let (program, version) = if req.kind == ScriptKind::Python {
             let cancel = self.runtime_cancel(id);
             let result = crate::workspace_probe::python(
                 device,
                 config,
-                None,
+                runtime_host,
                 req.managed_env_python.as_deref(),
                 &req.env,
                 Some(&cwd),
@@ -1753,7 +1785,10 @@ impl RunManager {
                 None,
             )
         } else {
-            let host = crate::runtime::manage::open_host(device, config).await?;
+            let host = match runtime_host {
+                Some(host) => host,
+                None => crate::runtime::manage::open_host(device, config).await?,
+            };
             let cancel = self.runtime_cancel(id);
             let out = host
                 .exec(
@@ -1798,6 +1833,11 @@ impl RunManager {
                 }
                 .into(),
             },
+        );
+        tracing::info!(
+            run_id = id,
+            elapsed_ms = started.elapsed().as_millis(),
+            "workspace launch checks"
         );
         Ok(())
     }
