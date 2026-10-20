@@ -1,7 +1,7 @@
 //! RuntimeHost：Managed Runtime 面向 transport 的统一执行抽象。
 //!
 //! prepare/manager 只依赖本 trait；SSH/WSL/Local 各提供一个实现，
-//! 测试使用 FakeHost + 可编程 fake uv（00027 §20）。
+//! 测试使用 FakeHost + 可编程 fake uv（00005-python-runtime.md）。
 use crate::error::{Result, RunnerError};
 use futures::future::BoxFuture;
 use std::sync::atomic::{AtomicBool, Ordering};

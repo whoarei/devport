@@ -1,6 +1,6 @@
 # 00027 Managed Python Runtime：实机部署四轮失败分析
 
-> 基线：`de7cdcd`（master）。以下为真实设备上按顺序暴露的四个问题，全部位于 uv-only Managed Python Runtime（`docs/00027_20260916_uv-managed-python-runtime.md`）的部署链路。
+> 基线：`de7cdcd`（master）。以下为真实设备上按顺序暴露的四个问题，全部位于 uv-only Managed Python Runtime（`docs/00005-python-runtime.md`）的部署链路。
 
 ## 共性根因
 

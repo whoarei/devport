@@ -1,4 +1,4 @@
-//! WSL RuntimeHost：持久 helper + 结构化 exec 协议（00027 §13）。
+//! WSL RuntimeHost：持久 helper + 结构化 exec 协议（00005-python-runtime.md）。
 //!
 //! 文件操作通过带严格引用的短 sh 命令完成；大文件（uv 二进制）通过 exec stdin 写入。
 //! 长命令使用独立 helper，避免阻塞文件操作和锁心跳；cancel 关闭该 helper 的 stdin 租约。

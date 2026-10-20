@@ -11,9 +11,9 @@ pub struct AppState {
     pub device_store: DeviceStore,
     pub config_dir: PathBuf,
     pub event_rx: parking_lot::Mutex<tokio::sync::broadcast::Receiver<crate::runner::RunEvent>>,
-    /// 活跃 Run 持有的 Environment lease（00027 §16）；删除/GC 不得触碰
+    /// 活跃 Run 持有的 Environment lease（00005-python-runtime.md）；删除/GC 不得触碰
     pub leases: std::sync::Arc<crate::runtime::manager::LeaseSet>,
-    /// 远端工作区编辑会话（00029；单槽长连接）
+    /// 远端工作区编辑会话（00004-workspace-and-sync.md；单槽长连接）
     pub workspace_sessions: crate::remote_workspace::SessionStore,
 }
 
@@ -531,7 +531,7 @@ pub fn run_script(
     let _update_guard = updates.allow_run()?;
     let _guard = crate::workspace::FILE_OPERATIONS.lock();
     let device = state.device_store.get(&request.device_id)?;
-    // 远端工作区的来源设备（00029）：在边界校验存在性、路径与宿主能力后随请求传递
+    // 远端工作区的来源设备（00004-workspace-and-sync.md）：在边界校验存在性、路径与宿主能力后随请求传递
     let workspace_source = match request.workspace.as_ref().and_then(|w| w.device_ref()) {
         Some((source_id, path)) => {
             crate::workspace_ref::validate_device_path(path)
@@ -594,7 +594,7 @@ pub fn get_run_history(state: tauri::State<'_, AppState>) -> Result<Vec<RunStatu
     Ok(state.run_manager.history())
 }
 
-// ---------- Managed Python Runtime（00027 §17）----------
+// ---------- Managed Python Runtime（00005-python-runtime.md）----------
 
 /// 校验并返回 uv 项目契约（pyproject.toml / uv.lock / .python-version）
 #[tauri::command]

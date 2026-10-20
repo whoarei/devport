@@ -79,7 +79,7 @@ pub(crate) enum Message {
         stream: String,
         data: String,
     },
-    /// Managed Runtime 结构化 exec 完成（00027）
+    /// Managed Runtime 结构化 exec 完成（00005-python-runtime.md）
     #[serde(rename = "exec_exit")]
     ExecExit {
         code: Option<u32>,
@@ -91,7 +91,7 @@ pub(crate) enum Message {
     Error {
         message: String,
     },
-    // ---- fs_* 文件服务消息（00029 远端工作区）----
+    // ---- fs_* 文件服务消息（00004-workspace-and-sync.md 远端工作区）----
     #[serde(rename = "fs_entry")]
     FsEntry {
         name: String,
@@ -366,7 +366,7 @@ pub async fn test_device(config: &WslConfig) -> Result<String> {
     Ok(info)
 }
 
-/// Managed Runtime 结构化 exec（00027）：argv + env + cwd + 分块 stdin，
+/// Managed Runtime 结构化 exec（00005-python-runtime.md）：argv + env + cwd + 分块 stdin，
 /// 输出以 Output 消息流回，结束于 exec_exit。cancel 由调用方关闭 bridge 实现
 /// （helper EOF → finally 杀整个 exec 进程组）。
 pub(crate) async fn exec_managed(
@@ -519,7 +519,7 @@ impl Bridge {
     }
 }
 
-/// workspace 上传完成后、启动进程前的 Managed Runtime 准备钩子（00027 §13）
+/// workspace 上传完成后、启动进程前的 Managed Runtime 准备钩子（00005-python-runtime.md）
 pub type PrepareHook = Box<dyn FnOnce(&str) -> std::result::Result<(), RunnerError> + Send>;
 
 pub(crate) async fn execute_with_command(

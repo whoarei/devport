@@ -38,7 +38,7 @@ pub enum RunnerError {
     #[error("update error: {0}")]
     Update(String),
 
-    /// Managed Python Runtime 错误：code 为稳定错误代码（00027 §18）
+    /// Managed Python Runtime 错误：code 为稳定错误代码（00005-python-runtime.md）
     #[error("{code}: {message}")]
     ManagedRuntime { code: &'static str, message: String },
 }

@@ -1,5 +1,5 @@
 //! 准备流水线：probe → 部署/验证 uv → 安装/验证 Managed Python →
-//! 锁 → 复用或 `uv sync --locked` → smoke test → manifest + .ready（00027 §9-§13）。
+//! 锁 → 复用或 `uv sync --locked` → smoke test → manifest + .ready（00005-python-runtime.md）。
 //!
 //! 取消语义：cancel 置位后当前 exec 终止远程/本地进程并返回 CANCELED；
 //! 中途取消清理本次未就绪实例；已有实例保持在最终路径，由配方绑定选择当前代次。
@@ -20,7 +20,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// 网络模式（00027 §15）：显式选择，不隐式切换
+/// 网络模式（00005-python-runtime.md）：显式选择，不隐式切换
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkMode {
@@ -41,7 +41,7 @@ pub struct NetworkConfig {
 }
 
 impl NetworkConfig {
-    /// Rust 边界校验（00027 §19）：mirror 模式必须至少给出一个镜像地址；
+    /// Rust 边界校验（00005-python-runtime.md）：mirror 模式必须至少给出一个镜像地址；
     /// 地址只允许 http(s):// 或 file://，拒绝控制字符与超长输入。
     pub fn validate(&self) -> Result<()> {
         fn check_url(label: &str, url: &str) -> Result<()> {
@@ -190,7 +190,7 @@ pub async fn resolve_root(
     Ok(root)
 }
 
-/// 固定环境变量（00027 §7）
+/// 固定环境变量（00005-python-runtime.md）
 ///
 /// 注意：不能同时设置 `UV_PYTHON_PREFERENCE` 与 `--managed-python`——uv 0.10+
 /// 会把它们视为冲突来源而直接拒绝（`cannot be used with --python-preference`）。

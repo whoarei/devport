@@ -1,4 +1,4 @@
-//! Environment ID：内容寻址（00027 §11）。
+//! Environment ID：内容寻址（00005-python-runtime.md）。
 //!
 //! 项目源码不进入 ID（根项目不安装进环境）；修改脚本不会重建第三方依赖环境。
 use sha2::Digest;

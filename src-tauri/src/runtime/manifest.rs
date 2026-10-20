@@ -1,4 +1,4 @@
-//! Project Environment 只读 manifest（00027 §11）。
+//! Project Environment 只读 manifest（00005-python-runtime.md）。
 use crate::error::{Result, RunnerError};
 use serde::{Deserialize, Serialize};
 

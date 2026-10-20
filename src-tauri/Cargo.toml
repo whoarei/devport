@@ -27,7 +27,7 @@ base64 = "0.22"
 sha2 = "0.10"
 futures = "0.3"
 portable-pty = "0.9"
-# Managed Python runtime（设计 00027）：TOML 项目契约解析、uv 资产解包、下载
+# Managed Python runtime（设计 00005-python-runtime.md）：TOML 项目契约解析、uv 资产解包、下载
 toml = "0.8"
 tar = "0.4"
 flate2 = "1"

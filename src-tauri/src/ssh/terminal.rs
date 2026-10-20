@@ -37,7 +37,7 @@ pub async fn execute(
         super::session::await_success(&mut channel, &mut pending).await?;
         channel.request_shell(true).await?;
         super::session::await_success(&mut channel, &mut pending).await?;
-        // 工作区终端（00029）：tty 输入队列会缓冲该行，shell 就绪后即执行
+        // 工作区终端（00004-workspace-and-sync.md）：tty 输入队列会缓冲该行，shell 就绪后即执行
         if let Some(cwd) = &cwd {
             channel
                 .data(

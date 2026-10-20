@@ -1,4 +1,4 @@
-//! 缓存管理：lease、环境/Runtime 列表、删除、重建与清理（00027 §16）。
+//! 缓存管理：lease、环境/Runtime 列表、删除、重建与清理（00005-python-runtime.md）。
 //!
 //! GC/删除必须验证路径仍位于专用根目录内且不跟随链接；持 lease 的
 //! Environment 不可删除（活跃 Run 保护）。

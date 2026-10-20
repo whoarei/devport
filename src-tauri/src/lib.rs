@@ -66,7 +66,7 @@ pub fn run() {
 
             let (event_tx, event_rx) = events::channel();
 
-            // RunManager 与管理命令共享同一个 Environment LeaseSet（00027 §16）
+            // RunManager 与管理命令共享同一个 Environment LeaseSet（00005-python-runtime.md）
             let leases = std::sync::Arc::new(crate::runtime::manager::LeaseSet::default());
             let mut run_manager = RunManager::new(&config_dir, event_tx);
             run_manager.attach_leases(leases.clone());

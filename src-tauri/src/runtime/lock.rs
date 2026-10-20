@@ -1,4 +1,4 @@
-//! Environment 远端锁：最终路径 + ready marker 事务的并发保护（00027 §12）。
+//! Environment 远端锁：最终路径 + ready marker 事务的并发保护（00005-python-runtime.md）。
 //!
 //! 锁是 `locks/<env-id>` 目录（posix 原子 mkdir / 本地原子 create_dir），
 //! 内含 lock.json（owner、开始时间、heartbeat epoch）。过期锁仅在 heartbeat

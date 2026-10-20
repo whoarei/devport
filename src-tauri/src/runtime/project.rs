@@ -1,4 +1,4 @@
-//! ProjectInspector：uv 项目契约校验（00027 §5）。
+//! ProjectInspector：uv 项目契约校验（00005-python-runtime.md）。
 //!
 //! 项目根必须包含 pyproject.toml、uv.lock、.python-version；
 //! 只支持 uv 项目模型，根项目不安装进环境（--no-install-project）。
@@ -276,7 +276,7 @@ fn reject_disallowed_dependencies(deps: &[toml::Value], where_: &str) -> Result<
             || lowered.contains(" @ ../")
         {
             return Err(invalid(format!(
-                "local path / editable dependencies are not supported (00027 §5): {req}"
+                "local path / editable dependencies are not supported (00005-python-runtime.md): {req}"
             )));
         }
     }
@@ -660,7 +660,7 @@ pub fn template_project_name(dir: &Path) -> String {
     }
 }
 
-/// 「生成工作区配置」写入的 pyproject.toml 模板（00027 §5 项目契约）。
+/// 「生成工作区配置」写入的 pyproject.toml 模板（00005-python-runtime.md 项目契约）。
 /// 模板本身不构成完整项目：uv.lock 与 .python-version 需要用户补齐。
 pub fn config_template(project_name: &str) -> String {
     format!(

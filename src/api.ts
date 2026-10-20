@@ -65,7 +65,7 @@ export interface UsbRemoteProbe {
 export type ScriptKind = "python" | "shell" | "command";
 export type ConsoleMode = "pty" | "pipe";
 
-/** 工作区来源（00029）：本机目录，或某台设备上的目录（SSH 走 SFTP / WSL 走 helper 文件服务） */
+/** 工作区来源（00004-workspace-and-sync.md）：本机目录，或某台设备上的目录（SSH 走 SFTP / WSL 走 helper 文件服务） */
 export type WorkspaceRef =
   | { type: "local"; dir: string }
   | { type: "device"; device_id: string; path: string };

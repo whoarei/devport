@@ -1,4 +1,4 @@
-//! FakeHost + 可编程 fake uv：prepare 流水线的内存集成测试（00027 §20）。
+//! FakeHost + 可编程 fake uv：prepare 流水线的内存集成测试（00005-python-runtime.md）。
 //!
 //! FakeHost 实现 RuntimeHost：内存文件系统（文件/目录/rename 子树语义）+
 //! 可编程 exec（探测脚本、uv --version / python install / python find / sync、

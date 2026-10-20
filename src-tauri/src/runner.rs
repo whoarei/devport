@@ -33,7 +33,7 @@ pub enum ScriptKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunRequest {
     pub device_id: String,
-    /// 工作区来源（00029；Command 类型可为空）。
+    /// 工作区来源（00004-workspace-and-sync.md；Command 类型可为空）。
     /// 兼容旧字段名 workspace_dir（裸字符串 = 本机目录）。
     #[serde(default, alias = "workspace_dir")]
     pub workspace: Option<WorkspaceRef>,
@@ -46,7 +46,7 @@ pub struct RunRequest {
     pub env: HashMap<String, String>,
     /// command 类型的原始命令
     pub command: Option<String>,
-    /// Managed Python Runtime（00027）：uv-only 项目模型，禁止系统 Python
+    /// Managed Python Runtime（00005-python-runtime.md）：uv-only 项目模型，禁止系统 Python
     #[serde(default)]
     pub managed_python: bool,
     /// 准备阶段回填：环境内解释器路径（直接启动，不用 `uv run`）
@@ -115,10 +115,10 @@ pub struct RunStatus {
     /// 输出超过 RUN_LOG_LIMIT 被截断时为 true
     #[serde(default)]
     pub output_truncated: bool,
-    /// Managed Runtime 准备阶段（00027 §14）；无准备时为 None
+    /// Managed Runtime 准备阶段（00005-python-runtime.md）；无准备时为 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase: Option<String>,
-    /// 运行可追溯信息（00027 §11）：环境 / uv / Python / lock
+    /// 运行可追溯信息（00005-python-runtime.md）：环境 / uv / Python / lock
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -182,7 +182,7 @@ pub enum RunEvent {
     Resync {
         statuses: Vec<RunStatus>,
     },
-    /// Managed Runtime 准备进度（00027 §14）；落后时字节级进度可丢弃
+    /// Managed Runtime 准备进度（00005-python-runtime.md）；落后时字节级进度可丢弃
     RuntimeProgress {
         run_id: String,
         phase: String,
@@ -221,7 +221,7 @@ pub struct RunManager {
     history_path: PathBuf,
     logs_dir: PathBuf,
     event_tx: broadcast::Sender<RunEvent>,
-    /// 活跃 Run 持有的 Environment lease（00027 §16），与 AppState 共享
+    /// 活跃 Run 持有的 Environment lease（00005-python-runtime.md），与 AppState 共享
     leases: Arc<LeaseSet>,
     workspace_contexts: Arc<Mutex<HashMap<String, (crate::workspace_run::Context, bool)>>>,
     launches: Arc<Mutex<HashMap<String, crate::workspace_run::Launch>>>,
@@ -584,7 +584,7 @@ impl RunManager {
         });
     }
 
-    // ---------- Managed Runtime 准备（00027 §13/§14） ----------
+    // ---------- Managed Runtime 准备（00005-python-runtime.md） ----------
 
     fn runtime_cancel(&self, run_id: &str) -> Arc<AtomicBool> {
         self.handles
@@ -604,7 +604,7 @@ impl RunManager {
         }
     }
 
-    /// 运行可追溯信息：环境 / uv / Python / lock（00027 §11）
+    /// 运行可追溯信息：环境 / uv / Python / lock（00005-python-runtime.md）
     fn set_managed_info(&self, run_id: &str, env: &PreparedEnvironment) {
         let mut map = self.handles.lock();
         if let Some(h) = map.get_mut(run_id) {
@@ -770,7 +770,7 @@ impl RunManager {
         workspace_source: Option<DeviceProfile>,
     ) -> Result<String> {
         device.validate()?;
-        // Serial Shell V1 无法部署二进制 Runtime：在任何端口操作前明确拒绝（00027 §4）
+        // Serial Shell V1 无法部署二进制 Runtime：在任何端口操作前明确拒绝（00005-python-runtime.md）
         if req.managed_python && device.transport == TransportKind::Serial {
             return Err(RunnerError::managed(
                 code::NOT_SUPPORTED,
@@ -943,7 +943,7 @@ impl RunManager {
                 device.name, device.transport, req.workspace
             ));
         }
-        // 0. 跨设备工作区（00029）：先暂存到本机临时目录，再走既有本机工作区管线；
+        // 0. 跨设备工作区（00004-workspace-and-sync.md）：先暂存到本机临时目录，再走既有本机工作区管线；
         //    同设备工作区（SSH/WSL）由各自 transport 分支原地运行。
         let mut source_ssh = None;
         if let Some(context) = &req.workspace_context {
@@ -1127,7 +1127,7 @@ impl RunManager {
             return Ok(RunOutcome::Canceled { code: None });
         }
 
-        // 3. 同步 workspace（如有）；同设备原地运行改为校验入口与目录（00029）
+        // 3. 同步 workspace（如有）；同设备原地运行改为校验入口与目录（00004-workspace-and-sync.md）
         let remote_dir = match &in_place_workspace {
             Some(path) => {
                 self.set_state(run_id, RunState::Syncing);
@@ -1999,7 +1999,7 @@ fn validate_request(req: &mut RunRequest) -> Result<()> {
     if req.args.iter().any(|a| a.contains('\0')) {
         return Err(invalid("arguments cannot contain NUL"));
     }
-    // 解析工作区来源（00029）：本机目录 canonicalize；设备目录在此校验路径形态，
+    // 解析工作区来源（00004-workspace-and-sync.md）：本机目录 canonicalize；设备目录在此校验路径形态，
     // 存在性由暂存下载或原地校验阶段在设备上确认
     let mut local_workspace: Option<PathBuf> = None;
     match &req.workspace {
@@ -2085,7 +2085,7 @@ fn validate_request(req: &mut RunRequest) -> Result<()> {
                         return Err(invalid("entry must be a file inside the workspace"));
                     }
                 }
-                // 设备工作区：入口存在性在设备上确认（00029）
+                // 设备工作区：入口存在性在设备上确认（00004-workspace-and-sync.md）
                 None => {}
             }
             req.entry = Some(entry);
@@ -2093,7 +2093,7 @@ fn validate_request(req: &mut RunRequest) -> Result<()> {
     }
     if let Some(root) = local_workspace {
         // 校验用 canonical 形式，回写的工作区则用常规形式：它会成为 shell 的 cwd、
-        // msys2/gitbash 的入口路径以及界面展示的路径（00030）。
+        // msys2/gitbash 的入口路径以及界面展示的路径（00003-execution-and-transports.md）。
         req.workspace = Some(WorkspaceRef::local(
             crate::verbatim::simplify(&root).to_string_lossy(),
         ));
@@ -2779,7 +2779,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    // ---------- Managed Runtime（00027） ----------
+    // ---------- Managed Runtime（00005-python-runtime.md） ----------
 
     fn managed_request() -> RunRequest {
         let mut req = request();

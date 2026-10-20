@@ -22,7 +22,7 @@ import time
 
 LIMIT = 128 * 1024
 EXEC_INPUT_LIMIT = 64 * 1024 * 1024
-# fs_* 文件服务（00029）：编辑器文本上限 1 MiB；暂存下载单文件上限 64 MiB
+# fs_* 文件服务（00004-workspace-and-sync.md）：编辑器文本上限 1 MiB；暂存下载单文件上限 64 MiB
 FS_EDIT_LIMIT = 1024 * 1024
 FS_READ_LIMIT = 64 * 1024 * 1024
 FS_DELETE_LIMIT = 4096
@@ -115,7 +115,7 @@ def main():
     total = 0
     file_size = 0
     entries = 0
-    # Managed Runtime 结构化 exec 状态（00027）：与 run 流程互斥
+    # Managed Runtime 结构化 exec 状态（00005-python-runtime.md）：与 run 流程互斥
     exec_proc = None
     exec_argv = None
     exec_env = None
@@ -125,7 +125,7 @@ def main():
     exec_stdin = None
     exec_fds = set()
     exec_reported = False
-    # fs_* 文件服务状态（00029）：与 run/exec 流程互斥
+    # fs_* 文件服务状态（00004-workspace-and-sync.md）：与 run/exec 流程互斥
     fs_root = None
     fs_upload = None
     transfer_service = None
@@ -543,7 +543,7 @@ def main():
                             anchor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
                             try:
                                 if request.get("in_place"):
-                                    # 原地运行（00029）：直接打开已存在的工作区目录
+                                    # 原地运行（00004-workspace-and-sync.md）：直接打开已存在的工作区目录
                                     root = walk(anchor, names)
                                 else:
                                     parent = directory(anchor, names[:-1])
@@ -599,7 +599,7 @@ def main():
                             finally:
                                 os.close(handle)
                         elif request.get("cwd"):
-                            # 工作区终端（00029）：交互 shell 进入设备上的工作区目录
+                            # 工作区终端（00004-workspace-and-sync.md）：交互 shell 进入设备上的工作区目录
                             os.chdir(request["cwd"])
                         else:
                             os.chdir(os.path.expanduser("~"))

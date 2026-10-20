@@ -1,4 +1,4 @@
-//! Runtime Catalog：发布版本固定的 uv 版本与平台资产（00027 §6/§9）。
+//! Runtime Catalog：发布版本固定的 uv 版本与平台资产（00005-python-runtime.md）。
 use crate::error::{Result, RunnerError};
 use serde::Deserialize;
 

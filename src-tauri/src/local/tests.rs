@@ -21,7 +21,7 @@ fn fake_shell(id: &'static str, flavor: Flavor, login: bool) -> Shell {
     }
 }
 
-/// 同一个 shell，但配置置位 `-NoProfile`（00030 的开关）
+/// 同一个 shell，但配置置位 `-NoProfile`（00003-execution-and-transports.md 的开关）
 fn fake_shell_no_profile(id: &'static str, flavor: Flavor, login: bool) -> Shell {
     Shell {
         no_profile: true,
@@ -96,7 +96,7 @@ fn invocation_builds_script_entries_without_shell_interpolation() {
 
 #[test]
 fn profile_switch_is_shared_by_every_local_powershell_entry_point() {
-    // 00030：交互终端 / 命令 / 脚本 / 连接测试读同一个 -NoProfile 开关，不允许某个
+    // 00003-execution-and-transports.md：交互终端 / 命令 / 脚本 / 连接测试读同一个 -NoProfile 开关，不允许某个
     // 入口自己决定 profile 是否加载（曾经只有交互终端与运行各自硬编码，导致 profile
     // 提供的 PATH 在某些入口可见、在另一些入口不可见）。
     let cmd = command_request("echo hello");

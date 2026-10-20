@@ -64,7 +64,7 @@ pub struct Document {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveRequest {
-    /// 工作区来源（00029）；兼容旧字段名 dir（裸字符串 = 本机目录）
+    /// 工作区来源（00004-workspace-and-sync.md）；兼容旧字段名 dir（裸字符串 = 本机目录）
     #[serde(alias = "dir")]
     pub workspace: crate::workspace_ref::WorkspaceRef,
     pub name: String,
@@ -192,7 +192,7 @@ fn too_large() -> FileError {
     FileError::new("too_large", "编辑器最多支持 1 MiB，请使用外部编辑器")
 }
 
-/// UTF-8 / BOM / 行尾检查并构造 Document；远端工作区（00029）共享同一文本契约，
+/// UTF-8 / BOM / 行尾检查并构造 Document；远端工作区（00004-workspace-and-sync.md）共享同一文本契约，
 /// revision 由调用方按各自来源计算。
 pub(crate) fn decode_document(data: &[u8], revision: String) -> Result<Document> {
     let text = std::str::from_utf8(data)

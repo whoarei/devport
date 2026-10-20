@@ -19,7 +19,7 @@ interface AppState {
   /** 「打开设备工作区」对话框开关 */
   remoteWorkspaceDialogOpen: boolean;
 
-  /** 当前工作区来源：本机目录或某台设备上的目录（00029） */
+  /** 当前工作区来源：本机目录或某台设备上的目录（00004-workspace-and-sync.md） */
   workspace: WorkspaceRef | null;
   recentWorkspaces: WorkspaceRef[];
   /** 目录树缓存：键为相对目录路径，"" 为工作区根 */

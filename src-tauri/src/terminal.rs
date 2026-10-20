@@ -81,7 +81,7 @@ pub async fn canceled(cancel: &mut watch::Receiver<bool>) {
 
 impl TerminalManager {
     /// 打开独立终端。`cwd` 为工作区终端的起始目录：Local 作为子进程 cwd，
-    /// SSH/WSL 在 shell 启动后进入该目录（00029）；Serial 不支持终端。
+    /// SSH/WSL 在 shell 启动后进入该目录（00004-workspace-and-sync.md）；Serial 不支持终端。
     pub fn open(
         &self,
         device: DeviceProfile,
@@ -374,7 +374,7 @@ mod tests {
             serde_json::json!({"id":"s", "name":"ssh", "host":"localhost", "username":"test"}),
         )
         .unwrap();
-        // SSH/WSL 的工作区终端在 shell 启动后 cd 到该目录（00029）
+        // SSH/WSL 的工作区终端在 shell 启动后 cd 到该目录（00004-workspace-and-sync.md）
         assert!(manager
             .open(ssh, PathBuf::new(), 80, 24, Some(cwd.clone()))
             .is_ok());

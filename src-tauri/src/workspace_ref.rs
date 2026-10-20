@@ -1,4 +1,4 @@
-//! WorkspaceRef：工作区来源标识（00029）。
+//! WorkspaceRef：工作区来源标识（00004-workspace-and-sync.md）。
 //!
 //! 工作区可以是本机目录（Local，原有行为），也可以是某台设备上的目录
 //! （Device，SSH 走 SFTP / WSL 走 helper 文件服务）。运行目标与来源解耦：

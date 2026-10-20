@@ -1,4 +1,4 @@
-//! WSL 设备工作区：经 helper 的 fs_* 文件服务消息浏览 / 编辑发行版内目录（00029）。
+//! WSL 设备工作区：经 helper 的 fs_* 文件服务消息浏览 / 编辑发行版内目录（00004-workspace-and-sync.md）。
 //!
 //! 与 VS Code-WSL 同构的 agent 模型：helper 进程在发行版内部执行文件操作，
 //! dirfd + O_NOFOLLOW 把操作约束在工作区根内；协议帧经 wsl.exe 管道传输。

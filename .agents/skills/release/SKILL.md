@@ -19,7 +19,7 @@ description: Remote Runner 版本发布流程：同步版本号、写发布说�
    ```
    该脚本更新 5 个文件：`package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`。不要手工改版本号。
 
-3. **写发布说明** `docs/releases/vX.Y.Z.md`，遵循现有格式（参考 `docs/releases/v0.5.2.md`）：
+3. **写发布说明** `docs/releases/vX.Y.Z.md`，按 [开发、验证与发布](../../../docs/00008-development-and-release.md) 第 6 节模板编写（目录不存在时新建）：
    - `# Remote Runner vX.Y.Z` 标题
    - `## 新功能` 和/或 `## 修复`：面向用户的要点
    - `## 验证范围`：跑了哪些测试、哪些行为需手动验证（如桌面/硬件相关）

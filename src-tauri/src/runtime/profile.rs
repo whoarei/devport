@@ -1,4 +1,4 @@
-//! DeviceRuntimeProfile 探测与支持矩阵校验（00027 §8）。
+//! DeviceRuntimeProfile 探测与支持矩阵校验（00005-python-runtime.md）。
 //!
 //! 重要边界：uv 二进制能运行不代表 native wheel 兼容；安装后仍有实际 Python smoke test。
 use crate::error::{Result, RunnerError};
@@ -219,7 +219,7 @@ async fn probe_root_usable(
     Ok(())
 }
 
-/// 支持矩阵校验：Catalog 未明确列出的平台一律明确失败（00027 §8）
+/// 支持矩阵校验：Catalog 未明确列出的平台一律明确失败（00005-python-runtime.md）
 pub fn check_support(profile: &DeviceRuntimeProfile) -> Result<()> {
     match profile.os.as_str() {
         "linux" | "macos" | "windows" => {}

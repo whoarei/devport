@@ -29,7 +29,7 @@ test("new device template carries a local shell placeholder", () => {
 });
 
 test("local shell profile switch round-trips through the device payload", () => {
-  // no_profile 是交互终端与运行共用的唯一 profile 开关（00030）：
+  // no_profile 是交互终端与运行共用的唯一 profile 开关（00003-execution-and-transports.md）：
   // 缺省（老配置）必须解析为 false（加载 profile），显式 true 必须保留。
   const legacy: DeviceProfile = {
     ...emptyDevice(),

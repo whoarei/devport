@@ -122,7 +122,7 @@ fn workspace_dir(req: &RunRequest) -> Option<&str> {
 }
 
 /// PowerShell profile 开关的唯一出口：只有 PowerShell 风味、且配置置位 `no_profile`
-/// 时才加 `-NoProfile`。交互终端、命令、脚本与连接测试全部经由这里（00030）。
+/// 时才加 `-NoProfile`。交互终端、命令、脚本与连接测试全部经由这里（00003-execution-and-transports.md）。
 pub(crate) fn profile_args(shell: &Shell) -> Vec<String> {
     match (shell.flavor, shell.no_profile) {
         (Flavor::PowerShell, true) => vec!["-NoProfile".into()],
@@ -137,7 +137,7 @@ pub(crate) fn invocation(shell: &Shell, req: &RunRequest) -> Result<(PathBuf, Ve
             let entry = req.entry.as_deref().unwrap_or("main.py");
             let workspace =
                 workspace_dir(req).ok_or_else(|| failure("script requires a workspace"))?;
-            // Managed Runtime：直接 spawn 环境内 Python，不探测系统 Python（00027 §13）
+            // Managed Runtime：直接 spawn 环境内 Python，不探测系统 Python（00005-python-runtime.md）
             if let Some(env_python) = &req.managed_env_python {
                 let mut args = vec!["-u".to_string()];
                 if req.managed_module || req.module {

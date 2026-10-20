@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Remote Runner 技术方案：架构分层、运行生命周期、工作区同步、Python 环境、安全与验证。">
+<title>00002 · 技术方案 — Remote Runner</title>
+<style>
+:root{color-scheme:light;--ink:#172536;--muted:#536579;--line:#dce5e9;--paper:#fff;--bg:#f3f6f7;--accent:#087b72;--soft:#e9f5f2;--nav:#102e35}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:24px}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.85 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+a{color:var(--accent);text-underline-offset:4px}
+a:hover{text-decoration-thickness:2px}
+button{font:inherit;cursor:pointer}
+.skip{position:fixed;top:-100px;left:20px;z-index:5;background:white;padding:8px 16px}
+.skip:focus{top:12px}
+.sidebar{position:fixed;inset:0 auto 0 0;width:250px;background:var(--nav);color:#dae9e9;padding:34px 23px;overflow:auto}
+.brand{font-size:19px;font-weight:700;letter-spacing:.04em}
+.brand span{display:block;color:#8aafb1;font-size:11px;letter-spacing:.18em;margin-top:2px}
+.doc-switch{display:flex;gap:8px;margin:27px 0 22px}
+.doc-switch a{padding:5px 12px;border:1px solid #446269;border-radius:6px;color:#c3d8da;font-size:13px;text-decoration:none}
+.doc-switch a[aria-current]{background:#c5f0e1;color:#123e36;border-color:#c5f0e1}
+.sidebar nav a{display:block;color:#b9cfd2;text-decoration:none;font-size:13px;line-height:1.5;padding:10px 11px;border-left:2px solid transparent}
+.sidebar nav a:hover,.sidebar nav a.active{border-color:#8fdcc5;background:#ffffff09;color:white}
+.sidebar .nav-foot{font-size:12px;color:#8aafb1;border-top:1px solid #38555c;margin-top:24px;padding-top:18px}
+.sidebar .nav-foot a{color:#bee3da}
+.shell{margin-left:250px;padding:36px 50px 70px;max-width:1370px}
+.topline{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:12px;color:var(--muted);letter-spacing:.03em}
+.print{background:white;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:5px 12px}
+.hero{padding:50px 0 36px;border-bottom:1px solid var(--line)}
+.kicker{color:var(--accent);font-size:12px;font-weight:700;letter-spacing:.14em}
+.hero h1{font-size:46px;letter-spacing:-.04em;line-height:1.2;margin:17px 0 20px}
+.lead{font-size:19px;max-width:780px;line-height:1.9;color:#40576a}
+.meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}
+.tag{font-size:12px;border:1px solid var(--line);border-radius:20px;padding:3px 12px;background:var(--paper);color:var(--muted)}
+section{margin:42px 0;scroll-margin-top:24px}
+h2{font-size:25px;letter-spacing:-.02em;line-height:1.45;margin:0 0 20px}
+h2 small{font-size:13px;color:var(--accent);font-weight:600;display:block;letter-spacing:.09em;margin-bottom:6px}
+h3{font-size:18px;line-height:1.6;margin:25px 0 10px}
+p{margin:10px 0 16px}
+ul,ol{padding-left:23px}
+li{margin:6px 0}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.card{padding:22px;background:white;border:1px solid var(--line);border-radius:10px}
+.card h3{margin-top:0}
+.card p:last-child{margin-bottom:0}
+.card .num{display:block;font-size:12px;color:var(--accent);font-weight:700;margin-bottom:8px}
+.note{padding:16px 21px;border-left:3px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0;margin:22px 0}
+.note p:last-child{margin-bottom:0}
+.table{overflow-x:auto;margin:18px 0;border:1px solid var(--line);border-radius:8px;background:white}
+table{width:100%;border-collapse:collapse;font-size:14px;text-align:left}
+th,td{padding:13px 15px;vertical-align:top;border-bottom:1px solid var(--line)}
+th{background:#edf3f4;color:#365360;font-weight:600}
+tr:last-child td{border-bottom:0}
+code{font:13px/1.7 Consolas,monospace;background:#e9eef0;padding:2px 5px;border-radius:4px;overflow-wrap:anywhere}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#15313c;color:#d9efec;border-radius:8px;padding:20px;font:13px/1.85 Consolas,monospace}
+pre code{padding:0;background:transparent;color:inherit}
+.flow{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap;margin:22px 0}
+.step{flex:1 1 145px;border-top:3px solid #77b6aa;background:white;border-radius:5px;padding:15px;border-bottom:1px solid var(--line)}
+.step b{display:block;font-size:14px}
+.step span{font-size:12px;color:var(--muted)}
+.workbench{border:1px solid #b4c8cb;border-radius:10px;overflow:hidden;background:#eef3f4;margin:22px 0}
+.wb-top{padding:10px 16px;background:#193945;color:#e4f1f0;font-size:13px}
+.wb-body{display:grid;grid-template-columns:24% 1fr;min-height:265px}
+.wb-side{padding:18px;background:#e2ebed;border-right:1px solid #bfd0d4;font-size:13px}
+.wb-side strong{display:block;margin-bottom:12px}
+.wb-center{padding:18px;display:grid;gap:12px}
+.wb-pane{padding:14px 17px;border:1px solid #c8d9dc;border-radius:5px;background:white}
+.wb-pane b{font-size:14px;display:block}
+.wb-pane span{font-size:12px;color:var(--muted)}
+figcaption{font-size:12px;color:var(--muted);margin-top:10px}
+.architecture{display:grid;gap:10px;margin:22px 0}
+.tier{padding:17px 20px;border:1px solid var(--line);border-radius:8px;background:white}
+.tier strong{display:block;color:var(--accent);font-size:13px;margin-bottom:5px}
+.tier span{font-size:14px}
+.tier.connector{text-align:center;background:transparent;border:0;padding:0;color:var(--muted);font-size:12px}
+.footer{border-top:1px solid var(--line);margin-top:50px;padding-top:22px;display:flex;justify-content:space-between;gap:15px;color:var(--muted);font-size:13px}
+.subtle{font-size:13px;color:var(--muted)}
+:focus-visible{outline:3px solid #deab38;outline-offset:3px}
+@media(min-width:1600px){.shell{padding-left:80px;padding-right:80px}
+}
+@media(max-width:960px){.sidebar{position:static;width:auto;padding:20px 24px}
+.brand span,.nav-foot{display:none}
+.doc-switch{margin:14px 0}
+.sidebar nav{display:flex;gap:6px;overflow:auto}
+.sidebar nav a{white-space:nowrap;border-left:0;border-bottom:2px solid transparent;padding:8px}
+.sidebar nav a.active{border-bottom-color:#8fdcc5}
+.shell{margin-left:0;padding:24px}
+.hero{padding-top:30px}
+.hero h1{font-size:38px}
+}
+@media(max-width:600px){body{font-size:15px}
+.grid{grid-template-columns:1fr}
+.shell{padding:22px 17px}
+.hero h1{font-size:33px}
+.lead{font-size:17px}
+.wb-body{grid-template-columns:31% 1fr}
+.wb-side,.wb-center{padding:10px}
+.wb-pane{padding:9px}
+.footer{flex-direction:column}
+.topline{font-size:11px}
+th,td{padding:10px;min-width:100px}
+h2{font-size:23px}
+}
+@media print{html{scroll-behavior:auto}
+.sidebar,.topline,.skip{display:none}
+.shell{margin:0;max-width:none;padding:0}
+body{background:white;font-size:10pt;color:#111}
+.hero{padding:0 0 15px}
+.hero h1{font-size:28pt}
+.lead{font-size:12pt}
+section{margin:24px 0}
+h2,h3{break-after:avoid}
+.card,.note,.step,.tier,tr{break-inside:avoid}
+.table{overflow:visible}
+table{font-size:9pt}
+th,td{padding:7px}
+a{color:inherit}
+.footer{margin-top:20px}
+pre{background:#eee;color:#111}
+.workbench{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到正文</a>
+<aside class="sidebar">
+<div class="brand">REMOTE RUNNER<span>PRODUCT &amp; ENGINEERING</span></div>
+<div class="doc-switch"><a href="00001-product.html">产品方案</a><a href="00002-architecture.html" aria-current="page">技术方案</a></div>
+<nav aria-label="技术方案目录"><a href="#overview">01 架构目标与边界</a><a href="#layers">02 分层与模块</a><a href="#frontend">03 前端与通信</a><a href="#execution">04 运行生命周期</a><a href="#workspace">05 工作区与同步</a><a href="#runtime">06 Python Runtime</a><a href="#services">07 传输与 USB 服务</a><a href="#storage">08 状态与数据</a><a href="#security">09 安全与故障边界</a><a href="#quality">10 验证与演进原则</a></nav>
+<div class="nav-foot">00002 · 长期维护文档<br>基线 2026-10-20 / 0.12.0<br><a href="00000-index.md">文档索引与维护约定 ↗</a></div>
+</aside>
+<main class="shell" id="main">
+<div class="topline"><span>REMOTE RUNNER / 技术方案 / 00002</span><button class="print" type="button" onclick="window.print()">打印 / 保存 PDF</button></div>
+<header class="hero">
+<div class="kicker">TECHNICAL ARCHITECTURE</div>
+<h1>统一运行语义，<br>保留通道边界。</h1>
+<p class="lead">以 Tauri 桌面应用为边界：React 管理交互与视图，Rust 校验输入并协调工作区、环境和进程，各传输实现自己的协议、文件访问与完成确认。</p>
+<div class="meta"><span class="tag">架构与设计决策</span><span class="tag">当前源码 · 0.12.0</span><span class="tag">更新于 2026-10-20</span></div>
+</header>
+
+<section id="overview">
+<h2><small>01 / DESIGN INTENT</small>架构目标与系统边界</h2>
+<p>应用在用户桌面进程中管理设备配置、编辑会话、任务、终端和传输。远端 SSH 依赖现有服务，Serial 依赖已登录 Shell，WSL 使用按需启动的 Python helper，Local 直接创建本机子进程。当前没有统一常驻 Agent、后台作业服务或服务端数据库。</p>
+<div class="grid">
+<article class="card"><span class="num">D01</span>
+<h3>语义统一，能力显式</h3>
+<p>入口、状态、字节输出和控制由上层统一；pipe、resize、中断、文件访问和 Runtime 通过能力与边界区分，不能伪装为所有通道一致支持。</p>
+</article>
+<article class="card"><span class="num">D02</span>
+<h3>源、目标、实例分离</h3>
+<p>WorkspaceRef 标识源目录；目标设备决定执行环境；每次 run ID 标识生命周期；环境配方与具体实例支持独立复用和重建。</p>
+</article>
+<article class="card"><span class="num">D03</span>
+<h3>校验与预算在 Rust</h3>
+<p>路径、设备、参数、协议与资源上限由后端约束；前端选择或本地存储不能成为可信安全边界。</p>
+</article>
+<article class="card"><span class="num">D04</span>
+<h3>成功必须有协议证据</h3>
+<p>完成标记、显式退出消息、文件提交确认各自定义成功。断线、EOF、本地写成功或窗口关闭不能替代远端确认。</p>
+</article>
+</div>
+<p>需求与交互由 <a href="00001-product.html">产品方案</a> 定义。本文描述现有结构及必须维持的不变量，不把最初设想的 Executor/Agent/容器层绘制为已经存在的模块。</p>
+</section>
+
+<section id="layers">
+<h2><small>02 / SYSTEM MAP</small>分层与模块职责</h2>
+<figure class="architecture">
+<div class="tier"><strong>交互层 · Tauri WebView</strong><span>React / TypeScript · Zustand · CodeMirror · xterm.js · i18next</span></div>
+<div class="tier connector">结构化 invoke ↓　有界快照 / Base64 字节 ↑</div>
+<div class="tier"><strong>入口与编排 · Rust + Tokio</strong><span>commands / workspace_commands → RunManager · TerminalManager · TransferManager · SessionStore</span></div>
+<div class="tier"><strong>领域服务</strong><span>WorkspaceRef / workspace_run / workspace_sync · RuntimeHost + uv prepare · work_environment · update / tray / usb</span></div>
+<div class="tier connector">独立会话与资源租约 ↓</div>
+<div class="tier"><strong>传输与宿主</strong><span>SSH + SFTP　｜　Serial nonce framing　｜　WSL Python helper　｜　Local portable-pty / pipes</span></div>
+<figcaption>逻辑职责图；文件操作可复用安全 Host，但编辑、运行和传输不共用单槽编辑连接。</figcaption>
+</figure>
+<div class="table">
+<table>
+<thead>
+<tr><th>代码域</th><th>职责</th><th>边界</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="../src-tauri/src/lib.rs">lib.rs</a></td><td>插件顺序、AppState、共享租约、服务与 IPC 注册</td><td>single-instance 首先注册；同步 IPC 启动后台任务使用 Tauri runtime。</td></tr>
+<tr><td><a href="../src-tauri/src/runner.rs">runner.rs</a> / <a href="../src-tauri/src/process.rs">process.rs</a></td><td>请求验证、运行调度、状态、控制、输出日志与历史</td><td>协议专属处理留在通道模块。</td></tr>
+<tr><td><a href="../src-tauri/src/workspace_run.rs">workspace_run</a> / workspace_commands</td><td>结构化运行意图、源端元数据、输入快照、新 IPC 适配</td><td>仍适配到 RunManager，无独立通用执行引擎。</td></tr>
+<tr><td>workspace / remote_workspace / workspace_sync</td><td>安全读写、长连接编辑、暂存、增量执行副本</td><td>编辑、暂存与同步的限额和生命周期明确区分。</td></tr>
+<tr><td>runtime/</td><td>平台探测、uv、Python、环境准备、绑定、锁与租约</td><td>transport 消费最终程序/argv/cwd/env，不自行猜环境。</td></tr>
+<tr><td>file_transfer/ · usb/</td><td>二进制复制队列 / USB 控制面</td><td>独立于运行上传；USB 数据链路不自动经过 SSH。</td></tr>
+<tr><td>work_environment / tray / update</td><td>客户端恢复、生命周期与签名更新</td><td>快照不恢复进程；更新门阻止新任务竞态。</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="frontend">
+<h2><small>03 / PRESENTATION &amp; IPC</small>前端组织与通信数据流</h2>
+<p>前端状态按应用、工作区运行、终端、传输和 USB 分域；纯逻辑模块负责布局归一化、命令身份辅助、输出预算、编辑文档和回放。面板元数据与懒加载组件映射分开，新增面板只扩展注册与映射，减少组件/布局循环引用。</p>
+<p>主要 IPC 在 <a href="../src/api.ts">api.ts</a>，文件传输在 <a href="../src/transferApi.ts">transferApi.ts</a>。工作区查询使用 WorkspaceRef，不在组件里拼 SSH/WSL 访问命令。所有新增 UI 文案走 t()；zh 资源为键源，en 编译期约束同键。</p>
+<h3>输出采用有界拉取</h3>
+<pre><code>进程字节 → RunManager.emit_output → 16 KiB 分片 / Base64
+ → broadcast(256) → drain_run_events(最多 64 事件)
+ → 单飞行轮询(~33 ms) → store 字节缓冲 → xterm 回放</code></pre>
+<p>慢/隐藏 WebView 不堆积无限原生投递。落后时 resync 恢复状态并保留近期输出，缓冲缺口不能拼接半个编码序列。前端单 run 2 MiB、4096 块，总计 16 MiB；终端有独立读泵，等待 xterm 写回调再读下一批。</p>
+<h3>异步结果必须带上下文</h3>
+<p>配置/历史/目录/环境请求检查 epoch、工作区身份及源连接修订；编辑保存还检查标签 generation。保存后同步捕获设备与设置，后端核对 device/config revision。后台准备弹框仅更新匹配任务，不切换主控制台当前选择。</p>
+<p>详见 <a href="00007-state-and-recovery.md">客户端状态与恢复</a>；源端 CAS 与命令存储见 <a href="00004-workspace-and-sync.md">工作区设计</a>。</p>
+</section>
+
+<section id="execution">
+<h2><small>04 / EXECUTION LIFECYCLE</small>运行模型、状态与控制</h2>
+<div class="flow">
+<div class="step"><b>校验并冻结</b><span>入口/argv、源与目标修订、当前设置和项目输入</span></div>
+<div class="step"><b>准备执行位置</b><span>原地或暂存/同步，必要时等待目录租约</span></div>
+<div class="step"><b>解析并启动</b><span>实际 Python/Bash、cwd/env，复查输入</span></div>
+<div class="step"><b>运行与回收</b><span>输出/控制、确认退出、历史及资源释放</span></div>
+</div>
+<p>工作区入口使用 <code>run_workspace</code>，三类结构化 Entry 与 argv；预置命令及 CLI 保留 <code>run_script</code>。prepare/rebuild 是同一生命周期的特殊 operation。工作区命令在成功启动后写回源端；历史失败给警告，不中断已启动脚本。</p>
+<pre><code>preparing → syncing → starting → running → exited
+                     ↘ stopping → canceled
+错误 / 超时 → failed
+
+phase = 环境准备子阶段
+waiting_workspace = 等待目录
+workspace_sync = 路径与同步统计</code></pre>
+<p>非零正常退出仍为 exited 并保留 exit_code。Ctrl+C 无选区时为单次 Interrupt，不启动停止倒计时；Stop 取消准备或执行通道升级；超时最终失败。SSH/WSL/Local 一般为 INT→TERM→KILL，Windows Local pipe 无温和中断，停止强制结束树。Serial 等 nonce 结束标记，不能确认则报告未知状态。</p>
+<div class="table">
+<table>
+<thead>
+<tr><th>通道</th><th>执行和完成证据</th><th>专属约束</th></tr>
+</thead>
+<tbody>
+<tr><td>SSH</td><td>PTY/pipe、PID/进程组与退出消息</td><td>SFTP；逐参数引用；认证连接按运行内 channel 复用，不借编辑会话。</td></tr>
+<tr><td>Serial</td><td>RS/US 包围的随机 nonce 开始/结束标记</td><td>已登录 Shell、单合并流、文本上传、端口租约、无运行中 resize。</td></tr>
+<tr><td>WSL</td><td>wsl.exe + stdin 下发 Python helper；独立控制消息和显式完成</td><td>Windows；预装 Python 3.8+；结构化 argv；不终止整个发行版。</td></tr>
+<tr><td>Local</td><td>portable-pty 或 pipe 子进程等待</td><td>ConPTY DSR 后端应答；统一 profile；Shell 路径先 simplify；探测有进程组守卫。</td></tr>
+</tbody>
+</table>
+</div>
+<p>stdin、resize、Interrupt、Stop、Terminate、Kill 的通道实现通过公共控制类型协调，不以能力名称推断支持。精确协议、时序、输入预算和兼容入口见 <a href="00003-execution-and-transports.md">运行与传输协议</a>。</p>
+</section>
+
+<section id="workspace">
+<h2><small>05 / WORKSPACE DESIGN</small>来源、编辑与持久执行副本</h2>
+<p>WorkspaceRef 将本机目录与设备目录建模为两个变体。设备来源只允许 SSH/WSL，根必须 canonical 且设备路径绝对无 dot component；根下拒绝链接。SFTP 逐组件 LSTAT，WSL 使用 dirfd + O_NOFOLLOW。本机编辑保留 revision/EOL/BOM，1 MiB UTF-8，写入做 CAS。</p>
+<p>同设备 ID 或本机到本机原地运行；跨设备先在本机暂存并保留原始来源身份，清理覆盖全部终态。SSH/WSL 上传复用 <code>&lt;root&gt;/&lt;source-name&gt;/workspace</code>，串口保留每运行目录。跨设备到 Local 的产物随临时目录删除。</p>
+<h3>分开保存三种状态</h3>
+<div class="table">
+<table>
+<thead>
+<tr><th>位置</th><th>所有者和职责</th></tr>
+</thead>
+<tbody>
+<tr><td>源 <code>.runner</code></td><td>cwd 默认值、入口参数历史、写锁；历史完整 SHA-256 ID；不保存 Python 项目配方。</td></tr>
+<tr><td>目标 <code>.sync</code></td><td>来源认领、成功 manifest、pending 恢复记录、运行期 lease。</td></tr>
+<tr><td>本机客户端配置</td><td>同步客户端 UUID、UI 偏好、恢复草稿、设备和运行状态。</td></tr>
+</tbody>
+</table>
+</div>
+<p>运行上传/暂存排除根 .runner；主动文件传输不排除。三份根 Python 输入在 SSH/WSL 保持原始字节，普通脚本可按上传策略规范 LF。</p>
+<h3>增量同步是有所有权的提交</h3>
+<p>来源键由客户端 UUID 和 canonical 原始 WorkspaceRef 派生，目录名不加哈希后缀。认领不覆盖，拒绝不同来源同名或未知非空目录。所有候选先预检，再发布 pending、逐文件提交、发布 manifest；只删除仍为已知版本的受管文件，保留未知产物，不提供整树回滚。</p>
+<p>来源大小、mtime 和缓存规则未变时复用摘要；权限也未变且无 pending 时信任成功清单并跳过目标读取。因此目标单独变化可能不被发现，同长度保留 mtime 的来源改写也可能命中缓存。这是当前优化的明确边界。需检查的路径由 SSH/WSL 最多 16 条批量预检，SSH 不支持时回退 SFTP。</p>
+<p>目录锁覆盖同步、环境准备、执行直到确认退出。断线且不能确认进程终止则保留锁，不按年龄接管。清单有界、临时文件精确登记、文件修改前复查，SSH 安全发布依赖扩展。算法和限额以 <a href="00004-workspace-and-sync.md">工作区与增量同步</a> 为准。</p>
+</section>
+
+<section id="runtime">
+<h2><small>06 / PYTHON RUNTIME</small>配方寻址与不可搬移环境实例</h2>
+<p>设备默认 Python 与项目 Python 是两种显式策略。前者在目标上下文解析；Local 还捕获完整 Shell/profile 环境后直接 spawn。后者只接受 uv 三文件契约，用发布固定 Catalog 部署 uv 与 managed CPython，不回退系统解释器。</p>
+<pre><code>源项目输入哈希 → 目标 profile → uv 下载/回读校验
+ → managed Python 解析与验证 → 配方锁 / 实例租约
+ → 有效缓存 或 uv sync --locked --no-install-project
+ → smoke test → manifest + .ready → bindings 发布
+ → 直接运行环境 Python</code></pre>
+<p>配方 ID 包含 uv/平台、实际 Python/build、OS/arch/libc、lock、groups/extras 和包源，不含脚本源码。以 SHA-256 前 32 字符表示；具体实例可不同。重建在新最终路径创建，验证后切换绑定，活动实例不搬移不删除，避免绝对 shebang 失效。</p>
+<p>共享 LeaseSet 引用计数在准备前获取并交接到运行，删除/清理与登记互斥；失败/取消清理未发布实例并保留旧绑定。输入在同步及发布关键阶段复查，不能靠重算目标哈希掩盖计划失效。</p>
+<p>远端根为 <code>~/.remote-runner/runtime-v1</code>，Local 为 <code>&lt;app_config_dir&gt;/runtime-v1</code>。当前 UI 使用 direct；mirror/offline Rust 类型不等于完整离线产品。平台资产列表不等于对应机器已验证。完整模型、项目示例及排障见 <a href="00005-python-runtime.md">Python 运行环境</a>。</p>
+</section>
+
+<section id="services">
+<h2><small>07 / AUXILIARY SERVICES</small>独立的文件传输与 USB 控制</h2>
+<h3>文件传输：计划、队列、流式提交</h3>
+<p>TransferManager 独立持有预检计划、固定端点/配置、并发许可、取消和逐文件结果。32 KiB 分块不经 WebView，单文件 2 GiB、批量 10 GiB、10,000 条目；全局并发 2，单设备 1。编辑器限额和运行上传限额均不套用。</p>
+<p>临时文件完整写入后发布，保留两份使用不覆盖硬链接，覆盖使用安全替换；缺少 SSH 扩展明确失败，不能先删原文件。提交检查点同步到 journal，确认丢失的结果标 unknown；取消保留已提交条目，重试只处理未完成项并建立尝试链。重启中断，不自动续传。</p>
+<h3>USB：管理链路与数据链路分开</h3>
+<p>Windows 后端固定定位 usbipd-win 5.x，JSON 枚举身份；bind/unbind 使用受限 UAC 子进程，操作前后重查设备。转交期间与应用串口 lease 互斥，不强占其他客户端。</p>
+<p>WSL2 接入针对虚拟机；远程 Linux 经 SSH 启动受限 stdin helper 管理 usbip，数据由 Linux 直连 Windows IPv4:3240。detach 核对 host/port/BUSID 对应唯一端口，不执行全量断开；sudo -n 仅操作授权命令。没有自动安装、隧道或自动重连。</p>
+<p>传输安全边界、残留/未知结果和 USB 依赖以 <a href="00006-transfer-and-usb.md">文件传输与 USB</a> 为准。</p>
+</section>
+
+<section id="storage">
+<h2><small>08 / PERSISTENCE &amp; LIFECYCLE</small>状态存储与工作环境恢复</h2>
+<div class="table">
+<table>
+<thead>
+<tr><th>存储域</th><th>代表数据</th><th>设计约束</th></tr>
+</thead>
+<tbody>
+<tr><td>应用配置目录</td><td>设备、known_hosts、200 条完成状态、2 MiB/run 日志、传输 journal</td><td>各自持久化语义不同，不能统称事务存储；日志与历史同步淘汰。</td></tr>
+<tr><td>本机 work-environment.json</td><td>当前/最近工作区、文件视图、脏草稿、终端描述、窗口、传输选项</td><td>version 1、32 MiB，有界读写、临时文件 sync_all 后替换；坏记录保留。</td></tr>
+<tr><td>WebView localStorage</td><td>布局/语言/主题/缩放、最近目录、预置命令、按工作区运行偏好</td><td>防御性读取；含 env 的偏好不是密钥存储。</td></tr>
+<tr><td>源/目标文件系统</td><td>.runner、.sync、Runtime 实例</td><td>按所有权、revision 和租约维护，不能随 UI 清空而删除。</td></tr>
+</tbody>
+</table>
+</div>
+<p>恢复快照 500 ms 防抖串行写，真退出及更新前 flush。恢复优先活动文件，其他按需读取；草稿带原 revision，不自动写源文件。终端仅恢复未连接描述，不恢复命令/进程。运行输出、选中任务和进程不进入该快照。</p>
+<p>窗口按当前显示器/DPI 约束，失联屏幕位置回收；最小化不恢复，静默自启动保持隐藏。关闭窗口到托盘，真退出通过统一未保存/传输/快照/终端流程。single-instance 首注册，更新门阻止运行/传输注册与安装竞态。</p>
+<p>更新检查固定 GitHub 清单和下载身份，Tauri minisign 校验，安装版与 portable 分流；CI 稳定标签构建 draft，人工安装验收后公开。详见 <a href="00007-state-and-recovery.md">状态与恢复</a>、<a href="00008-development-and-release.md">开发与发布</a>。</p>
+</section>
+
+<section id="security">
+<h2><small>09 / TRUST &amp; FAILURE</small>安全与故障边界</h2>
+<div class="table">
+<table>
+<thead>
+<tr><th>风险面</th><th>当前约束</th><th>剩余边界</th></tr>
+</thead>
+<tbody>
+<tr><td>路径 / 类型</td><td>Rust 组件校验、canonical 根、链接拒绝；WSL dirfd/no-follow</td><td>SFTP 多步检查不是对恶意并发改路径的完整隔离。</td></tr>
+<tr><td>命令 / argv</td><td>结构化参数或逐参数引用；helper stdin；命令长度预算</td><td>用户显式 Shell 命令本身就是可执行代码。</td></tr>
+<tr><td>主机 / 凭据</td><td>SSH 指纹 TOFU 后固定，损坏拒绝；uv hash 与 updater 签名</td><td>首连自动信任；devices 密码明文，无系统钥匙串。</td></tr>
+<tr><td>资源 / 输出</td><td>大小/条目/深度、分块、单飞行、缓冲与超时预算</td><td>超量输出可丢旧数据；日志不是无限归档。</td></tr>
+<tr><td>提交 / 故障</td><td>单文件发布、pending/journal、精确残留清理、租约</td><td>没有整树回滚；断线可能是结果未知，不能自动重试覆盖。</td></tr>
+<tr><td>快照 / 恢复</td><td>坏记录保护、CAS、用户操作优先、终端显式重连</td><td>防抖末尾可能丢失，不恢复进程或撤销栈。</td></tr>
+<tr><td>USB / 权限</td><td>设备身份复查、受限提权、精确 detach、非交互 sudo</td><td>USB/IP 数据无 SSH 加密；root 后代清理可能无法确认。</td></tr>
+</tbody>
+</table>
+</div>
+<div class="note">
+<p><strong>失败处理原则：</strong>保存失败保留草稿；输入变更使计划作废；非必要历史写入失败仅警告；未确认进程退出保留执行锁；未知文件提交先核对。不得为了展示成功而吞掉这些差异。</p>
+</div>
+</section>
+
+<section id="quality">
+<h2><small>10 / VERIFICATION &amp; CHANGE</small>验证策略与演进原则</h2>
+<p>前端用 Node 测试纯逻辑与交互契约，生产构建做 TypeScript 和 Vite 检查；Rust 离线全目标覆盖验证、模拟协议、本机真实进程及 loopback SSH/SFTP。WSL 集成显式启用；物理串口和 USB 不作为普通测试依赖。模拟通过不能写成硬件验收。</p>
+<p>涉及运行或串口时执行完整前端测试/构建、Rust fmt/全目标测试及 diff 检查。浏览器样例可验证交互和恢复，原生窗口、多屏、托盘、自启动、真实安装和硬件仍需独立验证。可重复命令见 <a href="00008-development-and-release.md">开发、验证与发布</a>。</p>
+<h3>扩展时保持这些约束</h3>
+<ul>
+<li>新增通道先定义能力、完成证据、字节/控制协议、文件安全和清理语义，再接入统一生命周期；不靠提示符或 EOF 猜成功。</li>
+<li>新增运行时沿用项目输入、配方、实例和租约的分离，保持明确失败及输入复查，不回退另一依赖模型。</li>
+<li>新增面板通过注册表；新增持久化先定义 schema、预算、冲突和损坏处理，不继续把状态塞入单一主 store 或跨域文件。</li>
+<li>修改协议/限额时同步详细设计与主文档摘要，不再新增按日期累积的实施记录。候选方向见产品方案，尚未承诺实现时间。</li>
+</ul>
+<p class="subtle">维护入口：<a href="00000-index.md">00000 文档索引</a>。详细设计是协议与算法事实的唯一维护位置，主文档用于理解系统整体。</p>
+</section>
+<footer class="footer"><span>Remote Runner · 00002 · 2026-10-20</span><a href="00001-product.html">← 返回产品方案</a></footer>
+</main>
+<script>
+const links=[...document.querySelectorAll('nav a')];if('IntersectionObserver'in window){const observer=new IntersectionObserver(entries=>{const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top);if(visible[0])links.forEach(a=>a.classList.toggle('active',a.hash==='#'+visible[0].target.id))},{rootMargin:'-10% 0px -65% 0px'});document.querySelectorAll('main section[id]').forEach(s=>observer.observe(s));}
+</script>
+</body>
+</html>

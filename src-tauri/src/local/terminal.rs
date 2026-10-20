@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 
-/// 交互式登录 shell 的启动参数；PowerShell 的 profile 开关与运行模式一致（00030）
+/// 交互式登录 shell 的启动参数；PowerShell 的 profile 开关与运行模式一致（00003-execution-and-transports.md）
 pub(super) fn interactive_args(shell: &shells::Shell) -> Vec<String> {
     match shell.flavor {
         shells::Flavor::Posix if shell.login => vec!["-li".into()],

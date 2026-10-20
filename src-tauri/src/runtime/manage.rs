@@ -1,4 +1,4 @@
-//! 管理命令支撑（00027 §16/§17）：按设备构造 RuntimeHost、重建环境。
+//! 管理命令支撑（00005-python-runtime.md）：按设备构造 RuntimeHost、重建环境。
 //!
 //! 列表类命令由 commands 层做 best-effort 降级；变更类命令错误直接上抛。
 //! SSH/WSL 的重建需要先把项目工作区上传到目标临时目录（uv sync 必须在
@@ -35,7 +35,7 @@ fn not_supported() -> RunnerError {
     )
 }
 
-/// 按设备 transport 构造 RuntimeHost；Serial 明确拒绝（00027 §4）
+/// 按设备 transport 构造 RuntimeHost；Serial 明确拒绝（00005-python-runtime.md）
 pub async fn open_host(
     device: &DeviceProfile,
     config_dir: &Path,
@@ -71,7 +71,7 @@ pub async fn rebuild_on_device(
 ) -> Result<PreparedEnvironment> {
     device.validate()?;
     network.validate()?;
-    // Serial 在任何项目扫描/端口操作前明确拒绝（00027 §4）
+    // Serial 在任何项目扫描/端口操作前明确拒绝（00005-python-runtime.md）
     if device.transport == TransportKind::Serial {
         return Err(not_supported());
     }

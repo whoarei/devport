@@ -1,4 +1,4 @@
-//! uv-only Managed Python Runtime（设计 00027）。
+//! uv-only Managed Python Runtime（设计 00005-python-runtime.md）。
 //!
 //! 固定版本的 uv + 解析后的 CPython patch 版本 + `uv.lock` 生成内容寻址的项目环境；
 //! 运行阶段直接启动环境内 Python，不使用 `uv run`，不回落系统 Python。
@@ -28,7 +28,7 @@ pub const LOCK_LIMIT: usize = 8 * 1024 * 1024;
 /// Runtime 根目录最小剩余空间（2 GiB）
 pub const MIN_FREE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
-/// 稳定错误代码（00027 §18）
+/// 稳定错误代码（00005-python-runtime.md）
 pub mod code {
     pub const NOT_SUPPORTED: &str = "managed_runtime_not_supported";
     pub const INVALID_PROJECT: &str = "invalid_python_project";
@@ -53,7 +53,7 @@ pub mod code {
     pub const CANCELED: &str = "managed_runtime_canceled";
 }
 
-/// 运行期准备阶段（00027 §14），随 RunStatus.phase 与 runtime_progress 事件下发
+/// 运行期准备阶段（00005-python-runtime.md），随 RunStatus.phase 与 runtime_progress 事件下发
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimePhase {
@@ -86,7 +86,7 @@ impl std::fmt::Display for RuntimePhase {
     }
 }
 
-/// Python 项目的运行时请求摘要（00027 §17）
+/// Python 项目的运行时请求摘要（00005-python-runtime.md）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagedPythonSpec {
     pub python_version: String,
@@ -96,7 +96,7 @@ pub struct ManagedPythonSpec {
     pub extras: Vec<String>,
 }
 
-/// 执行目标的运行时兼容性描述（00027 §8）
+/// 执行目标的运行时兼容性描述（00005-python-runtime.md）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceRuntimeProfile {
     pub os: String,
@@ -195,7 +195,7 @@ pub fn scrub_credentials(text: &str) -> String {
     out
 }
 
-/// 校验 Runtime 根路径：绝对、无 NUL/控制字符、无 dot component（00027 §7/§19）
+/// 校验 Runtime 根路径：绝对、无 NUL/控制字符、无 dot component（00005-python-runtime.md）
 pub fn validate_runtime_root(root: &str, windows: bool) -> crate::error::Result<()> {
     use crate::error::RunnerError;
     let invalid = || RunnerError::InvalidInput(format!("invalid runtime root: {root:?}"));

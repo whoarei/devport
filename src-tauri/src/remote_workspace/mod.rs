@@ -1,4 +1,4 @@
-//! 远端（设备）工作区：浏览 / 编辑某台设备上的目录（00029）。
+//! 远端（设备）工作区：浏览 / 编辑某台设备上的目录（00004-workspace-and-sync.md）。
 //!
 //! SSH 经标准 SFTP 子系统访问；WSL 经 helper 的 fs_* 文件服务消息（与
 //! VS Code 的 server/agent 模型同构）。编辑会话是长连接，由 SessionStore
