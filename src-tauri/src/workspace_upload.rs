@@ -54,6 +54,7 @@ pub struct Source {
     pub path: PathBuf,
     pub directory: bool,
     pub mode: u32,
+    pub metadata: std::fs::Metadata,
 }
 
 fn invalid(message: impl Into<String>) -> RunnerError {
@@ -176,6 +177,7 @@ pub fn scan(local: &Path, policy: Policy) -> Result<Vec<Source>> {
                 path: path.clone(),
                 directory,
                 mode,
+                metadata: meta,
             });
             if directory {
                 visit(root, &path, policy, sources, total)?;
@@ -189,7 +191,7 @@ pub fn scan(local: &Path, policy: Policy) -> Result<Vec<Source>> {
     Ok(sources)
 }
 
-pub fn read_source(source: Source, policy: Policy) -> Result<Entry> {
+pub(crate) fn source_metadata(source: &Source) -> Result<std::fs::Metadata> {
     let parent = source
         .path
         .parent()
@@ -198,6 +200,11 @@ pub fn read_source(source: Source, policy: Policy) -> Result<Entry> {
     if meta.is_dir() != source.directory {
         return Err(invalid("workspace entry changed type during upload"));
     }
+    Ok(meta)
+}
+
+pub fn read_source(source: Source, policy: Policy) -> Result<Entry> {
+    source_metadata(&source)?;
     if source.directory {
         return Ok(Entry {
             path: source.relative,

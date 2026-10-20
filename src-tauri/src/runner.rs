@@ -499,6 +499,11 @@ impl RunManager {
         if let Some(h) = map.get_mut(run_id) {
             if h.status.state != RunState::Stopping {
                 h.status.state = state;
+                if state == RunState::Syncing {
+                    // Workspace sync follows project inspection. Runtime
+                    // preparation will publish its own phase afterwards.
+                    h.status.phase = None;
+                }
                 let _ = self.event_tx.send(RunEvent::Status {
                     status: h.status.clone(),
                 });
@@ -2484,6 +2489,35 @@ mod tests {
             log_truncated: false,
             log_failed: false,
         }
+    }
+
+    #[test]
+    fn workspace_sync_clears_the_previous_project_validation_phase() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (events, mut rx) = crate::events::channel();
+        let manager = RunManager::new(&root, events);
+        manager
+            .handles
+            .lock()
+            .insert("run".into(), test_handle("run"));
+        manager.set_phase("run", RuntimePhase::ValidatingProject);
+        manager.set_state("run", RunState::Syncing);
+        assert_eq!(manager.status("run").unwrap().phase, None);
+        let mut saw_sync = false;
+        while let Ok(event) = rx.try_recv() {
+            if let RunEvent::Status { status } = event {
+                if status.state == RunState::Syncing {
+                    assert_eq!(status.phase, None);
+                    saw_sync = true;
+                }
+            }
+        }
+        assert!(saw_sync);
+        manager.set_phase("run", RuntimePhase::ProbingRuntime);
+        assert_eq!(
+            manager.status("run").unwrap().phase.as_deref(),
+            Some("probing_runtime")
+        );
     }
 
     #[test]

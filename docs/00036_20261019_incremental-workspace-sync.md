@@ -44,6 +44,12 @@ JSON(协议版本, workspace-client-id, 规范化后的原始 WorkspaceRef)
 
 `workspace_sync.rs` 复用 `workspace_upload` 的扫描、过滤、模式和换行转换；摘要基于实际上传字节。扫描和本机读文件在 blocking 线程中进行，每次最多保留一个有界文件内容。上传前重读并核验其摘要，来源在同步期间改变则本次失败，不执行脚本。
 
+2026-10-20：本地源文件的摘要缓存保存在目标已有的 `.sync/manifest.json` 中，不在 Windows 应用目录或源工作区 `.runner` 中写入缓存。同步先读取并验证上次成功提交的清单，再扫描本地文件属性；条目新增可选 `source`，包含缓存规则版本、原始字节数 `size`、修改时间纳秒字符串 `modified_ns` 和辅助身份 `identity`（Windows 创建时间；Unix 设备号、inode 与 ctime）。只有这些属性全部相同且缓存规则版本匹配，才复用清单中的上传摘要和上传后大小，跳过本地内容读取。新文件、属性变化、旧清单缺少缓存、缓存规则版本变化时重新读取并计算；无法取得修改时间时不缓存。目录遍历、路径/链接检查、原始大小与条目限额始终执行。远端内容校验仍完整保留。
+
+`source.size` 与现有条目 `size` 含义不同：前者是 Windows 等来源的原始文件大小，后者是实际上传字节数，脚本 CRLF 转 LF 后可能变小。源文件时间变化但规范化内容相同时，不上传内容，仍提交最新源属性，使下次扫描命中缓存。缓存与清单一起原子提交，未完成事务的 `pending.next` 不作为缓存基准；恢复时继续使用已提交清单和现有所有权保护。清单及恢复记录缺少 `source` 的旧格式可由新版本读取，工作区身份版本和目录不变；旧版本应用因拒绝未知字段，不能直接读取新增字段后的清单。
+
+远端预检后，以及文件操作完成、提交清单前，再检查源文件路径、类型与属性；即使文件命中摘要缓存，检测到中途改动也会失败。该优化采用属性快判：Windows 同长度内容被改写且修改时间和创建时间均被保留时，仍可能复用旧摘要；需要严格逐字节确认时应使用不带 `source` 字段的清单重新计算。仅优化同步管线的本地来源读取，不省略跨设备来源下载到临时目录的步骤。应用日志新增 `workspace source scan`，记录 `cached_files`、`hashed_files` 和本地扫描耗时 `elapsed_ms`，便于判断收益。
+
 限额保持不变：SSH 单文件 64 MiB、总计 256 MiB；WSL 单文件 16 MiB、总计 64 MiB；均最多 4096 条目、相对路径 1024 字节。跳过版本库元数据和根 `.runner`，继续按传输策略处理符号链接和重定向。复用文件传输层安全路径规则，拒绝该层不支持的路径组件。
 
 清单记录版本、工作区键，以及相对路径、文件/目录类型、SHA-256、大小和权限。所有远端清单都限制读取大小并验证身份、条目数、总大小、每条路径及父目录记录；清单损坏不会触发猜测性删除。
@@ -98,12 +104,13 @@ JSON(协议版本, workspace-client-id, 规范化后的原始 WorkspaceRef)
 
 ## 6. 接口与展示
 
-`RunStatus.workspace_sync` 可选，记录 `destination`、`added`、`updated`、`deleted`、`skipped`、`permissions` 和 `uploaded_bytes`，随现有状态事件和历史持久化，不混入工作负载原始输出。控制台显示路径及统计，工具栏显示可取消的等待状态；zh/en 均提供翻译。旧历史缺少这些字段仍可读取。
+`RunStatus.workspace_sync` 可选，记录 `destination`、`added`、`updated`、`deleted`、`skipped`、`permissions` 和 `uploaded_bytes`，随现有状态事件和历史持久化，不混入工作负载原始输出。控制台显示路径及统计，工具栏显示可取消的等待状态；zh/en 均提供翻译。旧历史缺少这些字段仍可读取。2026-10-20：进入工作区同步时清除此前的运行时阶段，避免继续显示“同步中 · 校验项目”；后续运行时准备再发布自己的阶段。
 
 文件操作复用 `file_transfer::host::Host`，新增根目录创建、受管文件 unlink、空目录 rmdir、chmod 与远端摘要；不借用单槽编辑连接。WSL 扩展独立 `tf_*` 会话，运行 helper 继续以 `in_place=true` 打开同步完成的目录、零文件上传；helper 源码仍经 stdin 传入。
 
 ## 7. 验证
 
+- 2026-10-20 本地摘要缓存优化：新增重复扫描零内容读取、时间变化、保留时间但大小变化、CRLF 原始/上传大小区分、旧清单及缓存规则升级、失败重试不提前提交缓存、远端预检后源属性变化和同步阶段清除的回归。`npm test`（171 项）、`npm run build`、`cargo fmt --all -- --check`、`cargo test --offline --all-targets --target-dir target/transfer-verification`（268 项通过、20 项 opt-in 默认跳过）及 `git diff --check` 通过。设置 `REMOTE_RUNNER_TEST_WSL=Ubuntu-24.04` 后，单独运行 `workspace_sync::tests::wsl_workspace_sync_runs_repeatedly_in_place_and_cancels_a_queued_run -- --ignored --test-threads=1` 通过。SSH 使用本机模拟服务器，串口使用模拟器/本机 shell，未验证真实 SSH 目标或物理串口设备；Unix 专有分支未在此次 Windows 环境执行。
 - 单元测试：目录名提取与非法名字拒绝、身份认领与并发同名冲突保护、未知已有目录保护、首次/重复同步、规范化后无变化、单文件修改、二进制与空目录、删除/重命名、产物保留、同长度远端修改和缺失恢复、完整预检冲突、损坏/越界/异主清单、重复中断恢复、精确临时文件清理、身份持久化及等待取消。Unix 额外测试 chmod 零内容上传与目标链接拒绝。
 - 本机真实 SSH/SFTP 模拟服务器：固定路径、目标根创建、发布中途失败后恢复、增量删除、产物保留、队列取消和断线遗留锁不被接管；不使用用户 SSH 凭据或物理设备。
 - 显式 opt-in WSL：在 Ubuntu-24.04 中实际通过 RunManager 重复执行，核验固定路径、零内容上传、权限修复、更新/删除、产物累积、链接逃逸拒绝及运行期间的队列取消。

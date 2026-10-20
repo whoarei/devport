@@ -20,6 +20,9 @@ use std::{
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 const VERSION: u32 = 1;
+// Bump when workspace_upload's content transformation rules change. This is
+// independent of VERSION, which also determines persistent workspace identity.
+const SOURCE_CACHE_VERSION: u32 = 1;
 const MANIFEST_LIMIT: usize = 8 * 1024 * 1024;
 const JOURNAL_LIMIT: usize = MANIFEST_LIMIT * 4;
 type Locks = parking_lot::Mutex<BTreeMap<String, Weak<Mutex<()>>>>;
@@ -54,6 +57,55 @@ struct Record {
     sha256: String,
     size: u64,
     mode: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<SourceStamp>,
+}
+
+/// Attributes of the source file, never the target's clock or normalized size.
+/// Kept in the target manifest so the source workspace needs no cache files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceStamp {
+    version: u32,
+    size: u64,
+    modified_ns: String,
+    identity: String,
+}
+
+impl SourceStamp {
+    fn from_metadata(meta: &std::fs::Metadata) -> Option<Self> {
+        let modified_ns = meta
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos()
+            .to_string();
+        #[cfg(unix)]
+        let identity = {
+            use std::os::unix::fs::MetadataExt;
+            format!(
+                "unix:{}:{}:{}:{}",
+                meta.dev(),
+                meta.ino(),
+                meta.ctime(),
+                meta.ctime_nsec()
+            )
+        };
+        #[cfg(windows)]
+        let identity = {
+            use std::os::windows::fs::MetadataExt;
+            format!("windows:{}", meta.creation_time())
+        };
+        #[cfg(not(any(unix, windows)))]
+        let identity = format!("{:?}", meta.created().ok()?);
+        Some(Self {
+            version: SOURCE_CACHE_VERSION,
+            size: meta.len(),
+            modified_ns,
+            identity,
+        })
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -90,6 +142,18 @@ impl Manifest {
                 || path.split('/').next() == Some(".runner")
             {
                 return Err(failure("invalid manifest path or mode"));
+            }
+            if let Some(source) = &entry.source {
+                if entry.directory
+                    || source.size > policy.file_limit
+                    || entry.size > source.size
+                    || source.modified_ns.len() > 39
+                    || source.modified_ns.parse::<u128>().is_err()
+                    || source.identity.is_empty()
+                    || source.identity.len() > 128
+                {
+                    return Err(failure("invalid source cache record"));
+                }
             }
             if entry.directory {
                 if entry.size != 0 || !entry.sha256.is_empty() {
@@ -597,31 +661,104 @@ async fn fingerprint(
 struct Snapshot {
     manifest: Manifest,
     sources: BTreeMap<String, Source>,
+    cached_files: u64,
+    hashed_files: u64,
 }
-fn snapshot(local: &Path, id: &str, policy: Policy, cancel: &AtomicBool) -> Result<Snapshot> {
+fn snapshot(
+    local: &Path,
+    previous: &Manifest,
+    policy: Policy,
+    cancel: &AtomicBool,
+) -> Result<Snapshot> {
     let mut result = Snapshot {
-        manifest: Manifest::empty(id),
+        manifest: Manifest::empty(&previous.workspace_id),
         sources: BTreeMap::new(),
+        cached_files: 0,
+        hashed_files: 0,
     };
     let mut total = 0;
     for source in workspace_upload::scan(local, policy)? {
         check_cancel(cancel)?;
-        let entry = workspace_upload::read_source(source.clone(), policy)?;
-        total += entry.source_bytes;
+        let stamp = (!source.directory)
+            .then(|| SourceStamp::from_metadata(&source.metadata))
+            .flatten();
+        // Only a complete stamp from this version may bypass content reads.
+        // Serial's UTF-8 validation must always read the content.
+        let cached = previous.entries.get(&source.relative).filter(|old| {
+            !policy.text_only && !old.directory && stamp.is_some() && old.source == stamp
+        });
+        let record = if source.directory {
+            Record {
+                directory: true,
+                sha256: String::new(),
+                size: 0,
+                mode: source.mode,
+                source: None,
+            }
+        } else if let Some(cached) = cached {
+            result.cached_files += 1;
+            total += source.metadata.len() as usize;
+            Record {
+                mode: source.mode,
+                ..cached.clone()
+            }
+        } else {
+            let entry = workspace_upload::read_source(source.clone(), policy)?;
+            let after = workspace_upload::source_metadata(&source)?;
+            if SourceStamp::from_metadata(&after) != stamp
+                || entry.source_bytes as u64 != source.metadata.len()
+            {
+                return Err(failure(format!(
+                    "source changed while hashing: {}",
+                    source.relative
+                )));
+            }
+            result.hashed_files += 1;
+            total += entry.source_bytes;
+            Record {
+                directory: false,
+                sha256: digest(entry.data.as_deref().unwrap()),
+                size: entry.data.as_ref().unwrap().len() as u64,
+                mode: entry.mode,
+                source: stamp,
+            }
+        };
         if total > policy.total_limit {
             return Err(failure("workspace total size limit exceeded"));
         }
-        let record = Record {
-            directory: entry.data.is_none(),
-            sha256: entry.data.as_deref().map(digest).unwrap_or_default(),
-            size: entry.data.as_ref().map_or(0, |v| v.len() as u64),
-            mode: entry.mode,
-        };
-        result.sources.insert(entry.path.clone(), source);
-        result.manifest.entries.insert(entry.path, record);
+        result
+            .manifest
+            .entries
+            .insert(source.relative.clone(), record);
+        result.sources.insert(source.relative.clone(), source);
     }
-    result.manifest.validate(id, policy)?;
+    result.manifest.validate(&previous.workspace_id, policy)?;
     Ok(result)
+}
+
+async fn verify_sources(
+    sources: Arc<BTreeMap<String, Source>>,
+    cancel: Arc<AtomicBool>,
+) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        for source in sources.values() {
+            check_cancel(&cancel)?;
+            let current = workspace_upload::source_metadata(source)?;
+            if !source.directory
+                && (current.len() != source.metadata.len()
+                    || SourceStamp::from_metadata(&current)
+                        != SourceStamp::from_metadata(&source.metadata))
+            {
+                return Err(failure(format!(
+                    "source changed during sync: {}",
+                    source.relative
+                )));
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| failure(e.to_string()))?
 }
 
 enum Action {
@@ -661,11 +798,6 @@ async fn synchronize(
             }
         }
     }
-    let (local, sid, flag) = (local.to_path_buf(), id.to_string(), cancel.clone());
-    let snapshot = tokio::task::spawn_blocking(move || snapshot(&local, &sid, policy, &flag))
-        .await
-        .map_err(|e| failure(e.to_string()))??;
-    let next = snapshot.manifest;
     let manifest_path = format!("{prefix}/.sync/manifest.json");
     let pending_path = format!("{prefix}/.sync/pending.json");
     let old_bytes = read_blob(host, &manifest_path, MANIFEST_LIMIT).await?;
@@ -690,6 +822,21 @@ async fn synchronize(
             return Err(failure("manifest does not match recovery journal"));
         }
     }
+    // Read/validate the last committed manifest BEFORE reading local content.
+    // An interrupted transaction is never used as a source cache baseline.
+    let (local, previous, flag) = (local.to_path_buf(), old.clone(), cancel.clone());
+    let started = std::time::Instant::now();
+    let snapshot = tokio::task::spawn_blocking(move || snapshot(&local, &previous, policy, &flag))
+        .await
+        .map_err(|e| failure(e.to_string()))??;
+    tracing::info!(
+        cached_files = snapshot.cached_files,
+        hashed_files = snapshot.hashed_files,
+        elapsed_ms = started.elapsed().as_millis(),
+        "workspace source scan"
+    );
+    let next = snapshot.manifest;
+    let sources = Arc::new(snapshot.sources);
     // Preserve ownership from an interrupted transaction until it is fully
     // reconciled, including newly published files absent from the old manifest.
     let mut owned = old.entries.clone();
@@ -797,6 +944,7 @@ async fn synchronize(
                         sha256: hash.clone(),
                         size: attrs.size,
                         mode: attrs.mode.unwrap_or(desired.mode),
+                        source: None,
                     },
                 );
             }
@@ -849,6 +997,9 @@ async fn synchronize(
             report.deleted += 1;
         }
     }
+    // Cache hits still need path/type and attribute checks after the remote
+    // preflight, which may take much longer than the source scan itself.
+    verify_sources(sources.clone(), cancel.clone()).await?;
     if had_manifest && actions.is_empty() && old == next && pending.is_none() {
         return Ok(report);
     }
@@ -884,7 +1035,7 @@ async fn synchronize(
         match action {
             Action::Directory(path) => host.mkdir(&remote_path(&path)).await.map_err(map)?,
             Action::Upload(path, current, temp) => {
-                let source = snapshot.sources.get(&path).unwrap().clone();
+                let source = sources.get(&path).unwrap().clone();
                 let entry = tokio::task::spawn_blocking(move || {
                     workspace_upload::read_source(source, policy)
                 })
@@ -945,6 +1096,7 @@ async fn synchronize(
         }
     }
     check_cancel(&cancel)?;
+    verify_sources(sources, cancel.clone()).await?;
     let bytes = serde_json::to_vec(&next).map_err(|e| failure(e.to_string()))?;
     if bytes.len() > MANIFEST_LIMIT {
         return Err(failure("manifest too large"));
@@ -1119,14 +1271,23 @@ mod tests {
         assert_eq!(std::fs::read(f.remote("main.py")).unwrap(), b"print(1)\n");
         assert!(f.remote("empty").is_dir());
         assert!(!f.remote(".runner").exists());
-        let manifest = std::fs::read(f.target.join("rr-test/.sync/manifest.json")).unwrap();
+        let manifest = f.manifest();
         f.write("main.py", b"print(1)\n");
         let r = f.sync().await.unwrap();
         assert_eq!((r.uploaded_bytes, r.skipped), (0, 2));
-        assert_eq!(
-            std::fs::read(f.target.join("rr-test/.sync/manifest.json")).unwrap(),
-            manifest
+        // Same normalized content, new source metadata: commit the new stamp
+        // despite zero content uploads, so subsequent runs can use the cache.
+        let refreshed = f.manifest();
+        assert_ne!(
+            refreshed.entries["main.py"].source,
+            manifest.entries["main.py"].source
         );
+        assert_eq!(
+            refreshed.entries["main.py"].sha256,
+            manifest.entries["main.py"].sha256
+        );
+        assert_eq!(f.sync().await.unwrap().uploaded_bytes, 0);
+        assert_eq!(f.manifest(), refreshed);
         f.write("main.py", b"print(2)\n");
         let r = f.sync().await.unwrap();
         assert_eq!((r.updated, r.skipped, r.uploaded_bytes), (1, 1, 9));
@@ -1134,6 +1295,139 @@ mod tests {
             std::fs::read(f.remote("binary.bin")).unwrap(),
             [0, 255, 13, 10]
         );
+    }
+
+    fn scan(f: &Fixture, previous: &Manifest) -> Snapshot {
+        snapshot(
+            &f.source,
+            previous,
+            workspace_upload::SSH,
+            &AtomicBool::new(false),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn committed_source_attributes_skip_reads_and_invalidate_only_changed_files() {
+        use std::fs::{File, FileTimes};
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let mut f = Fixture::new();
+        f.write("main.py", b"print(1)\r\n");
+        f.write("data.bin", b"data");
+        std::fs::create_dir(f.source.join("empty")).unwrap();
+        f.sync().await.unwrap();
+        let old = f.manifest();
+        let record = &old.entries["main.py"];
+        assert_eq!((record.source.as_ref().unwrap().size, record.size), (10, 9));
+        let cached = scan(&f, &old);
+        assert_eq!((cached.cached_files, cached.hashed_files), (2, 0));
+        assert_eq!(cached.manifest, old);
+
+        // Timestamp-only change must invalidate the cached source digest even
+        // though the remote data is identical and should not be uploaded.
+        File::options()
+            .write(true)
+            .open(f.source.join("main.py"))
+            .unwrap()
+            .set_times(
+                FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(1_700_000_000)),
+            )
+            .unwrap();
+        let touched = scan(&f, &old);
+        assert_eq!((touched.cached_files, touched.hashed_files), (1, 1));
+        assert_eq!(touched.manifest.entries["main.py"].sha256, record.sha256);
+        assert_eq!(f.sync().await.unwrap().uploaded_bytes, 0);
+        assert_eq!(scan(&f, &f.manifest()).hashed_files, 0);
+
+        // A same-size edit invalidates by mtime; a different-size edit must
+        // invalidate even if a tool restores the previous modification time.
+        let saved_time = std::fs::metadata(f.source.join("main.py"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        f.write("main.py", b"print(2)\r\n");
+        let edited = scan(&f, &f.manifest());
+        assert_eq!((edited.cached_files, edited.hashed_files), (1, 1));
+        assert_ne!(edited.manifest.entries["main.py"].sha256, record.sha256);
+        f.write("main.py", b"print(22)\r\n");
+        File::options()
+            .write(true)
+            .open(f.source.join("main.py"))
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(saved_time))
+            .unwrap();
+        assert_eq!(scan(&f, &f.manifest()).hashed_files, 1);
+    }
+
+    #[tokio::test]
+    async fn legacy_and_obsolete_source_cache_rebuild_without_changing_workspace_identity() {
+        let mut f = Fixture::new();
+        f.write("main.py", b"print(1)\n");
+        f.sync().await.unwrap();
+        let mut legacy = f.manifest();
+        for record in legacy.entries.values_mut() {
+            record.source = None;
+        }
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains("\"source\""));
+        std::fs::write(f.target.join("rr-test/.sync/manifest.json"), bytes).unwrap();
+        assert_eq!(scan(&f, &legacy).hashed_files, 1);
+        assert_eq!(f.sync().await.unwrap().uploaded_bytes, 0);
+        let current = f.manifest();
+        assert_eq!(
+            (current.version, current.workspace_id.as_str()),
+            (VERSION, "test")
+        );
+        assert_eq!(scan(&f, &current).cached_files, 1);
+        let mut obsolete = current.clone();
+        obsolete
+            .entries
+            .get_mut("main.py")
+            .unwrap()
+            .source
+            .as_mut()
+            .unwrap()
+            .version += 1;
+        assert_eq!(scan(&f, &obsolete).hashed_files, 1);
+        assert_eq!(scan(&f, &obsolete).manifest, current);
+    }
+
+    #[tokio::test]
+    async fn failed_preflight_does_not_commit_source_cache_or_hide_changes_on_retry() {
+        let mut f = Fixture::new();
+        f.write("a.py", b"old");
+        f.sync().await.unwrap();
+        let old = f.manifest();
+        f.write("a.py", b"new source");
+        f.write("z.py", b"source");
+        std::fs::write(f.remote("z.py"), b"artifact").unwrap();
+        assert!(f.sync().await.is_err());
+        assert_eq!(f.manifest(), old);
+        assert_eq!(std::fs::read(f.remote("a.py")).unwrap(), b"old");
+        assert_eq!(scan(&f, &old).hashed_files, 2);
+        std::fs::remove_file(f.remote("z.py")).unwrap();
+        assert_eq!(f.sync().await.unwrap().updated, 1);
+        assert_eq!(std::fs::read(f.remote("a.py")).unwrap(), b"new source");
+        assert_eq!(scan(&f, &f.manifest()).cached_files, 2);
+    }
+
+    #[tokio::test]
+    async fn cached_sources_are_rechecked_after_remote_preflight() {
+        let mut f = Fixture::new();
+        f.write("a.py", b"old");
+        f.sync().await.unwrap();
+        let snapshot = scan(&f, &f.manifest());
+        assert_eq!(snapshot.cached_files, 1);
+        f.write("a.py", b"new source");
+        assert!(
+            verify_sources(Arc::new(snapshot.sources), Arc::new(AtomicBool::new(false)))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("source changed during sync")
+        );
+        assert_eq!(std::fs::read(f.remote("a.py")).unwrap(), b"old");
     }
 
     #[tokio::test]
@@ -1213,7 +1507,7 @@ mod tests {
         f.write("b.py", b"b");
         let next = snapshot(
             &f.source,
-            "test",
+            &Manifest::empty("test"),
             workspace_upload::SSH,
             &AtomicBool::new(false),
         )
@@ -1241,7 +1535,7 @@ mod tests {
         f.write("a.py", b"first");
         let first = snapshot(
             &f.source,
-            "test",
+            &Manifest::empty("test"),
             workspace_upload::SSH,
             &AtomicBool::new(false),
         )
@@ -1251,7 +1545,7 @@ mod tests {
         f.write("a.py", b"second");
         let second = snapshot(
             &f.source,
-            "test",
+            &Manifest::empty("test"),
             workspace_upload::SSH,
             &AtomicBool::new(false),
         )
