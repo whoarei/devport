@@ -12,7 +12,8 @@ import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 import { useAppStore } from "../store";
-import { dirtyTab, EditorLanguage, EditorTab, uploadBusy } from "../editorDocument";
+import { dirtyTab, EditorLanguage, EditorTab, uploadBusy, withTab } from "../editorDocument";
+import { workspaceRefEquals } from "../api";
 import { nameOf } from "../workspaceTree";
 import { useThemeStore, type Theme } from "../theme";
 
@@ -36,22 +37,38 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
   const readOnlyConfig = useRef(new Compartment());
   const themeConfig = useRef(new Compartment());
   const theme = useThemeStore((state) => state.theme);
+  const restoreLocation = useRef<(() => void) | null>(null);
   // 回调随渲染更新，编辑器扩展内始终读到最新值
   const handlers = useRef({ active, onCursor, focusToolbar });
   handlers.current = { active, onCursor, focusToolbar };
 
   useEffect(() => {
     if (!parent.current) return;
+    const source = useAppStore.getState().workspace;
+    const initial = useAppStore.getState().openTabs.find((file) => file.name === tab);
+    let positioned = !initial?.view;
+    const capture = (editor: EditorView) => {
+      if (!positioned || !editor.dom.clientHeight || !workspaceRefEquals(source, useAppStore.getState().workspace)) return;
+      const current = useAppStore.getState().openTabs.find((file) => file.name === tab);
+      if (!current || current.loaded === false || current.generation !== initial?.generation) return;
+      const selection = editor.state.selection.main;
+      const location = { anchor: selection.anchor, head: selection.head,
+        scroll_top: Math.max(0, editor.scrollDOM.scrollTop), scroll_left: Math.max(0, editor.scrollDOM.scrollLeft) };
+      if (JSON.stringify(current.view) === JSON.stringify(location)) return;
+      useAppStore.setState((s) => ({ openTabs: withTab(s.openTabs, tab, (file) => ({ ...file, view: location })) }));
+    };
     const report = (state: EditorState) => {
       if (!handlers.current.active) return;
       const pos = state.selection.main.head;
       const line = state.doc.lineAt(pos);
       handlers.current.onCursor(`${line.number}:${pos - line.from + 1}`);
     };
+    const content = initial?.fileContent ?? "";
     const editor = new EditorView({
       parent: parent.current,
       state: EditorState.create({
-        doc: useAppStore.getState().openTabs.find((t) => t.name === tab)?.fileContent ?? "",
+        doc: content,
+        selection: initial?.view ? { anchor: Math.min(initial.view.anchor, content.length), head: Math.min(initial.view.head, content.length) } : undefined,
         extensions: [
           lineNumbers(), highlightActiveLine(), highlightActiveLineGutter(), drawSelection(),
           history(), indentOnInput(), bracketMatching(), closeBrackets(),
@@ -73,6 +90,7 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
           EditorView.updateListener.of((update) => {
             if (update.docChanged) useAppStore.getState().editContent(tab, update.state.doc.toString());
             if (update.docChanged || update.selectionSet) report(update.state);
+            if (update.docChanged || update.selectionSet) capture(update.view);
           }),
           EditorView.theme({
             "&": { height: "100%", color: "var(--text-primary, #ddd)", backgroundColor: "var(--surface-base, #17181c)" },
@@ -88,8 +106,19 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
       }),
     });
     view.current = editor;
+    const onScroll = () => capture(editor);
+    editor.scrollDOM.addEventListener("scroll", onScroll);
+    restoreLocation.current = () => editor.requestMeasure({ read: () => handlers.current.active && !!parent.current?.clientHeight, write: (visible) => {
+      if (!positioned && initial?.view && visible) {
+        editor.scrollDOM.scrollTop = initial.view.scroll_top;
+        editor.scrollDOM.scrollLeft = initial.view.scroll_left;
+        positioned = true;
+      }
+    } });
+    restoreLocation.current();
     report(editor.state);
-    return () => { editor.destroy(); view.current = null; };
+    return () => { capture(editor); editor.scrollDOM.removeEventListener("scroll", onScroll);
+      editor.destroy(); view.current = null; restoreLocation.current = null; };
     // A document generation remounts this component; ordinary edits preserve history.
   }, []);
 
@@ -97,6 +126,7 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
   useEffect(() => {
     if (!active || !view.current) return;
     view.current.requestMeasure();
+    restoreLocation.current?.();
     const pos = view.current.state.selection.main.head;
     const line = view.current.state.doc.lineAt(pos);
     onCursor(`${line.number}:${pos - line.from + 1}`);
@@ -120,6 +150,7 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
   return <div className={`editor${state.tabs.length === 0 ? " empty" : ""}`}>
     {state.error && <div className="editor-error" role="alert">{state.error}
       {active?.conflict && <button disabled={locked || state.saving} onClick={() => void useAppStore.getState().reloadFile()}>{t("editor.reloadDisk")}</button>}
+      {active?.loaded === false && <button disabled={locked} onClick={() => void useAppStore.getState().openWorkspaceFile(active.name)}>{t("environment.retry")}</button>}
     </div>}
     {state.tabs.length === 0 ? <p>{state.loading ? t("editor.opening") : t("editor.placeholder")}</p> : <>
       <div className="editor-tabs center-panel-header" role="tablist" aria-label={t("editor.openTabs")}>
@@ -144,9 +175,9 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
           {state.tabs.map((tab) => (
             <div key={`${tab.name}:${tab.generation}`}
               className={`tab-editor${tab.name === state.activeFile ? " active" : ""}`}>
-              <CodeEditor tab={tab.name} language={tab.language} locked={locked}
+              {(tab.loaded !== false || tab.name === state.activeFile) && <CodeEditor tab={tab.name} language={tab.language} locked={locked || tab.loaded === false}
                 active={tab.name === state.activeFile && !collapsed} onCursor={setCursor}
-                focusToolbar={() => languageSelect.current?.focus()} />
+                focusToolbar={() => languageSelect.current?.focus()} />}
             </div>
           ))}
           <div className="editor-status" role="status">

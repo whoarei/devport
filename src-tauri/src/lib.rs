@@ -15,6 +15,7 @@ pub mod tray;
 pub mod update;
 pub mod usb;
 pub mod verbatim;
+pub mod work_environment;
 pub mod workspace;
 pub mod workspace_commands;
 pub mod workspace_probe;
@@ -95,6 +96,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            work_environment::read_work_environment,
+            work_environment::save_work_environment,
             workspace_commands::read_runner_config,
             workspace_commands::save_runner_config,
             workspace_commands::list_workspace_commands,

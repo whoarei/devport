@@ -24,7 +24,10 @@ interface AppState {
   recentWorkspaces: WorkspaceRef[];
   /** 目录树缓存：键为相对目录路径，"" 为工作区根 */
   workspaceTree: WorkspaceTree;
+  workspaceScroll: number;
   workspaceError: string | null;
+  environmentError: string | null;
+  environmentReady: boolean;
   workspaceMutating: boolean;
   /** 打开的文件标签（打开顺序即标签顺序） */
   openTabs: EditorTab[];
@@ -71,7 +74,7 @@ interface AppState {
   renameWorkspaceEntry: (path: WorkspacePath, newName: string) => Promise<boolean>;
   deleteWorkspaceEntry: (path: WorkspacePath) => Promise<boolean>;
   dismissWorkspaceError: () => void;
-  openWorkspaceFile: (name: string) => Promise<void>;
+  openWorkspaceFile: (name: string, reveal?: boolean) => Promise<void>;
   activateFile: (name: string) => void;
   editContent: (name: string, content: string) => void;
   setLanguage: (language: EditorLanguage) => void;
@@ -167,7 +170,7 @@ function pruneRuns(state: Pick<AppState, "runs" | "history" | "outputBuffers" | 
   return { runs, outputBuffers };
 }
 
-// 文件标签不持久化，启动时即使上次编辑区可见，也从隐藏状态开始。
+// Work-environment restoration reveals the editor only after restoring its tabs.
 const initialLayout = loadLayout();
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -181,7 +184,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   workspace: null,
   recentWorkspaces: loadWorkspaceHistory(),
   workspaceTree: {},
+  workspaceScroll: 0,
   workspaceError: null,
+  environmentError: null,
+  environmentReady: false,
   workspaceMutating: false,
   openTabs: [],
   activeFile: null,
@@ -248,10 +254,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       const recentWorkspaces = workspace ? rememberWorkspace(get().recentWorkspaces, workspace) : get().recentWorkspaces;
       if (workspace) saveWorkspaceHistory(recentWorkspaces);
       set((s) => ({ workspace, workspaceTree, recentWorkspaces,
-        openTabs: [], activeFile: null,
+        openTabs: [], activeFile: null, workspaceScroll: 0,
         runDraft: { ...s.runDraft, entry: "" } }));
       hideEmptyEditor(get);
     } catch (error) {
+      if (get().openTabs.some((tab) => tab.discardRecovery)) set((s) => ({ openTabs: s.openTabs.map((tab) => tab.discardRecovery ? { ...tab, discardRecovery: false } : tab) }));
       if (sequence === loadSequence) set({ editorError: errorMessage(error) });
       throw error;
     } finally {
@@ -261,15 +268,18 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   loadWorkspaceDir: async (dir) => {
     const root = get().workspace;
-    if (!root) return;
+    if (!root || get().workspaceTree[dir]?.loading) return;
     const sequence = workspaceSequence;
+    set((s) => ({ workspaceTree: withNode(s.workspaceTree, dir, (node) => ({ entries: node?.entries ?? [],
+      expanded: node?.expanded ?? dir === "", loaded: node?.loaded ?? false, loading: true })) }));
     try {
       const entries = await api.listWorkspaceDir(root, dir);
       if (sequence !== workspaceSequence || !workspaceRefEquals(get().workspace, root)) return;
       set((s) => ({ workspaceTree: withNode(s.workspaceTree, dir, (node) =>
-        ({ entries, expanded: node?.expanded ?? false, loaded: true })) }));
+        ({ entries, expanded: node?.expanded ?? false, loaded: true, loading: false })) }));
     } catch (error) {
-      if (sequence === workspaceSequence && workspaceRefEquals(get().workspace, root)) set({ workspaceError: errorMessage(error) });
+      if (sequence === workspaceSequence && workspaceRefEquals(get().workspace, root)) set((s) => ({ workspaceError: errorMessage(error),
+        workspaceTree: withNode(s.workspaceTree, dir, (node) => ({ ...node!, loading: false })) }));
     }
   },
 
@@ -402,26 +412,34 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   dismissWorkspaceError: () => set({ workspaceError: null }),
 
-  openWorkspaceFile: async (name) => {
+  openWorkspaceFile: async (name, reveal = true) => {
     const workspace = get().workspace;
     if (!workspace || get().saving || get().starting || get().guarding) return;
     // 已打开的文件只激活标签，不重新读盘
-    if (get().openTabs.some((tab) => tab.name === name)) {
+    const existing = get().openTabs.find((tab) => tab.name === name);
+    if (existing && existing.loaded !== false) {
       get().activateFile(name);
       return;
     }
     const sequence = ++loadSequence;
-    set({ loading: true, editorError: null });
+    set({ loading: true, editorError: null, ...(existing ? { activeFile: name } : {}) });
     try {
       const doc = await api.readWorkspaceFile(workspace, name);
       if (sequence === loadSequence && workspaceRefEquals(get().workspace, workspace)) {
-        set((s) => ({ openTabs: [...s.openTabs, { name, fileContent: doc.content, savedContent: doc.content,
-          revision: doc.revision, eol: doc.eol, bom: doc.bom, language: inferLanguage(name),
-          conflict: false, generation: 1 }], activeFile: name }));
-        revealEditor(get);
+        const draft = existing?.recovery;
+        const conflict = !!draft && draft.revision !== doc.revision && draft.content !== doc.content;
+        const tab: EditorTab = { name, fileContent: draft?.content ?? doc.content, savedContent: doc.content,
+          revision: conflict ? draft!.revision : doc.revision, eol: draft?.eol ?? doc.eol, bom: draft?.bom ?? doc.bom,
+          language: existing?.language ?? inferLanguage(name), view: existing?.view, loaded: true,
+          conflict, generation: (existing?.generation ?? 0) + 1 };
+        set((s) => ({ openTabs: existing ? s.openTabs.map((old) => old.name === name ? tab : old) : [...s.openTabs, tab],
+          activeFile: name, editorError: conflict ? i18n.t("environment.draftConflict") : null }));
+        if (reveal) revealEditor(get);
       }
     } catch (e) {
-      if (sequence === loadSequence) set({ editorError: errorMessage(e) });
+      if (sequence === loadSequence) set((s) => ({ editorError: errorMessage(e),
+        openTabs: existing?.recovery ? withTab(s.openTabs, name, (tab) => ({ ...tab, loaded: true, conflict: true,
+          generation: tab.generation + 1 })) : s.openTabs }));
     } finally {
       if (sequence === loadSequence) set({ loading: false });
     }
@@ -429,14 +447,17 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   activateFile: (name) => {
     if (get().openTabs.some((tab) => tab.name === name)) {
-      set({ activeFile: name });
+      if (get().activeFile !== name) { ++loadSequence; set({ loading: false }); }
+      set({ activeFile: name, editorError: null });
       revealEditor(get);
+      if (get().openTabs.find((tab) => tab.name === name)?.loaded === false) void get().openWorkspaceFile(name);
     }
   },
 
   editContent: (name, content) => {
     if (get().loading || get().starting || get().guarding) return;
-    set((s) => ({ openTabs: withTab(s.openTabs, name, (tab) => ({ ...tab, fileContent: content })) }));
+    set((s) => ({ openTabs: withTab(s.openTabs, name, (tab) => ({ ...tab, fileContent: content, discardRecovery: false,
+      recovery: tab.loaded === false ? tab.recovery : undefined })) }));
   },
   setLanguage: (language) => {
     const active = get().activeFile;
@@ -448,6 +469,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (state.saving || state.loading) return false;
     const tab = state.openTabs.find((t) => t.name === (name ?? state.activeFile));
     if (!tab) return false;
+    if (!state.workspace) return false;
+    if (tab.loaded === false) {
+      const sequence = ++loadSequence;
+      set({ loading: true, editorError: null });
+      try {
+        const doc = await api.readWorkspaceFile(state.workspace!, tab.name);
+        if (sequence !== loadSequence || !workspaceRefEquals(get().workspace, state.workspace)) return false;
+        const conflict = !!tab.recovery && tab.recovery.revision !== doc.revision && tab.fileContent !== doc.content;
+        set((s) => ({ openTabs: withTab(s.openTabs, tab.name, (current) => ({ ...current, loaded: true, recovery: undefined,
+          fileContent: tab.recovery ? current.fileContent : doc.content,
+          savedContent: doc.content, revision: conflict ? tab.revision : doc.revision, conflict, generation: current.generation + 1 })),
+          editorError: conflict ? i18n.t("environment.draftConflict") : null }));
+        if (conflict) return false;
+      } catch (error) { if (sequence === loadSequence) set({ editorError: errorMessage(error) }); return false; }
+      finally { if (sequence === loadSequence) set({ loading: false }); }
+      return get().saveFile(tab.name);
+    }
     if (!dirtyTab(tab)) return true;
     if (!state.workspace) return false;
     if (uploadBusy(state)) {
@@ -462,7 +500,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const current = get().openTabs.find((t) => t.name === tab.name);
       if (!current || current.generation !== tab.generation) return false;
       set((s) => ({ openTabs: withTab(s.openTabs, tab.name, (t) =>
-        ({ ...t, savedContent: tab.fileContent, revision: saved.revision, conflict: false })) }));
+        ({ ...t, savedContent: tab.fileContent, revision: saved.revision, conflict: false, recovery: undefined, discardRecovery: false })) }));
       return true;
     } catch (error) {
       const conflict = typeof error === "object" && error !== null && "code" in error && error.code === "conflict";
@@ -491,7 +529,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const choice = await new Promise<ChangeChoice>((resolve) => set({ changePrompt: { name: tab.name, resolve } }));
       set({ changePrompt: null });
       if (choice === "cancel") return false;
-      if (choice === "discard") return true;
+      if (choice === "discard") {
+        set((s) => ({ openTabs: withTab(s.openTabs, tab.name, (current) => ({ ...current, discardRecovery: true })) }));
+        return true;
+      }
       return await get().saveFile(tab.name)
         && !dirtyTab(get().openTabs.find((t) => t.name === tab.name) ?? tab);
     } finally {
@@ -501,7 +542,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   confirmAllUnsaved: async () => {
     for (const tab of get().openTabs) {
-      if (!await get().confirmUnsaved(tab.name)) return false;
+      if (!await get().confirmUnsaved(tab.name)) {
+        set((s) => ({ openTabs: s.openTabs.map((t) => ({ ...t, discardRecovery: false })) }));
+        return false;
+      }
     }
     return true;
   },
@@ -518,9 +562,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const doc = await api.readWorkspaceFile(state.workspace, tab.name);
       if (sequence === loadSequence) set((s) => ({ openTabs: withTab(s.openTabs, tab.name, (t) =>
         ({ ...t, fileContent: doc.content, savedContent: doc.content, revision: doc.revision,
-          eol: doc.eol, bom: doc.bom, conflict: false, generation: t.generation + 1 })) }));
+          eol: doc.eol, bom: doc.bom, conflict: false, loaded: true, recovery: undefined, discardRecovery: false, generation: t.generation + 1 })) }));
     } catch (error) {
-      if (sequence === loadSequence) set({ editorError: errorMessage(error) });
+      if (sequence === loadSequence) set((s) => ({ editorError: errorMessage(error),
+        openTabs: withTab(s.openTabs, tab.name, (t) => ({ ...t, discardRecovery: false })) }));
     } finally {
       if (sequence === loadSequence) set({ loading: false });
     }

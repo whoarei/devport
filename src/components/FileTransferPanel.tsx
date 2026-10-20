@@ -144,12 +144,14 @@ export function FileTransferPanel({ visible, collapsed, onToggleCollapse }: Pane
   const devices = useAppStore((s) => s.devices);
   const workspace = useAppStore((s) => s.workspace);
   const selectedDeviceId = useAppStore((s) => s.selectedDeviceId);
-  const [hidden, setHidden] = useState(false);
-  const [exclude, setExclude] = useState(false);
+  const environmentReady = useAppStore((s) => s.environmentReady);
+  const { hidden, exclude } = useTransferStore((s) => s.options);
+  const setHidden = (hidden: boolean) => useTransferStore.setState((s) => ({ options: { ...s.options, hidden } }));
+  const setExclude = (exclude: boolean) => useTransferStore.setState((s) => ({ options: { ...s.options, exclude } }));
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !environmentReady) return;
     useTransferStore.getState().restore();
-  }, [visible, devices, workspace, selectedDeviceId]);
+  }, [visible, devices, workspace, selectedDeviceId, environmentReady]);
   return <div className="file-transfer-panel">
     <PanelTitle title={t("transfer.title")} collapsed={collapsed} onToggle={onToggleCollapse} className="center-panel-header">
       <button className="transfer-hide" aria-label={t("transfer.hide")} title={t("transfer.hide")} onClick={() => {

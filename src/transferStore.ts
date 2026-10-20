@@ -5,11 +5,13 @@ import { dirtyTab, withTab } from "./editorDocument";
 import { useAppStore } from "./store";
 import { loadTransferDirectories, rememberTransferDirectory, rememberedDeviceDirectory, type TransferDirectories } from "./transferDirectories";
 import { sameTransferFilename, transferActive, transferApi, workspaceTransferPath, type TransferDirectory, type TransferSummary, type TransferPlan } from "./transferApi";
+import type { TransferOptions } from "./environmentState";
 
 interface BrowserState { endpoint: WorkspaceRef | null; directory: TransferDirectory | null; selected: string[]; loading: boolean; error: string | null; generation: number }
 type Side = "local" | "device";
 const emptyBrowser = (): BrowserState => ({ endpoint: null, directory: null, selected: [], loading: false, error: null, generation: 0 });
 interface State {
+  options: TransferOptions;
   local: BrowserState; device: BrowserState; tasks: TransferSummary[]; error: string | null;
   plan: TransferPlan | null; planning: boolean;
   registeredIds: string[];
@@ -28,6 +30,7 @@ interface State {
 }
 
 export const useTransferStore = create<State>((set, get) => ({
+  options: { device_id: null, hidden: false, exclude: false },
   local: emptyBrowser(), device: emptyBrowser(), tasks: [], error: null, plan: null, planning: false, registeredIds: [], completionNotices: {},
   directories: loadTransferDirectories(),
   register: (id) => set((s) => ({ registeredIds: [...s.registeredIds.filter((old) => old !== id), id].slice(-100) })),
@@ -39,11 +42,13 @@ export const useTransferStore = create<State>((set, get) => ({
       if (get()[side].generation !== generation) return;
       const directories = rememberTransferDirectory(get().directories, directory.endpoint);
       set({ directories, [side]: { endpoint: directory.endpoint, directory, selected: selection.filter((name) => directory.entries.some((entry) => entry.name === name)), loading: false, error: null, generation } });
+      if (side === "device" && directory.endpoint.type === "device") set({ options: { ...get().options, device_id: directory.endpoint.device_id } });
     } catch (error) {
       if (get()[side].generation === generation) set({ [side]: { ...get()[side], loading: false, error: errorMessage(error) } });
     }
   },
   openDevice: async (id) => {
+    set({ options: { ...get().options, device_id: id || null } });
     const device = useAppStore.getState().devices.find((d) => d.id === id && ["ssh", "wsl"].includes(d.transport));
     if (device) await get().browse("device", { type: "device", device_id: id, path: rememberedDeviceDirectory(get().directories, id) ?? device.workspace_root });
     else set({ device: { ...emptyBrowser(), generation: get().device.generation + 1 } });
@@ -57,7 +62,8 @@ export const useTransferStore = create<State>((set, get) => ({
     }
     if (!get().device.endpoint && get().device.generation === 0) {
       const hosts = state.devices.filter((d) => ["ssh", "wsl"].includes(d.transport));
-      const device = hosts.find((d) => workspace?.type === "device" && d.id === workspace.device_id)
+      const device = hosts.find((d) => d.id === get().options.device_id)
+        ?? hosts.find((d) => workspace?.type === "device" && d.id === workspace.device_id)
         ?? hosts.find((d) => d.id === state.selectedDeviceId) ?? hosts[0];
       if (device) {
         const path = rememberedDeviceDirectory(get().directories, device.id)

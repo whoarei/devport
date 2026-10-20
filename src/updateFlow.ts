@@ -7,6 +7,7 @@ import { useAppStore } from "./store";
 import { useTerminalStore, terminalActive } from "./terminalStore";
 import { transferActive, transferApi } from "./transferApi";
 import { useTransferStore } from "./transferStore";
+import { flushWorkEnvironment } from "./workEnvironment";
 import {
   directUpdateAction,
   installWithProgress,
@@ -24,6 +25,7 @@ export async function installCheckedUpdate(
   useAppStore.setState({ updating: true });
   onPhase({ kind: "downloading", downloaded: 0, total: null });
   try {
+    await flushWorkEnvironment();
     await installWithProgress(info.latest_version,
       () => listen<UpdateProgress>("app-update://progress", ({ payload }) => {
         if (payload.phase === "verifying" || payload.phase === "installing") onPhase({ kind: payload.phase });

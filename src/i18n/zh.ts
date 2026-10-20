@@ -3,6 +3,14 @@
  * en.ts 通过 typeof zh 约束保持 key 集合一致，漏翻会编译报错。
  */
 export const zh = {
+  environment: {
+    saveFailed: "工作环境保存失败：{{message}}",
+    restoreFailed: "工作环境恢复失败，原恢复记录已保留：{{message}}",
+    windowFailed: "窗口位置恢复失败：{{message}}",
+    draftConflict: "草稿已恢复，但磁盘文件已改变。请核对内容；重新加载磁盘文件会询问如何处理草稿。",
+    terminalRestored: "终端标签已恢复。连接后将建立新会话，并进入原来的起始目录。",
+    connect: "连接", retry: "重新读取",
+  },
   workspaceSync: { waiting: "等待工作区占用释放…", summary: "工作区同步：新增 {{added}}，更新 {{updated}}，删除 {{deleted}}，跳过 {{skipped}}，权限 {{permissions}}；上传 {{bytes}} 字节" },
   workspaceRun: {"cancelPreparation":"取消准备","preparationBackground":"关闭窗口后会继续准备，再次打开可查看进度。","preparationLog":"准备日志（最近输出）","preparationReady":"环境已就绪","preparationStatus":"环境准备状态","preparationStopping":"正在取消…","preparationSubmitting":"正在保存并提交…","target":"目标设备","python":"Python 环境","system":"设备默认 Python","project":"项目 Python 环境","settings":"运行设置…","hint":"在工作区右键脚本运行","loading":"正在检查…","invalidConfig":"项目配置需要检查","rerun":"重新运行","workspaceMismatch":"当前工作区与任务工作区不一致，请切回原工作区","unknownSource":"无法确定任务的源工作区","presetShell":"预置命令 · 使用目标设备的命令 Shell","historyUnsaved":"任务已启动，历史命令未保存","retry":"重试","withArgs":"带参数运行…","moduleName":"Python 模块名","argsHelp":"每项为一个原始参数；空项也会传入。无需添加 Shell 引号。","argument":"参数 {{index}}","removeArgument":"删除参数","addArgument":"添加参数","envInvalid":"环境变量必须是字符串值的 JSON 对象","noLock":"当前没有写入锁","recoverLock":"恢复遗留写入锁…","lockMessage":"确认没有其他进程正在写入后再恢复。锁的所有者信息：","sessionOnly":"仅本会话使用","version":"项目 Python 版本","pythonPath":"源码搜索目录","needsPrepare":"首次运行会准备或复用环境","legacyEntry":"旧配置入口 {{entry}} 不再覆盖右键选择","recheck":"重新检查","prepare":"准备环境","cwd":"工作目录（相对工作区根目录）","bash":"本机 Bash","autoBash":"自动选择（仅一个可用 Bash 时）","environment":"附加环境变量（JSON）","save":"保存","history":"历史命令","globalDelete":"删除命令会从此工作区的所有关联菜单移除。","editRun":"编辑参数后运行…","deleteCommand":"删除命令","noHistory":"暂无历史命令","close":"关闭","asModule":"作为 Python 模块运行…","runModule":"运行 Python 模块…","runPackage":"运行 Python 包","packageArgs":"带参数运行 Python 包…","noArgs":"（无参数）","manageHistory":"管理历史命令…"},
   runnerEntry: {"entryPath":"脚本相对路径","editEntry":"编辑入口…",cached:"已有缓存 · 启动前校验",notPrepared:"需要准备",useLegacy:"采用旧入口作为运行候选…",needsEdit:"入口需确认或编辑"},

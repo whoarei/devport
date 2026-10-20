@@ -27,6 +27,9 @@ body,
   height: 100%;
 }
 
+.environment-notice { flex-shrink: 0; padding: 6px 12px; font-size: 12px; color: var(--warning, #d0bc99); background: var(--warning-surface, #302d27); overflow-wrap: anywhere; }
+.terminal-restore { display: flex; align-items: center; gap: 12px; padding: 10px 12px; font-size: 12px; color: var(--text-secondary, #aaa); }
+
 /* ---------- custom title bar ---------- */
 .titlebar {
   position: relative;

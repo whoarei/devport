@@ -146,6 +146,10 @@ function TreeLevel(props: TreeProps) {
   const { t } = useTranslation();
   const { dir, depth, tree, openFile, disabled, editing, onOpen, onToggle, onMenu, onEditing } = props;
   const node = tree[dir];
+  const workspace = useAppStore((state) => state.workspace);
+  useEffect(() => {
+    if (node?.expanded && !node.loaded && !node.loading) void useAppStore.getState().loadWorkspaceDir(dir);
+  }, [workspace, dir, node?.expanded, node?.loaded]);
   if (!node) return null;
   const creating = editing && editing.mode !== "rename" && editing.dir === dir ? editing : null;
   return (
@@ -223,6 +227,15 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
   const [editing, setEditing] = useState<Editing | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const label = workspaceLabel(workspace, devices);
+  const panel = useRef<HTMLDivElement>(null);
+  const scrolling = useRef(false);
+  useEffect(() => {
+    if (!panel.current || collapsed) return;
+    scrolling.current = true;
+    panel.current.scrollTop = useAppStore.getState().workspaceScroll;
+    const frame = requestAnimationFrame(() => { scrolling.current = false; });
+    return () => cancelAnimationFrame(frame);
+  }, [workspace, workspaceTree, collapsed]);
 
   // 折叠面板或切换工作区时收起菜单与行内输入，避免操作落到错误的目录
   const sourceRevision = workspaceSourceRevision(workspace, devices);
@@ -307,6 +320,10 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
   return (
     <div
       className="workspace-panel"
+      ref={panel}
+      onScroll={(event) => {
+        if (!scrolling.current) useAppStore.setState({ workspaceScroll: Math.max(0, event.currentTarget.scrollTop) });
+      }}
       onContextMenu={collapsed ? undefined : (event) => workspace ? openMenu(event, WORKSPACE_ROOT, null) : openPickerMenu(event)}
     >
       <PanelTitle title={t("workspace.title")} collapsed={collapsed} onToggle={onToggleCollapse} />

@@ -25,6 +25,7 @@ import { PANEL_COMPONENTS } from "./panels/components";
 import { checkForAvailableUpdate } from "./updateStatus";
 import { endConsoleTabCycle, handleConsoleTabKeyDown, handleConsoleTabKeyUp } from "./consoleTabs";
 import { applyUiZoom, changeUiZoom, loadUiZoom, saveUiZoom, uiZoomShortcut, type UiZoomAction } from "./uiZoom";
+import { restoreWorkEnvironment } from "./workEnvironment";
 
 export default function App() {
   const { t } = useTranslation();
@@ -58,7 +59,8 @@ export default function App() {
 
   useEffect(() => {
     const report = (error: unknown) => useAppStore.setState({ editorError: errorMessage(error) });
-    void loadDevices().catch(report);
+    const devicesReady = loadDevices().catch(report);
+    restoreWorkEnvironment(devicesReady);
     void loadRuns().catch(report);
     return onRunEvents((events) => { handleRunEvents(events); useWorkspaceRunStore.getState().events(events); }, report);
   }, [loadDevices, loadRuns, handleRunEvents]);
@@ -123,6 +125,7 @@ export default function App() {
   }, []);
 
   const layout = useAppStore((state) => state.layout);
+  const environmentError = useAppStore((state) => state.environmentError);
   const setLayout = useAppStore((state) => state.setLayout);
   const centerRef = useRef<HTMLDivElement>(null);
 
@@ -243,6 +246,7 @@ export default function App() {
         {centerDock}
         {layout.sidebarPosition === "right" && sidebarDock}
       </main>
+      {environmentError && <div className="environment-notice" role="alert">{environmentError}</div>}
     </div>
   );
 }

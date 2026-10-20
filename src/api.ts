@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { WorkEnvironment } from "./environmentState";
 
 export type AuthMethod =
   | { type: "password"; password: string }
@@ -287,6 +288,8 @@ export function errorMessage(error: unknown): string {
 }
 
 export const api = {
+  readWorkEnvironment: () => invoke<WorkEnvironment | null>("read_work_environment"),
+  saveWorkEnvironment: (snapshot: WorkEnvironment) => invoke<void>("save_work_environment", { snapshot }),
   readRunnerConfig: (workspace: WorkspaceRef) => invoke<RunnerConfigState>("read_runner_config", { workspace }),
   saveRunnerConfig: (workspace: WorkspaceRef, config: RunnerConfig, expectedRevision: string) => invoke<RunnerConfigState>("save_runner_config", { workspace, config, expectedRevision }),
   listWorkspaceCommands: (workspace: WorkspaceRef) => invoke<WorkspaceCommands>("list_workspace_commands", { workspace }),

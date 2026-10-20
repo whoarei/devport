@@ -9,6 +9,7 @@ export interface WorkspaceNode {
   entries: WorkspaceEntry[];
   expanded: boolean;
   loaded: boolean;
+  loading?: boolean;
 }
 
 export type WorkspaceTree = Record<WorkspacePath, WorkspaceNode>;

@@ -113,6 +113,10 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
   };
 
   return <section className="terminal-page" role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} hidden={!visible}>
+    {!sessionId && !tab.busy && <div className="terminal-restore">
+      <span>{t("environment.terminalRestored")}</span>
+      <button onClick={() => void useTerminalStore.getState().reconnect(tab.id)}>{t("environment.connect")}</button>
+    </div>}
     {(tab.error || tab.status?.error) && <div className="terminal-error" role="alert">{tab.error || tab.status?.error}</div>}
     <div className="console-body" ref={container} onContextMenu={openMenu} />
     <ContextMenu menu={menu} onClose={() => setMenu(null)} />

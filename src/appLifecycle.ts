@@ -4,6 +4,7 @@ import { useAppStore } from "./store";
 import { useTerminalStore } from "./terminalStore";
 import { transferActive, transferApi } from "./transferApi";
 import i18n from "./i18n";
+import { flushWorkEnvironment } from "./workEnvironment";
 
 let quitting = false;
 
@@ -23,6 +24,7 @@ export async function requestQuit(): Promise<void> {
   const state = useAppStore.getState();
   if (state.loading || state.saving || state.starting || state.guarding || state.updating) return;
   quitting = true;
+  let destroyed = false;
   try {
     if (await state.confirmAllUnsaved()) {
       const transfers = await transferApi.snapshot();
@@ -31,12 +33,15 @@ export async function requestQuit(): Promise<void> {
         if (!await ask(i18n.t("transfer.quitConfirm"), { title: i18n.t("transfer.title"), kind: "warning", okLabel: i18n.t("transfer.cancelAndQuit"), cancelLabel: i18n.t("transfer.wait") })) return;
         await transferApi.cancelAll();
       }
+      await flushWorkEnvironment();
       await useTerminalStore.getState().closeAll();
       await appWindow.destroy();
+      destroyed = true;
     }
   } catch (error) {
     useAppStore.setState({ editorError: errorMessage(error) });
   } finally {
+    if (!destroyed) useAppStore.setState((s) => ({ openTabs: s.openTabs.map((tab) => ({ ...tab, discardRecovery: false })) }));
     quitting = false;
   }
 }

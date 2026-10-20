@@ -12,6 +12,11 @@ export interface EditorTab {
   language: EditorLanguage;
   conflict: boolean;
   generation: number;
+  /** Restored descriptors read content only when activated. */
+  loaded?: boolean;
+  recovery?: import("./environmentState").FileDraft;
+  view?: import("./environmentState").EditorLocation;
+  discardRecovery?: boolean;
 }
 
 export function inferLanguage(name: string): EditorLanguage {
