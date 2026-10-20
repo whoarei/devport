@@ -8,9 +8,11 @@ import { api } from "../api";
 import { useTerminalStore, terminalActive, type TerminalTab } from "../terminalStore";
 import { readTerminal, terminalInput } from "../terminalIO";
 import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
+import { terminalTheme, useThemeStore } from "../theme";
 
 export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: boolean }) {
   const { t } = useTranslation();
+  const theme = useThemeStore((state) => state.theme);
   const container = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal>();
   const fit = useRef<() => void>();
@@ -21,7 +23,7 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
   useEffect(() => {
     if (!container.current || !sessionId) return;
     const term = new Terminal({ fontSize: 13, fontFamily: "Consolas, 'Cascadia Mono', monospace",
-      theme: { background: "#1e1f24" }, scrollback: 3000, convertEol: false });
+      theme: terminalTheme(useThemeStore.getState().theme), scrollback: 3000, convertEol: false });
     const addon = new FitAddon();
     term.loadAddon(addon);
     term.open(container.current);
@@ -63,6 +65,8 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
       terminal.current = undefined; fit.current = undefined;
     };
   }, [tab.id, sessionId]);
+
+  useEffect(() => { if (terminal.current) terminal.current.options.theme = terminalTheme(theme); }, [theme, sessionId]);
 
   useEffect(() => {
     if (visible) {

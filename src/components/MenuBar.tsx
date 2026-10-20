@@ -15,6 +15,7 @@ import { panelsInDock } from "../panels/registry";
 import { emptyDevice, deviceLabel } from "./DeviceDialog";
 import { openWorkspace } from "../workspacePicker";
 import { UI_ZOOM_LEVELS, type UiZoomAction } from "../uiZoom";
+import { useThemeStore } from "../theme";
 
 interface MenuEntry {
   type?: "item" | "checkbox" | "separator";
@@ -98,6 +99,8 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
     setLanguage(preference);
   };
   const barRef = useRef<HTMLDivElement>(null);
+  const themePreference = useThemeStore((state) => state.preference);
+  const chooseTheme = useThemeStore((state) => state.setPreference);
   const layout = useAppStore((state) => state.layout);
   const setLayout = useAppStore((state) => state.setLayout);
   const resetLayout = useAppStore((state) => state.resetLayout);
@@ -242,6 +245,14 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
             { type: "checkbox", label: t("menu.followSystem"), checked: languagePreference === "system", onSelect: () => chooseLanguage("system") },
             { type: "checkbox", label: "中文", checked: languagePreference === "zh", onSelect: () => chooseLanguage("zh") },
             { type: "checkbox", label: "English", checked: languagePreference === "en", onSelect: () => chooseLanguage("en") },
+          ],
+        },
+        {
+          label: t("menu.theme"),
+          children: [
+            { type: "checkbox", label: t("menu.lightTheme"), checked: themePreference === "light", onSelect: () => chooseTheme("light") },
+            { type: "checkbox", label: t("menu.darkTheme"), checked: themePreference === "dark", onSelect: () => chooseTheme("dark") },
+            { type: "checkbox", label: t("menu.followSystem"), checked: themePreference === "system", onSelect: () => chooseTheme("system") },
           ],
         },
         { type: "separator" },

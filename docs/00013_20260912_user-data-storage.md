@@ -96,6 +96,7 @@ WebView 的 localStorage 使用带版本后缀的键保存界面偏好：
 | `remote-runner.recent-workspaces.v2` | 最近打开的工作区（`WorkspaceRef` 对象数组：`{type:"local",dir}` 或 `{type:"device",device_id,path}`，去重、保留首次出现顺序） | 10 条 |
 | `remote-runner.recent-workspaces.v1` | v2 之前的旧键（裸路径字符串数组）；读取时迁移到 v2 并删除本键 | 迁移后不再写入 |
 | `remote-runner.ui-zoom.v1` | 整个 WebView 的界面缩放百分比；允许 70%–200% 的预设档位 | 单个数值 |
+| `remote-runner.theme.v1` | 视图 → 主题：`light` / `dark` / `system`，默认深色；跟随系统时实时响应系统配色变化 | 单个字符串 |
 | `remote-runner.transfer-directories.v1` | 文件传输目录：本机目录 `local`，按设备 ID 保存的目录映射 `devices`；只记录成功打开后的返回路径，不保存文件选择或凭据 | 本机一条，每设备一条 |
 
 这些偏好都有防御性读取：坏数据、缺字段、越界值会回落到默认值；写入失败不会中断应用。文件传输切换设备时恢复对应目录，首次使用设备回落到其工作区根目录；设备改名保留记忆，新设备 ID 不复用旧目录。从工作区右键进入时优先采用指定工作区和条目位置。恢复目录失败时保留地址供修改，不覆盖此前成功打开的记忆。localStorage 属于 WebView 数据目录，与应用配置目录不是同一位置，清除 WebView 数据不影响设备配置与运行历史。

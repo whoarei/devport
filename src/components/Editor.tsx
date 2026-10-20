@@ -3,7 +3,7 @@ import { useShallow } from "zustand/react/shallow";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers, drawSelection } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { bracketMatching, indentOnInput, indentUnit, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
+import { bracketMatching, defaultHighlightStyle, indentOnInput, indentUnit, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search";
@@ -14,6 +14,12 @@ import i18n from "../i18n";
 import { useAppStore } from "../store";
 import { dirtyTab, EditorLanguage, EditorTab, uploadBusy } from "../editorDocument";
 import { nameOf } from "../workspaceTree";
+import { useThemeStore, type Theme } from "../theme";
+
+function editorTheme(theme: Theme) {
+  return [syntaxHighlighting(theme === "dark" ? oneDarkHighlightStyle : defaultHighlightStyle),
+    EditorView.theme({}, { dark: theme === "dark" })];
+}
 
 function languageExtension(language: EditorLanguage) {
   return [language === "python" ? python() : language === "shell" ? StreamLanguage.define(shell) : [],
@@ -28,6 +34,8 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
   const view = useRef<EditorView | null>(null);
   const languageConfig = useRef(new Compartment());
   const readOnlyConfig = useRef(new Compartment());
+  const themeConfig = useRef(new Compartment());
+  const theme = useThemeStore((state) => state.theme);
   // 回调随渲染更新，编辑器扩展内始终读到最新值
   const handlers = useRef({ active, onCursor, focusToolbar });
   handlers.current = { active, onCursor, focusToolbar };
@@ -48,7 +56,7 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
           lineNumbers(), highlightActiveLine(), highlightActiveLineGutter(), drawSelection(),
           history(), indentOnInput(), bracketMatching(), closeBrackets(),
           search({ top: true }), highlightSelectionMatches(),
-          syntaxHighlighting(oneDarkHighlightStyle),
+          themeConfig.current.of(editorTheme(useThemeStore.getState().theme)),
           languageConfig.current.of(languageExtension(language)),
           readOnlyConfig.current.of(EditorState.readOnly.of(locked)),
           EditorState.changeFilter.of(() => {
@@ -67,15 +75,15 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
             if (update.docChanged || update.selectionSet) report(update.state);
           }),
           EditorView.theme({
-            "&": { height: "100%", color: "#ddd", backgroundColor: "#17181c" },
+            "&": { height: "100%", color: "var(--text-primary, #ddd)", backgroundColor: "var(--surface-base, #17181c)" },
             ".cm-scroller": { overflow: "auto", fontFamily: 'Consolas, "Cascadia Mono", monospace', fontSize: "13px", lineHeight: "1.5" },
-            ".cm-content": { padding: "10px 0", caretColor: "#fff" },
-            ".cm-cursor": { borderLeftColor: "#fff" },
-            ".cm-gutters": { backgroundColor: "#17181c", color: "#7d8595", borderRight: "1px solid #2a2b30" },
-            ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "#ffffff09" },
-            "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "#324869" },
-            ".cm-panels": { backgroundColor: "#23252d", color: "#ddd" },
-          }, { dark: true }),
+            ".cm-content": { padding: "10px 0", caretColor: "var(--text-primary, #fff)" },
+            ".cm-cursor": { borderLeftColor: "var(--text-primary, #fff)" },
+            ".cm-gutters": { backgroundColor: "var(--surface-base, #17181c)", color: "var(--text-muted, #7d8595)", borderRight: "1px solid var(--border, #2a2b30)" },
+            ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--hover-overlay, #ffffff09)" },
+            "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--selection, #324869)" },
+            ".cm-panels": { backgroundColor: "var(--surface-raised, #23252d)", color: "var(--text-primary, #ddd)" },
+          }),
         ],
       }),
     });
@@ -96,6 +104,7 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
 
   useEffect(() => { view.current?.dispatch({ effects: languageConfig.current.reconfigure(languageExtension(language)) }); }, [language]);
   useEffect(() => { view.current?.dispatch({ effects: readOnlyConfig.current.reconfigure(EditorState.readOnly.of(locked)) }); }, [locked]);
+  useEffect(() => { view.current?.dispatch({ effects: themeConfig.current.reconfigure(editorTheme(theme)) }); }, [theme]);
   return <div className="code-editor" ref={parent} />;
 }
 

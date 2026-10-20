@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import { createConsoleReplay } from "../consoleReplay";
 import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
 import { handleRunConsoleKey } from "../runConsoleInput";
+import { terminalTheme, useThemeStore } from "../theme";
 
 /**
  * Run Console：绑定的是“远程进程”的 stdin/stdout/stderr，不是 SSH shell。
@@ -19,6 +20,7 @@ import { handleRunConsoleKey } from "../runConsoleInput";
  */
 export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { collapsed: boolean; onToggleCollapse: () => void; embedded?: boolean }) {
   const { t } = useTranslation();
+  const theme = useThemeStore((state) => state.theme);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -36,7 +38,7 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
     const term = new Terminal({
       fontSize: 13,
       fontFamily: "Consolas, 'Cascadia Mono', monospace",
-      theme: { background: "#1e1f24" },
+      theme: terminalTheme(useThemeStore.getState().theme),
       convertEol: true,
     });
     const fit = new FitAddon();
@@ -89,6 +91,8 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
       fitRef.current = null;
     };
   }, []);
+
+  useEffect(() => { if (termRef.current) termRef.current.options.theme = terminalTheme(theme); }, [theme]);
 
   useEffect(() => { replayRef.current?.pump(); }, [activeRunId, buffer]);
 

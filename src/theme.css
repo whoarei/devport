@@ -1,0 +1,33 @@
+/* Dark colors remain at their existing declarations as fallbacks. These roles
+   cover the whole UI, including panels loaded after a theme switch. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --surface-base: #ffffff;
+  --surface-panel: #f8f9fc;
+  --surface-raised: #ffffff;
+  --surface-control: #eef1f6;
+  --surface-hover: #e2e8f1;
+  --text-primary: #242c3b;
+  --text-secondary: #4e5b70;
+  --text-muted: #657187;
+  --border: #ced5e0;
+  --border-strong: #aab7cb;
+  --accent: #285ab8;
+  --accent-hover: #19458f;
+  --accent-surface: #e7eefb;
+  --accent-border: #9bb5df;
+  --focus-glow: #2563eb29;
+  --selection: #cbdcfb;
+  --success: #25703d;
+  --success-surface: #e7f3eb;
+  --success-border: #a5c9b0;
+  --warning: #805b0b;
+  --warning-surface: #fff4df;
+  --warning-border: #ddc28c;
+  --danger: #b42332;
+  --danger-surface: #fbecef;
+  --danger-border: #e0b0b8;
+  --hover-overlay: #1d35500a;
+  --line-subtle: #1d355010;
+  --shadow: #14233720;
+}
