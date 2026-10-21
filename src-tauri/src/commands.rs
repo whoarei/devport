@@ -310,6 +310,30 @@ fn session_device(state: &AppState, workspace: &WorkspaceRef) -> WorkspaceResult
         .map_err(|_| crate::workspace::FileError::new("not_found", "设备不存在或已被删除"))
 }
 
+/// Open only a validated local directory, never a file or an unmounted device path.
+#[tauri::command]
+pub fn open_workspace_in_file_manager(
+    app: tauri::AppHandle,
+    workspace: WorkspaceRef,
+    subdir: String,
+) -> WorkspaceResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let dir = workspace.local_dir().ok_or_else(|| {
+        crate::workspace::FileError::new("unsupported", "仅本机工作区支持在系统文件管理器中打开")
+    })?;
+    if dir.trim().is_empty() {
+        return Err(crate::workspace::FileError::new(
+            "path",
+            "工作区目录不能为空",
+        ));
+    }
+    let path = crate::workspace::terminal_dir(dir, &subdir)?;
+    app.opener()
+        .open_path(path.to_string_lossy().into_owned(), None::<&str>)
+        .map_err(|error| crate::workspace::FileError::new("open", error.to_string()))
+}
+
 #[tauri::command]
 pub async fn list_workspace_dir(
     state: tauri::State<'_, AppState>,

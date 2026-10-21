@@ -332,6 +332,8 @@ export const api = {
 
   listWorkspaceDir: (workspace: WorkspaceRef, subdir: string) =>
     invoke<WorkspaceEntry[]>("list_workspace_dir", { workspace, subdir }),
+  openWorkspaceInFileManager: (workspace: WorkspaceRef, subdir = "") =>
+    invoke<void>("open_workspace_in_file_manager", { workspace, subdir }),
   readWorkspaceFile: (workspace: WorkspaceRef, name: string) =>
     invoke<WorkspaceDocument>("read_workspace_file", { workspace, name }),
   writeWorkspaceFile: (request: SaveWorkspaceRequest) =>

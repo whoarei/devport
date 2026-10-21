@@ -133,6 +133,8 @@ export const en: Messages = {
     generateConfig: "Generate Workspace Config",
     open: "Open",
     openInTerminal: "Open in Terminal",
+    openInFileManager: "Open in System File Manager",
+    openFileManagerFailed: "Could not open the system file manager",
     noLocalDevices: "No local devices (add a local device under Devices first)",
     rename: "Rename",
     delete: "Delete",

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
-import { errorMessage, type DeviceProfile, type WorkspaceEntry, type WorkspaceRef } from "../api";
+import { api, errorMessage, type DeviceProfile, type WorkspaceEntry, type WorkspaceRef } from "../api";
 import { useAppStore, workspaceLabel } from "../store";
 import { useTerminalStore } from "../terminalStore";
 import { revealConsolePanel } from "../consoleTabs";
@@ -78,6 +78,22 @@ export function workspaceTransferMenuEntry(
   return {
     label: t("transfer.title"),
     onSelect: () => useTransferStore.getState().seed(workspace, path),
+  };
+}
+
+/** 本机目录可交给系统文件管理器；设备工作区没有对应的本机路径。 */
+export function workspaceFileManagerMenuEntry(
+  t: (key: string) => string,
+  workspace: WorkspaceRef,
+  subdir: WorkspacePath = WORKSPACE_ROOT,
+): MenuEntry | null {
+  if (workspace.type !== "local") return null;
+  return {
+    label: t("workspace.openInFileManager"),
+    onSelect: () => {
+      void api.openWorkspaceInFileManager(workspace, subdir)
+        .catch((error) => useAppStore.setState({ workspaceError: `${t("workspace.openFileManagerFailed")}: ${errorMessage(error)}` }));
+    },
   };
 }
 
@@ -284,6 +300,8 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     if (!entry) entries.push({ label: t("workspace.refresh"), onSelect: () => void useAppStore.getState().loadWorkspaceDir(dir) });
     // 新建入口只出现在目录与空白区；文件条目上只有打开/重命名/删除
     if (!entry || entry.is_dir) {
+      const fileManagerEntry = workspaceFileManagerMenuEntry(t, workspace, path);
+      if (fileManagerEntry) entries.push(fileManagerEntry);
       entries.push({ label: t("workspace.newFile"), onSelect: () => void startCreate(path, "create-file") });
       entries.push({ label: t("workspace.newDir"), onSelect: () => void startCreate(path, "create-dir") });
       // 目录与空白区（工作区根）可落在设备终端：本机工作区列出本机设备，设备工作区列出宿主设备

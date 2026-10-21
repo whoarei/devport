@@ -580,7 +580,7 @@ pub fn list_dir(dir: &str, subdir: &str) -> Result<Vec<Entry>> {
     Ok(entries)
 }
 
-/// Resolve a workspace directory as the working directory of a local terminal.
+/// Resolve a workspace directory for a local terminal or the system file manager.
 /// Validation matches listing: canonical root, no redirected components, every
 /// part must be a real directory. Empty subdir means the workspace root.
 /// 返回值直接成为 shell 的 cwd，因此用常规形式（去掉 canonicalize 的 `\\?\` 前缀）。

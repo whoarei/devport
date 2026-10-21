@@ -138,6 +138,7 @@ pub fn run() {
             commands::usb_remote_disconnect,
             commands::usb_remote_verify,
             commands::list_local_shells,
+            commands::open_workspace_in_file_manager,
             commands::list_workspace_dir,
             commands::read_workspace_file,
             commands::write_workspace_file,
