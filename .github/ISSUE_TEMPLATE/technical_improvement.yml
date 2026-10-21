@@ -1,0 +1,66 @@
+name: 技术改进
+description: 提出架构、性能、可靠性、代码质量或工程流程方面的改进建议。
+title: "[Tech] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        适用于重构、性能优化、测试完善、依赖维护和开发流程改进等技术议题。
+        请说明当前问题、改进目标与验证方式，支持使用中文或英文填写。
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 我已搜索现有 Issues，确认没有相同的技术改进建议。
+          required: true
+  - type: dropdown
+    id: improvement-areas
+    attributes:
+      label: 改进方向
+      description: 可多选。
+      multiple: true
+      options:
+        - 架构与代码重构
+        - 性能与资源占用
+        - 稳定性与可靠性
+        - 测试与可观测性
+        - 构建、CI 与发布流程
+        - 依赖与工具链维护
+        - 开发文档与工程规范
+        - 其他
+  - type: textarea
+    id: current-problem
+    attributes:
+      label: 当前问题与改进动机
+      description: 描述现有实现的不足及其影响，可附上相关模块、代码位置、日志或性能数据。
+    validations:
+      required: true
+  - type: textarea
+    id: goals
+    attributes:
+      label: 改进目标
+      description: 希望获得哪些具体收益？如有性能指标、维护成本或可靠性目标，请一并说明。
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: 建议方案
+      description: 描述初步实现思路、涉及的模块及考虑过的替代方案；尚无具体方案时可留空。
+  - type: textarea
+    id: impact-and-risks
+    attributes:
+      label: 影响范围与风险
+      description: 是否涉及接口、配置或数据兼容性？是否影响 SSH、串口、WSL、本机 Shell 或跨平台行为？如需迁移，请说明。
+  - type: textarea
+    id: validation
+    attributes:
+      label: 验证方式
+      description: 准备通过哪些测试、基准或检查确认目标达成？如验证需要特定设备或环境，请注明。
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: 补充信息
+      description: 可提供设计草图、参考资料、相关 Issue 或 PR 链接。

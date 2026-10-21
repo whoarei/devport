@@ -1,0 +1,107 @@
+name: Bug 报告
+description: 报告 Remote Runner 的异常行为，帮助我们定位和修复问题。
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请尽量提供可复现的步骤，支持使用中文或英文填写。
+        日志、截图和配置中请移除密码、私钥、令牌等敏感信息。
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 我已搜索现有 Issues，确认没有相同的问题。
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Remote Runner 版本
+      description: 请填写发布版本号；如果从源码运行，请填写 commit SHA。
+      placeholder: 版本号或 commit SHA
+    validations:
+      required: true
+  - type: input
+    id: operating-system
+    attributes:
+      label: 本机操作系统
+      description: 运行 Remote Runner 的系统、版本和架构。
+      placeholder: 例如 Windows 11 24H2 x64
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: 安装或运行方式
+      options:
+        - Windows 安装版（NSIS）
+        - Windows 便携版
+        - 从源码运行或自行构建
+        - 其他 / 不确定
+    validations:
+      required: true
+  - type: dropdown
+    id: transports
+    attributes:
+      label: 涉及的连接方式
+      description: 可多选；跨设备运行时请选择来源和目标涉及的连接方式。
+      multiple: true
+      options:
+        - SSH
+        - 串口 Shell
+        - WSL
+        - 本机 Shell
+        - 不涉及连接 / 不确定
+  - type: dropdown
+    id: workspace
+    attributes:
+      label: 工作区来源
+      options:
+        - 本机目录
+        - SSH 设备目录
+        - WSL 设备目录
+        - 未打开工作区 / 不相关
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: 实际行为
+      description: 描述发生了什么，并提供完整的错误提示（如有）。
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: 预期行为
+      description: 描述你期望应用如何工作。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 请提供最小复现步骤，以及必要的示例脚本或命令；如果偶发，请说明出现频率。
+      placeholder: |
+        1. 打开……工作区
+        2. 选择……运行目标与设置
+        3. 执行……操作或命令
+        4. 出现……问题
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 相关环境与配置
+      description: 按需补充目标系统、Shell / Python 版本、PTY / pipe 模式、超时设置；串口问题可补充波特率，WSL 问题可补充发行版。
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志
+      description: 粘贴运行控制台输出或错误日志，无需添加 Markdown 代码块。
+      render: text
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: 截图与补充信息
+      description: 可拖入截图或附件，补充临时解决方法、最后正常的版本或相关 Issue 链接。
