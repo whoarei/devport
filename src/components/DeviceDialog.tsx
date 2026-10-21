@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { api, DeviceProfile, LocalShellInfo } from "../api";
 import { useAppStore } from "../store";
 import { useUsbStore } from "../usbStore";
+import { automaticDeviceName } from "../deviceNaming";
 
 function DeviceIcon({ name }: { name: "ssh" | "serial" | "wsl" | "local" | "close" | "refresh" | "info" }) {
   const paths = {
@@ -38,8 +39,12 @@ export const deviceLabel = (d: DeviceProfile) =>
   `${d.name} (${d.transport === "wsl" ? `WSL · ${d.wsl?.distribution}` : d.transport === "serial" ? `${d.serial?.port} · ${d.serial?.baud_rate}` : d.transport === "local" ? `Local · ${d.local?.shell}` : `${d.username}@${d.host}`})`;
 
 export function DeviceDialog() {
-  const { t } = useTranslation();
   const editing = useAppStore((s) => s.editingDevice);
+  return editing ? <DeviceDialogForm key={editing.id || "new"} editing={editing} /> : null;
+}
+
+function DeviceDialogForm({ editing }: { editing: DeviceProfile }) {
+  const { t } = useTranslation();
   const loadDevices = useAppStore((s) => s.loadDevices);
   const selectDevice = useAppStore((s) => s.selectDevice);
   const closeDeviceDialog = useAppStore((s) => s.closeDeviceDialog);
@@ -48,16 +53,25 @@ export function DeviceDialog() {
   const [distributions, setDistributions] = useState<string[]>([]);
   const [shells, setShells] = useState<LocalShellInfo[]>([]);
   const [testing, setTesting] = useState(false);
-  const wasOpen = useRef(false);
+  const [automaticName, setAutomaticName] = useState(() => !editing.id && !editing.name.trim());
   const dialog = useRef<HTMLDialogElement>(null);
+  const nameInput = useRef<HTMLInputElement>(null);
+  const connectionInput = useRef<HTMLInputElement>(null);
+  const previousTransport = useRef(editing.transport);
+  const device = { ...editing, name: automaticName ? automaticDeviceName(editing) : editing.name };
 
   useEffect(() => {
-    if (!editing) return;
     const element = dialog.current;
     element?.showModal();
-    element?.querySelector<HTMLInputElement>("input")?.focus();
+    (editing.id ? nameInput.current : connectionInput.current)?.focus();
     return () => element?.close();
-  }, [!!editing]);
+  }, []);
+
+  useEffect(() => {
+    if (previousTransport.current === editing.transport) return;
+    previousTransport.current = editing.transport;
+    connectionInput.current?.focus();
+  }, [editing.transport]);
 
   const refreshPorts = async () => {
     try { setPorts(await api.listSerialPorts()); }
@@ -74,19 +88,12 @@ export function DeviceDialog() {
     catch (e) { setTestResult(t("device.enumShellsFailed", { message: String(e) })); }
   };
 
-  // 对话框打开时重置测试结果，并按连接方式预取端口 / 发行版 / 本机 shell 列表
+  // 按连接方式预取端口 / 发行版 / 本机 shell 列表。
   useEffect(() => {
-    if (editing && !wasOpen.current) {
-      setTestResult(null);
-      setTesting(false);
-      if (editing.transport === "serial") void refreshPorts();
-      if (editing.transport === "wsl") void refreshDistributions();
-      if (editing.transport === "local") void refreshShells();
-    }
-    wasOpen.current = !!editing;
-  }, [editing]);
-
-  if (!editing) return null;
+    if (editing.transport === "serial") void refreshPorts();
+    if (editing.transport === "wsl") void refreshDistributions();
+    if (editing.transport === "local") void refreshShells();
+  }, [editing.transport]);
 
   const update = (patch: Partial<DeviceProfile>) =>
     useAppStore.setState({ editingDevice: { ...editing, ...patch } });
@@ -147,9 +154,6 @@ export function DeviceDialog() {
                 if (editing.transport === value) return;
                 update({ transport: value, serial: editing.serial ?? { port: "", baud_rate: 115200 }, wsl: editing.wsl ?? { distribution: "", user: "" }, local: editing.local ?? { shell: "", path: null, no_profile: false } });
                 setTestResult(null);
-                if (value === "serial") void refreshPorts();
-                if (value === "wsl") void refreshDistributions();
-                if (value === "local") void refreshShells();
               }}>
               <DeviceIcon name={value} /><strong>{label}</strong><span>{hint}</span>
             </button>)}
@@ -158,16 +162,11 @@ export function DeviceDialog() {
         <section className="device-section" aria-labelledby="device-settings-title">
           <h4 id="device-settings-title">{t("device.connectionSettings")}</h4>
           <div className="device-fields">
-            <label className="device-field-wide">
-              {t("device.name")}
-              <input autoFocus value={editing.name} placeholder={t("device.namePlaceholder")}
-                onChange={(e) => update({ name: e.target.value })} />
-            </label>
             {editing.transport === "wsl" ? <>
               <div className="device-field-wide">
                 <label htmlFor="device-wsl-distro">{t("device.wslDistro")}</label>
                 <div className="device-input-action">
-                  <input id="device-wsl-distro" list="wsl-distributions" value={editing.wsl?.distribution ?? ""} placeholder={t("device.wslDistroPlaceholder")}
+                  <input ref={connectionInput} id="device-wsl-distro" list="wsl-distributions" value={editing.wsl?.distribution ?? ""} placeholder={t("device.wslDistroPlaceholder")}
                     onChange={(e) => update({ wsl: { distribution: e.target.value, user: editing.wsl?.user ?? "" } })} />
                   <button type="button" onClick={refreshDistributions}><DeviceIcon name="refresh" />{t("device.refreshDistros")}</button>
                 </div>
@@ -182,7 +181,7 @@ export function DeviceDialog() {
               <div className="device-field-wide">
                 <label htmlFor="device-local-shell">{t("device.localShell")}</label>
                 <div className="device-input-action">
-                  <input id="device-local-shell" list="local-shell-options" value={editing.local?.shell ?? ""} placeholder={t("device.localShellPlaceholder")}
+                  <input ref={connectionInput} id="device-local-shell" list="local-shell-options" value={editing.local?.shell ?? ""} placeholder={t("device.localShellPlaceholder")}
                     onChange={(e) => update({ local: { shell: e.target.value, path: null, no_profile: editing.local?.no_profile ?? false } })} />
                   <button type="button" onClick={refreshShells}><DeviceIcon name="refresh" />{t("device.refreshShells")}</button>
                 </div>
@@ -207,7 +206,7 @@ export function DeviceDialog() {
               <div>
                 <label htmlFor="device-serial-port">{t("device.serialPort")}</label>
                 <div className="device-input-action">
-                  <input id="device-serial-port" list="serial-ports" value={editing.serial?.port ?? ""} placeholder={t("device.serialPlaceholder")}
+                  <input ref={connectionInput} id="device-serial-port" list="serial-ports" value={editing.serial?.port ?? ""} placeholder={t("device.serialPlaceholder")}
                     onChange={(e) => update({ serial: { port: e.target.value, baud_rate: editing.serial?.baud_rate ?? 115200 } })} />
                   <button type="button" onClick={refreshPorts} aria-label={t("device.refreshPorts")} title={t("device.refreshPorts")}><DeviceIcon name="refresh" /></button>
                 </div>
@@ -223,7 +222,7 @@ export function DeviceDialog() {
               <div className="device-field-wide device-host-fields">
                 <label>
                   {t("device.host")}
-                  <input value={editing.host} placeholder={t("device.hostPlaceholder")}
+                  <input ref={connectionInput} id="device-ssh-host" value={editing.host} placeholder={t("device.hostPlaceholder")}
                     onChange={(e) => update({ host: e.target.value })} />
                 </label>
                 <label>
@@ -254,6 +253,18 @@ export function DeviceDialog() {
                   onChange={(e) => update({ auth: { type: "key", key_path: e.target.value || null } })} />
               </label>}
             </>}
+            <div className="device-field-wide">
+              <label htmlFor="device-name">{t("device.name")}</label>
+              <div className="device-input-action">
+                <input ref={nameInput} id="device-name" value={device.name} placeholder={t("device.namePlaceholder")}
+                  onChange={(e) => {
+                    setAutomaticName(false);
+                    update({ name: e.target.value });
+                  }}
+                  onBlur={(e) => { if (!e.target.value.trim()) setAutomaticName(true); }} />
+                <button type="button" disabled={automaticName} onClick={() => setAutomaticName(true)}>{t("device.restoreAutomaticName")}</button>
+              </div>
+            </div>
           </div>
           {editing.transport !== "ssh" && <div className="device-notice">
             <DeviceIcon name="info" />
@@ -283,7 +294,7 @@ export function DeviceDialog() {
       </div>
       <footer className="device-dialog-footer">
         <div className="device-footer-secondary">
-          <button type="button" disabled={testing} onClick={() => test(editing)}>
+          <button type="button" disabled={testing} onClick={() => test(device)}>
             {testing && <span className="device-spinner" />}{t(testing ? "device.connecting" : "device.testConnection")}
           </button>
           {editing.id && <button type="button" className="device-delete" onClick={() => remove(editing)}>{t("device.delete")}</button>}
@@ -291,8 +302,8 @@ export function DeviceDialog() {
         <div className="device-footer-primary">
           <button type="button" onClick={closeDeviceDialog}>{t("dialog.cancel")}</button>
           <button type="button" className="primary"
-            disabled={testing || !editing.name || (editing.transport === "wsl" ? !editing.wsl?.distribution.trim() : editing.transport === "serial" ? !editing.serial?.port || !editing.serial?.baud_rate : editing.transport === "local" ? !editing.local?.shell : !editing.host)}
-            onClick={() => save(editing)}>{t("device.save")}</button>
+            disabled={testing || !device.name.trim() || (editing.transport === "wsl" ? !editing.wsl?.distribution.trim() : editing.transport === "serial" ? !editing.serial?.port || !editing.serial?.baud_rate : editing.transport === "local" ? !editing.local?.shell : !editing.host)}
+            onClick={() => save(device)}>{t("device.save")}</button>
         </div>
       </footer>
     </dialog>

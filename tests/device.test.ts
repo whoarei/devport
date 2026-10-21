@@ -3,6 +3,44 @@ import assert from "node:assert/strict";
 import { deviceLabel, emptyDevice } from "../src/components/DeviceDialog";
 import { DeviceProfile } from "../src/api";
 import { selectedDeviceAfterLoad } from "../src/store";
+import { automaticDeviceName } from "../src/deviceNaming";
+
+test("automatic device names use each transport's connection identifiers", () => {
+  const ssh = { ...emptyDevice(), host: "192.168.1.10" };
+  assert.equal(automaticDeviceName(ssh), "ssh-root@192.168.1.10:22");
+  assert.equal(automaticDeviceName({ ...ssh, username: "alice", port: 2222 }), "ssh-alice@192.168.1.10:2222");
+  assert.equal(automaticDeviceName({ ...ssh, transport: "serial", serial: { port: "COM8", baud_rate: 115200 } }), "serial-COM8:115200");
+  assert.equal(automaticDeviceName({ ...ssh, transport: "serial", serial: { port: "/dev/ttyUSB0", baud_rate: 9600 } }), "serial-/dev/ttyUSB0:9600");
+  assert.equal(automaticDeviceName({ ...ssh, transport: "wsl", wsl: { distribution: "Ubuntu-24.04", user: "" } }), "wsl-Ubuntu-24.04");
+  assert.equal(automaticDeviceName({ ...ssh, transport: "wsl", wsl: { distribution: "Ubuntu-24.04", user: "root" } }), "wsl-root@Ubuntu-24.04");
+  assert.equal(automaticDeviceName({ ...ssh, transport: "local", local: { shell: "pwsh", path: "C:/tools/pwsh.exe" } }), "local-pwsh");
+});
+
+test("automatic SSH names delimit IPv6 addresses without double brackets", () => {
+  const ssh = { ...emptyDevice(), host: "2001:db8::1" };
+  assert.equal(automaticDeviceName(ssh), "ssh-root@[2001:db8::1]:22");
+  assert.equal(automaticDeviceName({ ...ssh, host: "[2001:db8::1]" }), "ssh-root@[2001:db8::1]:22");
+});
+
+test("automatic names stay empty until the transport identifiers are filled", () => {
+  const empty = emptyDevice();
+  for (const transport of ["ssh", "serial", "wsl", "local"] as const) {
+    assert.equal(automaticDeviceName({ ...empty, transport }), "");
+  }
+  assert.equal(automaticDeviceName({ ...empty, host: "example.com", username: " " }), "");
+  assert.equal(automaticDeviceName({ ...empty, host: "example.com", port: 0 }), "");
+  assert.equal(automaticDeviceName({ ...empty, transport: "serial", serial: { port: "COM8", baud_rate: 0 } }), "");
+  assert.equal(automaticDeviceName({ ...empty, transport: "wsl", wsl: undefined }), "");
+  assert.equal(automaticDeviceName({ ...empty, transport: "local", local: undefined }), "");
+});
+
+test("automatic naming trims identifiers without mutating connection settings", () => {
+  const ssh = { ...emptyDevice(), host: " example.com ", username: " alice ", auth: { type: "password" as const, password: "secret" } };
+  assert.equal(automaticDeviceName(ssh), "ssh-alice@example.com:22");
+  assert.equal(ssh.host, " example.com ");
+  assert.equal(ssh.username, " alice ");
+  assert.equal(automaticDeviceName({ ...ssh, transport: "wsl", wsl: { distribution: " Ubuntu ", user: "  " } }), "wsl-Ubuntu");
+});
 
 test("device label covers local shell devices and keeps other transports unchanged", () => {
   const local: DeviceProfile = {
