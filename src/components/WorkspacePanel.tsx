@@ -69,6 +69,18 @@ export function workspaceSwitchMenuEntries(
   ];
 }
 
+/** 打开双向传输面板并定位所选条目；此入口本身不会开始上传或下载。 */
+export function workspaceTransferMenuEntry(
+  t: (key: string) => string,
+  workspace: WorkspaceRef,
+  path?: WorkspacePath,
+): MenuEntry {
+  return {
+    label: t("transfer.title"),
+    onSelect: () => useTransferStore.getState().seed(workspace, path),
+  };
+}
+
 /**
  * 「在终端中打开」子菜单：本机工作区可落到任意本机（Local）设备；
  * 设备工作区只能落回托管它的那台设备（SSH/WSL 终端启动后 cd 到工作区目录）。
@@ -268,7 +280,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     void useWorkspaceRunStore.getState().refreshCommands();
     const entries: MenuEntry[] = await workspaceRunMenu(workspace, path, !entry || entry.is_dir);
     if (epoch !== menuEpoch.current || workspace !== useAppStore.getState().workspace || sourceRevision !== workspaceSourceRevision(workspace, useAppStore.getState().devices)) return;
-    entries.push({ label: t(workspace.type === "local" ? "transfer.upload" : "transfer.download"), onSelect: () => useTransferStore.getState().seed(workspace, entry ? path : undefined) });
+    entries.push(workspaceTransferMenuEntry(t, workspace, entry ? path : undefined));
     if (!entry) entries.push({ label: t("workspace.refresh"), onSelect: () => void useAppStore.getState().loadWorkspaceDir(dir) });
     // 新建入口只出现在目录与空白区；文件条目上只有打开/重命名/删除
     if (!entry || entry.is_dir) {

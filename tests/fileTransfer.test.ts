@@ -12,6 +12,7 @@ import { TransferDetailsDialog, TransferQueue } from "../src/components/Transfer
 import { canRetryTransfer, splitTransferQueue, transferPercent, transferQueueState, transferTaskName } from "../src/transferQueue";
 import { loadTransferDirectories, rememberedDeviceDirectory, TRANSFER_DIRECTORIES_KEY } from "../src/transferDirectories";
 import { emptyDevice } from "../src/components/DeviceDialog";
+import { workspaceTransferMenuEntry } from "../src/components/WorkspacePanel";
 
 const local: WorkspaceRef = { type: "local", dir: "C:\\data" };
 const device: WorkspaceRef = { type: "device", device_id: "ssh", path: "/data" };
@@ -27,6 +28,67 @@ function reset(t: test.TestContext) {
 const plan: TransferPlan = { id: "plan", request: { source: local, target: device, paths: ["a.bin"], exclude_project_files: false, protected_paths: [] }, items: [{ path: "a.bin", attrs, target_attrs: null, state: "pending", target_path: null, error: null }], total_bytes: 4, conflicts: 0, warnings: [], overwrite: true, keep_both: true };
 const task = (state: string): TransferSummary => ({ id: "task", source: local, target: device, state, sequence: 1, first_path: "a.bin", selection_count: 1, total_bytes: 4, transferred_bytes: 0, current_path: "a.bin", error: null, item_count: 1, completed: 0, skipped: 0, failed: 0, pending_count: 0, unknown_count: 0, residual_count: 0, warning_count: 0 });
 test.before(async () => { await i18n.changeLanguage("zh"); });
+
+for (const source of [local, { type: "local", dir: "/home/user/project" } as WorkspaceRef, device, { ...device, device_id: "wsl" }]) {
+  for (const path of [undefined, "a.bin", "nested/a.bin", "nested/folder"]) {
+    test(`File Transfer menu opens ${JSON.stringify(source)} at ${path ?? "workspace root"} without starting a transfer`, async (t) => {
+      reset(t);
+      const side = source.type === "local" ? "local" : "device";
+      const otherSide = side === "local" ? "device" : "local";
+      const otherEndpoint = side === "local" ? device : local;
+      const devices = [
+        { ...emptyDevice(), id: "ssh", workspace_root: "/default" },
+        { ...emptyDevice(), id: "wsl", transport: "wsl" as const, workspace_root: "/default" },
+      ];
+      const layout = useAppStore.getState().layout;
+      useAppStore.setState({ workspace: source, devices, selectedDeviceId: "ssh", layout: {
+        ...layout, panelVisible: { ...layout.panelVisible, transfer: false }, panelCollapsed: { ...layout.panelCollapsed, transfer: true },
+      } });
+      t.mock.method(transferApi, "list", async (endpoint: WorkspaceRef) => ({
+        ...directory(endpoint), entries: [...directory(endpoint).entries, { name: "folder", ...attrs, kind: "dir" }],
+      }));
+      const planCall = t.mock.method(transferApi, "plan");
+      const startCall = t.mock.method(transferApi, "start");
+      await useTransferStore.getState().browse(otherSide, otherEndpoint, ["a.bin"]);
+      const otherBrowser = useTransferStore.getState()[otherSide];
+
+      for (const [language, label] of [["zh", "文件传输"], ["en", "File Transfer"]]) {
+        const entry = workspaceTransferMenuEntry((key) => i18n.t(key, { lng: language }), source, path);
+        assert.ok(entry !== "separator" && entry.onSelect);
+        assert.equal(entry.label, label);
+        entry.onSelect();
+        await Promise.resolve();
+
+        const browser = useTransferStore.getState()[side];
+        const expectedEndpoint = path?.includes("/")
+          ? source.type === "local" ? { ...source, dir: `${source.dir}/nested` } : { ...source, path: `${source.path}/nested` }
+          : source;
+        assert.deepEqual(browser.endpoint, expectedEndpoint);
+        assert.deepEqual(browser.selected, path ? [path.split("/").at(-1)] : []);
+        assert.equal(browser.error, null);
+        assert.equal(useTransferStore.getState()[otherSide], otherBrowser, "keep the destination directory and selection");
+        assert.equal(useAppStore.getState().layout.panelVisible.transfer, true);
+        assert.equal(useAppStore.getState().layout.panelCollapsed.transfer, false);
+      }
+      assert.equal(planCall.mock.callCount(), 0);
+      assert.equal(startCall.mock.callCount(), 0);
+    });
+  }
+}
+
+test("File Transfer menu reports a disconnected workspace host without switching to another device", async (t) => {
+  reset(t);
+  useAppStore.setState({ workspace: device, devices: [{ ...emptyDevice(), id: "other", workspace_root: "/other" }], selectedDeviceId: "other" });
+  t.mock.method(transferApi, "list", async () => { throw new Error("Device disconnected"); });
+  const entry = workspaceTransferMenuEntry((key) => i18n.t(key), device, "nested/a.bin");
+  assert.ok(entry !== "separator" && entry.onSelect && !entry.disabled);
+  entry.onSelect();
+  await Promise.resolve();
+  assert.deepEqual(useTransferStore.getState().device.endpoint, { ...device, path: "/data/nested" });
+  assert.equal(useTransferStore.getState().device.error, "Device disconnected");
+  assert.equal(useTransferStore.getState().device.loading, false);
+  assert.equal(useAppStore.getState().layout.panelVisible.transfer, true);
+});
 
 test("endpoint mapping respects hosts, directory boundaries and Windows case", () => {
   assert.deepEqual(appendEndpoint({ type: "device", device_id: "s", path: "/" }, "data"), { type: "device", device_id: "s", path: "/data" });
