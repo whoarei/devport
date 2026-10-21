@@ -318,7 +318,6 @@ export const zh = {
     save: "保存",
   },
   about: {
-    closeTerminalBlocker: "请先关闭活动终端，再安装更新。",
     installFailed: "自动升级失败，可改用手动下载：{{message}}",
     checkAria: "检查更新",
     checking: "正在检查…",
@@ -340,6 +339,10 @@ export const zh = {
     close: "关闭",
   },
   update: {
+    confirmTitle: "安装更新",
+    closeTerminalsConfirm: "安装更新将关闭所有终端，其中正在执行的命令可能被中断。是否关闭终端并继续更新？",
+    closeTerminalsAndInstall: "关闭终端并更新",
+    closingTerminals: "正在关闭终端…",
     blockerBusy: "请等待当前文件或任务操作完成。",
     blockerDirty: "请先保存编辑器中的修改，再安装更新。",
     blockerRunning: "请先停止或等待所有运行任务结束，再安装更新。",

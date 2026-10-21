@@ -1,6 +1,7 @@
 /** 一键更新编排（Tauri 耦合）：标题栏「更新」按钮与关于对话框共用的安装流程。 */
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { api, errorMessage, type AppUpdateInfo } from "./api";
 import i18n from "./i18n";
 import { useAppStore } from "./store";
@@ -21,11 +22,26 @@ export async function installCheckedUpdate(
   info: AppUpdateInfo,
   onPhase: (phase: UpdateButtonPhase) => void,
 ): Promise<void> {
-  if ((await transferApi.snapshot()).some((task) => transferActive(task.state))) throw new Error(i18n.t("transfer.updateBlocker"));
+  if (useAppStore.getState().updating) return;
+  const blocker = installBlocker();
+  if (blocker) throw new Error(blocker);
   useAppStore.setState({ updating: true });
-  onPhase({ kind: "downloading", downloaded: 0, total: null });
   try {
+    if ((await transferApi.snapshot()).some((task) => transferActive(task.state))) throw new Error(i18n.t("transfer.updateBlocker"));
+    if (useTerminalStore.getState().tabs.some(terminalActive)) {
+      if (!await ask(i18n.t("update.closeTerminalsConfirm"), {
+        title: i18n.t("update.confirmTitle"), kind: "warning",
+        okLabel: i18n.t("update.closeTerminalsAndInstall"), cancelLabel: i18n.t("dialog.cancel"),
+      })) return;
+    }
+    // Recheck after the asynchronous confirmation before closing any terminals.
+    const currentBlocker = installBlocker();
+    if (currentBlocker) throw new Error(currentBlocker);
+    if ((await transferApi.snapshot()).some((task) => transferActive(task.state))) throw new Error(i18n.t("transfer.updateBlocker"));
     await flushWorkEnvironment();
+    onPhase({ kind: "closingTerminals" });
+    await useTerminalStore.getState().closeAll();
+    onPhase({ kind: "downloading", downloaded: 0, total: null });
     await installWithProgress(info.latest_version,
       () => listen<UpdateProgress>("app-update://progress", ({ payload }) => {
         if (payload.phase === "verifying" || payload.phase === "installing") onPhase({ kind: payload.phase });
@@ -40,8 +56,7 @@ export async function installCheckedUpdate(
 
 function installBlocker(): string | null {
   return updateInstallBlocker(useAppStore.getState())
-    || (useTransferStore.getState().tasks.some((task) => transferActive(task.state)) ? i18n.t("transfer.updateBlocker") : null)
-    || (useTerminalStore.getState().tabs.some(terminalActive) ? i18n.t("about.closeTerminalBlocker") : null);
+    || (useTransferStore.getState().tasks.some((task) => transferActive(task.state)) ? i18n.t("transfer.updateBlocker") : null);
 }
 
 let oneClickRunning = false;
@@ -51,7 +66,7 @@ export async function startOneClickUpdate(
   info: AppUpdateInfo,
   onPhase: (phase: UpdateButtonPhase | null) => void,
 ): Promise<void> {
-  if (oneClickRunning) return;
+  if (oneClickRunning || useAppStore.getState().updating) return;
   const action = directUpdateAction(info, installBlocker());
   if (action.kind === "blocked") {
     useAppStore.setState({ editorError: action.reason });

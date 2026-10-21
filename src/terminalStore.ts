@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api, errorMessage, type TerminalStatus, type WorkspaceRef } from "./api";
 import i18n from "./i18n";
+import { useAppStore } from "./store";
 import { loadTabCycleOrder, saveTabCycleOrder, type TabCycleOrder } from "./tabCycle";
 
 /** 最近使用栈：把 id 移到栈顶 */
@@ -66,6 +67,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => {
       if (id === "run" || get().tabs.some((t) => t.id === id)) set({ activeTab: id });
     },
     open: (deviceId, deviceName, workspace) => {
+      if (useAppStore.getState().updating) return Promise.reject(new Error(i18n.t("run.errorUpdating")));
       if (get().shuttingDown) return Promise.reject(new Error(i18n.t("terminal.closingAll")));
       if (get().tabs.length >= 8) return Promise.reject(new Error(i18n.t("terminal.maxTabs")));
       const id = crypto.randomUUID();
@@ -77,7 +79,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => {
     },
     reconnect: (id) => {
       const tab = get().tabs.find((t) => t.id === id);
-      if (!tab || tab.busy || get().shuttingDown || terminalActive(tab)) return Promise.resolve();
+      if (!tab || tab.busy || get().shuttingDown || useAppStore.getState().updating || terminalActive(tab)) return Promise.resolve();
       patch(id, { busy: true, error: undefined });
       return track((async () => {
         try {

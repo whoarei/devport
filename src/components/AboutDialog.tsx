@@ -9,7 +9,6 @@ import { api, errorMessage, type AppUpdateInfo } from "../api";
 import { installCheckedUpdate } from "../updateFlow";
 import { formatDownloadProgress, updateInstallBlocker } from "../updateStatus";
 import { useAppStore } from "../store";
-import { useTerminalStore, terminalActive } from "../terminalStore";
 import { transferActive } from "../transferApi";
 import { useTransferStore } from "../transferStore";
 
@@ -20,6 +19,7 @@ type UpdatePhase =
   | { kind: "checking" }
   | { kind: "uptodate" }
   | { kind: "available"; info: AppUpdateInfo }
+  | { kind: "closingTerminals" }
   | { kind: "downloading"; info: AppUpdateInfo; downloaded: number; total: number | null }
   | { kind: "verifying" }
   | { kind: "installing" }
@@ -36,12 +36,12 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
   const busyRef = useRef(false);
   const mounted = useRef(true);
   const runBlocker = useAppStore(updateInstallBlocker);
-  const terminalBusy = useTerminalStore((s) => s.tabs.some(terminalActive));
+  const updating = useAppStore((s) => s.updating);
   const transferBusy = useTransferStore((s) => s.tasks.some((task) => transferActive(task.state)));
-  const blocker = runBlocker || (terminalBusy ? t("about.closeTerminalBlocker") : null) || (transferBusy ? t("transfer.updateBlocker") : null);
+  const blocker = runBlocker || (transferBusy ? t("transfer.updateBlocker") : null);
 
   const check = useCallback(async () => {
-    if (busyRef.current) return;
+    if (busyRef.current || useAppStore.getState().updating) return;
     busyRef.current = true;
     setPhase({ kind: "checking" });
     try {
@@ -59,8 +59,8 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
   }, [autoCheckNonce, check]);
 
   const install = useCallback(async (info: AppUpdateInfo) => {
-    if (busyRef.current) return;
-    const blocked = updateInstallBlocker(useAppStore.getState()) || (useTerminalStore.getState().tabs.some(terminalActive) ? t("about.closeTerminalBlocker") : null);
+    if (busyRef.current || useAppStore.getState().updating) return;
+    const blocked = updateInstallBlocker(useAppStore.getState());
     if (blocked) { setPhase({ kind: "error", message: blocked }); return; }
     busyRef.current = true;
     try {
@@ -70,6 +70,7 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
         if (phase.kind === "downloading") setPhase({ kind: "downloading", info, downloaded: phase.downloaded, total: phase.total });
         else setPhase({ kind: phase.kind });
       });
+      if (mounted.current) setPhase({ kind: "available", info });
     } catch (error) {
       if (mounted.current) setPhase({ kind: "error", message: t("about.installFailed", { message: errorMessage(error) }) });
     } finally {
@@ -83,7 +84,7 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
     });
   }, [t]);
 
-  const busy = phase.kind === "checking" || phase.kind === "downloading" || phase.kind === "verifying" || phase.kind === "installing";
+  const busy = updating || phase.kind === "checking" || phase.kind === "closingTerminals" || phase.kind === "downloading" || phase.kind === "verifying" || phase.kind === "installing";
 
   return (
     <section className="about-update" aria-label={t("about.checkAria")} aria-live="polite">
@@ -94,7 +95,7 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
         {phase.kind === "available" && (
           <>
             {phase.info.can_auto_install && (
-              <button type="button" disabled={!!blocker} onClick={() => void install(phase.info)}>{t("about.installButton")}</button>
+              <button type="button" disabled={busy || !!blocker} onClick={() => void install(phase.info)}>{t("about.installButton")}</button>
             )}
             <button type="button" onClick={openDownload}>{t("about.openDownload")}</button>
           </>
@@ -114,6 +115,7 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
           {phase.info.notes && <pre className="about-update-notes">{phase.info.notes}</pre>}
         </div>
       )}
+      {phase.kind === "closingTerminals" && <p className="about-update-status">{t("update.closingTerminals")}</p>}
       {phase.kind === "downloading" && (
         <div className="about-update-status">
           <progress value={phase.total ? phase.downloaded : undefined} max={phase.total ?? undefined} />

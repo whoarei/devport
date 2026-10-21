@@ -317,7 +317,6 @@ export const en: Messages = {
     save: "Save",
   },
   about: {
-    closeTerminalBlocker: "Close active terminals before installing the update.",
     installFailed: "Auto-update failed; you can download it manually: {{message}}",
     checkAria: "Check for updates",
     checking: "Checking…",
@@ -339,6 +338,10 @@ export const en: Messages = {
     close: "Close",
   },
   update: {
+    confirmTitle: "Install Update",
+    closeTerminalsConfirm: "Installing the update will close all terminals and may interrupt commands running in them. Close terminals and continue updating?",
+    closeTerminalsAndInstall: "Close Terminals and Update",
+    closingTerminals: "Closing terminals…",
     blockerBusy: "Wait for the current file or task operation to finish.",
     blockerDirty: "Save changes in the editor before installing the update.",
     blockerRunning: "Stop or wait for all running tasks to finish before installing the update.",

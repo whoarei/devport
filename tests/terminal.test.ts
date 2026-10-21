@@ -166,6 +166,18 @@ test("application shutdown waits for in-flight opens and refuses additional term
   assert.equal(useTerminalStore.getState().tabs.length, 0);
 });
 
+test("update confirmation and installation prevent terminal opens and reconnects", async (t) => {
+  const s = reset(t), app = useAppStore.getState();
+  t.after(() => useAppStore.setState(app));
+  const open = t.mock.method(api, "openTerminal", async () => status("new"));
+  useTerminalStore.setState({ tabs: [{ id: "old", deviceId: "a", deviceName: "A", busy: false, status: status("old", "exited") }] });
+  useAppStore.setState({ updating: true });
+  await assert.rejects(s.open("a", "A"), /升级/);
+  await s.reconnect("old");
+  assert.equal(open.mock.callCount(), 0);
+  assert.equal(useTerminalStore.getState().tabs[0].status?.session_id, "old");
+});
+
 test("input keeps Ctrl+C as data, serializes Unicode paste and rejects excessive pending input", async () => {
   const sent: string[] = [];
   const errors: unknown[] = [];

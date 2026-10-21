@@ -91,7 +91,7 @@ npm run tauri -- build --no-bundle -- --locked
 
 `update.rs` 从固定 GitHub `releases/latest/download/latest.json` 检查稳定版本，验证版本、平台和下载 URL；保持应用 identifier、公钥和安装身份稳定。Windows 已安装 release 可通过 Tauri updater 验证签名并安装；portable、debug、非支持平台或安装识别失败回退手动下载。
 
-前端启动静默检查，有新版显示入口。安装与新运行/传输注册共享更新门闩，活跃任务、终端、传输和未处理编辑状态阻止安装；先刷新工作环境快照。下载进度后进入 verifying / installing。Windows 安装器接管应使旧程序退出，不能仅以 invoke 返回宣称成功。
+前端启动静默检查，有新版显示入口。安装与新运行/终端/传输注册共享更新门闩，活跃任务、传输和未处理编辑状态阻止安装。有活动终端时先提示关闭全部终端，确认后刷新工作环境快照、关闭终端并等待清理完成，取消或关闭失败不安装；确认与清理期间禁止新建或重连终端。后端仍拒绝在存在未完成终端时安装，防止并发启动绕过清理。下载进度后进入 verifying / installing。Windows 安装器接管应使旧程序退出，不能仅以 invoke 返回宣称成功。
 
 公开前核对：NSIS、`.exe.sig`、portable、`latest.json` 一致；干净环境安装/启动、旧安装版升级、配置保留、重启/卸载、portable 手动回退及实际目标能力。说明未执行的硬件验证。旧版本回退不自动回滚数据 schema，应先备份，尤其注意新同步清单与旧版本兼容性。
 
