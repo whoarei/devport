@@ -28,6 +28,12 @@ export interface LocalShellInfo {
   path: string;
 }
 
+export interface DeletedDevice {
+  id: string;
+  name: string;
+  deleted_at: string;
+}
+
 export interface UsbError { code: string; message: string }
 export interface UsbDevice {
   instance_id: string;
@@ -314,7 +320,9 @@ export const api = {
   listDevices: () => invoke<DeviceProfile[]>("list_devices"),
   saveDevice: (device: DeviceProfile) =>
     invoke<DeviceProfile>("save_device", { device }),
-  deleteDevice: (id: string) => invoke<void>("delete_device", { id }),
+  deleteDevice: (id: string) => invoke<DeletedDevice>("delete_device", { id }),
+  listDeletedDevices: () => invoke<DeletedDevice[]>("list_deleted_devices"),
+  restoreDevice: (id: string) => invoke<DeviceProfile>("restore_device", { id }),
   testDevice: (device: DeviceProfile) =>
     invoke<string>("test_device", { device }),
   listSerialPorts: () => invoke<string[]>("list_serial_ports"),

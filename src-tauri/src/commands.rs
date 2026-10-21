@@ -137,8 +137,23 @@ pub fn save_device(
 }
 
 #[tauri::command]
-pub fn delete_device(state: tauri::State<'_, AppState>, id: String) -> Result<()> {
+pub fn delete_device(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<crate::device::DeletedDevice> {
     state.device_store.delete(&id)
+}
+
+#[tauri::command]
+pub fn list_deleted_devices(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<crate::device::DeletedDevice>> {
+    state.device_store.list_deleted()
+}
+
+#[tauri::command]
+pub fn restore_device(state: tauri::State<'_, AppState>, id: String) -> Result<DeviceProfile> {
+    state.device_store.restore(&id)
 }
 
 /// Test the selected transport without starting a user workload.

@@ -2,6 +2,8 @@ use crate::error::{Result, RunnerError};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+static DEVICE_OPERATIONS: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TransportKind {
@@ -206,6 +208,121 @@ mod tests {
         assert!(duplicate[0].is_default);
         assert!(!duplicate[1].is_default);
     }
+
+    struct TestStore(PathBuf);
+    impl TestStore {
+        fn new() -> Self {
+            Self(std::env::temp_dir().join(format!("rr-devices-{}", uuid::Uuid::new_v4())))
+        }
+        fn store(&self) -> DeviceStore {
+            DeviceStore::new(&self.0)
+        }
+    }
+    impl Drop for TestStore {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn profile(id: &str) -> DeviceProfile {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "name": id, "host": "example.com", "port": 2222,
+            "username": "alice", "auth": {"type": "password", "password": "secret"}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn deleted_devices_survive_restart_and_restore_the_same_identity_and_credentials() {
+        let fixture = TestStore::new();
+        let store = fixture.store();
+        let saved = store.save(profile("ssh")).unwrap();
+        let deleted = store.delete(&saved.id).unwrap();
+        assert_eq!(deleted.id, saved.id);
+        assert!(chrono::DateTime::parse_from_rfc3339(&deleted.deleted_at).is_ok());
+        assert_eq!(
+            store.delete(&saved.id).unwrap().deleted_at,
+            deleted.deleted_at
+        );
+        let restarted = fixture.store();
+        assert!(restarted.list().unwrap().is_empty());
+        assert!(restarted.get(&saved.id).is_err());
+        assert_eq!(restarted.list_deleted().unwrap()[0].id, saved.id);
+        assert!(restarted.save(saved.clone()).is_err());
+        let restored = restarted.restore(&saved.id).unwrap();
+        assert_eq!(
+            serde_json::to_value(restored).unwrap(),
+            serde_json::to_value(saved).unwrap()
+        );
+        assert!(restarted.list_deleted().unwrap().is_empty());
+        assert!(restarted.restore("missing").is_err());
+    }
+
+    #[test]
+    fn deleting_multiple_devices_keeps_other_records_and_restoring_preserves_the_current_default() {
+        let fixture = TestStore::new();
+        let store = fixture.store();
+        store.save(profile("first")).unwrap();
+        store.save(profile("second")).unwrap();
+        store.save(profile("third")).unwrap();
+        store.delete("first").unwrap();
+        store.delete("third").unwrap();
+        assert_eq!(store.list().unwrap()[0].id, "second");
+        assert!(store.list().unwrap()[0].is_default);
+        assert_eq!(store.list_deleted().unwrap().len(), 2);
+        let mut second = store.get("second").unwrap();
+        second.name = "renamed".into();
+        store.save(second).unwrap();
+        assert_eq!(store.list_deleted().unwrap().len(), 2);
+        assert!(!store.restore("first").unwrap().is_default);
+        assert_eq!(
+            store
+                .list()
+                .unwrap()
+                .iter()
+                .find(|d| d.is_default)
+                .unwrap()
+                .id,
+            "second"
+        );
+        assert_eq!(store.get("second").unwrap().name, "renamed");
+        assert_eq!(store.list_deleted().unwrap()[0].id, "third");
+    }
+
+    #[test]
+    fn legacy_device_arrays_still_load_and_a_corrupt_file_is_never_overwritten() {
+        let fixture = TestStore::new();
+        std::fs::create_dir_all(&fixture.0).unwrap();
+        let path = fixture.0.join("devices.json");
+        std::fs::write(&path, serde_json::to_vec(&vec![profile("legacy")]).unwrap()).unwrap();
+        let store = fixture.store();
+        assert_eq!(store.list().unwrap()[0].id, "legacy");
+        assert!(store.list_deleted().unwrap().is_empty());
+        store.delete("legacy").unwrap();
+        store.restore("legacy").unwrap();
+        std::fs::write(&path, b"invalid devices").unwrap();
+        assert!(store.delete("legacy").is_err());
+        assert!(store.restore("legacy").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"invalid devices");
+    }
+
+    #[test]
+    fn concurrent_device_saves_do_not_overwrite_each_other() {
+        let fixture = TestStore::new();
+        std::thread::scope(|scope| {
+            for index in 0..8 {
+                let root = &fixture.0;
+                scope.spawn(move || {
+                    DeviceStore::new(root)
+                        .save(profile(&format!("device-{index}")))
+                        .unwrap()
+                });
+            }
+        });
+        let devices = fixture.store().list().unwrap();
+        assert_eq!(devices.len(), 8);
+        assert_eq!(devices.iter().filter(|device| device.is_default).count(), 1);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -390,6 +507,33 @@ pub struct DeviceStore {
     path: PathBuf,
 }
 
+#[derive(Serialize, Deserialize)]
+struct StoredDevice {
+    #[serde(flatten)]
+    device: DeviceProfile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    deleted_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeletedDevice {
+    pub id: String,
+    pub name: String,
+    pub deleted_at: String,
+}
+
+fn normalize_active_defaults(devices: &mut [StoredDevice]) {
+    let keep = devices
+        .iter()
+        .position(|entry| entry.deleted_at.is_none() && entry.device.is_default)
+        .or_else(|| devices.iter().position(|entry| entry.deleted_at.is_none()));
+    for (index, entry) in devices.iter_mut().enumerate() {
+        if entry.deleted_at.is_none() {
+            entry.device.is_default = Some(index) == keep;
+        }
+    }
+}
+
 impl DeviceStore {
     pub fn new(config_dir: &Path) -> Self {
         Self {
@@ -397,15 +541,40 @@ impl DeviceStore {
         }
     }
 
-    pub fn list(&self) -> Result<Vec<DeviceProfile>> {
+    fn read_all(&self) -> Result<Vec<StoredDevice>> {
         if !self.path.exists() {
             return Ok(Vec::new());
         }
         let data = std::fs::read_to_string(&self.path)?;
-        let mut devices: Vec<DeviceProfile> =
-            serde_json::from_str(&data).map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
+        serde_json::from_str(&data).map_err(|e| RunnerError::InvalidInput(e.to_string()))
+    }
+
+    pub fn list(&self) -> Result<Vec<DeviceProfile>> {
+        let mut devices: Vec<DeviceProfile> = self
+            .read_all()?
+            .into_iter()
+            .filter(|entry| entry.deleted_at.is_none())
+            .map(|entry| entry.device)
+            .collect();
         normalize_default(&mut devices);
         Ok(devices)
+    }
+
+    pub fn list_deleted(&self) -> Result<Vec<DeletedDevice>> {
+        let mut deleted: Vec<StoredDevice> = self
+            .read_all()?
+            .into_iter()
+            .filter(|entry| entry.deleted_at.is_some())
+            .collect();
+        deleted.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+        Ok(deleted
+            .into_iter()
+            .map(|entry| DeletedDevice {
+                id: entry.device.id,
+                name: entry.device.name,
+                deleted_at: entry.deleted_at.unwrap(),
+            })
+            .collect())
     }
 
     pub fn get(&self, id: &str) -> Result<DeviceProfile> {
@@ -416,45 +585,113 @@ impl DeviceStore {
     }
 
     pub fn save(&self, mut device: DeviceProfile) -> Result<DeviceProfile> {
+        let _guard = DEVICE_OPERATIONS.lock();
         device.validate()?;
-        let mut devices = self.list()?;
+        let mut devices = self.read_all()?;
         if device.id.is_empty() {
             device.id = uuid::Uuid::new_v4().to_string();
+        }
+        if devices
+            .iter()
+            .any(|entry| entry.device.id == device.id && entry.deleted_at.is_some())
+        {
+            return Err(RunnerError::InvalidInput(
+                "restore the deleted device before editing it".into(),
+            ));
         }
         if device.is_default {
             devices
                 .iter_mut()
-                .for_each(|existing| existing.is_default = false);
+                .for_each(|existing| existing.device.is_default = false);
         }
-        match devices.iter_mut().find(|d| d.id == device.id) {
-            Some(existing) => *existing = device.clone(),
-            None => devices.push(device.clone()),
+        match devices
+            .iter_mut()
+            .find(|entry| entry.device.id == device.id)
+        {
+            Some(existing) => existing.device = device.clone(),
+            None => devices.push(StoredDevice {
+                device: device.clone(),
+                deleted_at: None,
+            }),
         }
-        normalize_default(&mut devices);
+        normalize_active_defaults(&mut devices);
         let saved = devices
             .iter()
-            .find(|candidate| candidate.id == device.id)
-            .cloned()
+            .find(|candidate| candidate.device.id == device.id)
+            .map(|entry| entry.device.clone())
             .expect("saved device must remain in the device list");
         self.write_all(&devices)?;
         Ok(saved)
     }
 
-    pub fn delete(&self, id: &str) -> Result<()> {
-        let mut devices = self.list()?;
-        devices.retain(|d| d.id != id);
-        normalize_default(&mut devices);
-        self.write_all(&devices)
+    pub fn delete(&self, id: &str) -> Result<DeletedDevice> {
+        let _guard = DEVICE_OPERATIONS.lock();
+        let mut devices = self.read_all()?;
+        let entry = devices
+            .iter_mut()
+            .find(|entry| entry.device.id == id)
+            .ok_or_else(|| RunnerError::DeviceNotFound(id.into()))?;
+        let deleted_at = entry
+            .deleted_at
+            .get_or_insert_with(|| chrono::Utc::now().to_rfc3339())
+            .clone();
+        let deleted = DeletedDevice {
+            id: entry.device.id.clone(),
+            name: entry.device.name.clone(),
+            deleted_at,
+        };
+        normalize_active_defaults(&mut devices);
+        self.write_all(&devices)?;
+        Ok(deleted)
     }
 
-    fn write_all(&self, devices: &[DeviceProfile]) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let data = serde_json::to_string_pretty(devices)
+    pub fn restore(&self, id: &str) -> Result<DeviceProfile> {
+        let _guard = DEVICE_OPERATIONS.lock();
+        let mut devices = self.read_all()?;
+        normalize_active_defaults(&mut devices);
+        let has_active = devices.iter().any(|entry| entry.deleted_at.is_none());
+        let entry = devices
+            .iter_mut()
+            .find(|entry| entry.device.id == id && entry.deleted_at.is_some())
+            .ok_or_else(|| RunnerError::DeviceNotFound(id.into()))?;
+        entry.device.validate()?;
+        entry.deleted_at = None;
+        // 恢复设备不抢占当前默认设备；列表原为空时，它成为默认设备。
+        entry.device.is_default = !has_active;
+        let restored = entry.device.clone();
+        normalize_active_defaults(&mut devices);
+        self.write_all(&devices)?;
+        Ok(restored)
+    }
+
+    fn write_all(&self, devices: &[StoredDevice]) -> Result<()> {
+        use std::io::Write;
+        let parent = self.path.parent().ok_or_else(|| {
+            RunnerError::InvalidInput("device storage needs a parent directory".into())
+        })?;
+        std::fs::create_dir_all(parent)?;
+        let data = serde_json::to_vec_pretty(devices)
             .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
-        std::fs::write(&self.path, data)?;
-        Ok(())
+        let temp = parent.join(format!(".devices-{}.tmp", uuid::Uuid::new_v4()));
+        let result = (|| -> Result<()> {
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(&temp)?;
+            file.write_all(&data)?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(&temp, &self.path)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(temp);
+        }
+        result
     }
 }
 

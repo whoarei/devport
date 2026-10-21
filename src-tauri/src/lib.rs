@@ -125,6 +125,8 @@ pub fn run() {
             commands::list_devices,
             commands::save_device,
             commands::delete_device,
+            commands::list_deleted_devices,
+            commands::restore_device,
             commands::test_device,
             commands::list_serial_ports,
             commands::list_wsl_distributions,

@@ -16,6 +16,7 @@ import { emptyDevice, deviceLabel } from "./DeviceDialog";
 import { openWorkspace } from "../workspacePicker";
 import { UI_ZOOM_LEVELS, type UiZoomAction } from "../uiZoom";
 import { useThemeStore } from "../theme";
+import { deleteDevice } from "../deviceActions";
 
 interface MenuEntry {
   type?: "item" | "checkbox" | "separator";
@@ -189,6 +190,16 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
             ? devices.map((device) => ({
                 label: `${deviceLabel(device)}${device.is_default ? t("device.defaultSuffix") : ""}`,
                 onSelect: () => useAppStore.getState().openDeviceDialog({ ...device }),
+              }))
+            : [{ label: t("menu.noDevices"), disabled: true }],
+        },
+        {
+          label: t("menu.deleteDevice"),
+          disabled: devices.length === 0,
+          children: devices.length > 0
+            ? devices.map((device) => ({
+                label: `${deviceLabel(device)}${device.is_default ? t("device.defaultSuffix") : ""}`,
+                onSelect: () => { void deleteDevice(device); },
               }))
             : [{ label: t("menu.noDevices"), disabled: true }],
         },

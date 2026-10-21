@@ -11,6 +11,7 @@ import { useAppStore, workspaceLabel } from "../store";
 import { startOneClickUpdate } from "../updateFlow";
 import { updateButtonLabel, type UpdateButtonPhase } from "../updateStatus";
 import { MenuBar } from "./MenuBar";
+import { EventCenter } from "./EventCenter";
 import appIcon from "../../src-tauri/icons/64x64.png";
 import type { UiZoomAction } from "../uiZoom";
 
@@ -132,6 +133,7 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
             <rect x="7.2" y="2.7" width="2.6" height="6.6" rx="0.6" fill="currentColor" />
           </svg>
         </button>
+        <EventCenter />
         <button type="button" className="titlebar-button" aria-label={t("titlebar.minimize")} title={t("titlebar.minimize")} disabled={!desktop} onClick={() => windowAction("minimize")}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M1 6.5h10" stroke="currentColor" /></svg>
         </button>

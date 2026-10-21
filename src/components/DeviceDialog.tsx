@@ -4,6 +4,7 @@ import { api, DeviceProfile, LocalShellInfo } from "../api";
 import { useAppStore } from "../store";
 import { useUsbStore } from "../usbStore";
 import { automaticDeviceName } from "../deviceNaming";
+import { deleteDevice } from "../deviceActions";
 
 function DeviceIcon({ name }: { name: "ssh" | "serial" | "wsl" | "local" | "close" | "refresh" | "info" }) {
   const paths = {
@@ -105,13 +106,6 @@ function DeviceDialogForm({ editing }: { editing: DeviceProfile }) {
       if (saved.is_default) selectDevice(saved.id);
       closeDeviceDialog();
     } catch (e) { setTestResult(t("device.saveFailed", { message: String(e) })); }
-  };
-
-  const remove = async (d: DeviceProfile) => {
-    if (!confirm(t("device.deleteConfirm", { name: d.name }))) return;
-    await api.deleteDevice(d.id);
-    await loadDevices();
-    closeDeviceDialog();
   };
 
   const test = async (d: DeviceProfile) => {
@@ -297,7 +291,7 @@ function DeviceDialogForm({ editing }: { editing: DeviceProfile }) {
           <button type="button" disabled={testing} onClick={() => test(device)}>
             {testing && <span className="device-spinner" />}{t(testing ? "device.connecting" : "device.testConnection")}
           </button>
-          {editing.id && <button type="button" className="device-delete" onClick={() => remove(editing)}>{t("device.delete")}</button>}
+          {editing.id && <button type="button" className="device-delete" onClick={() => void deleteDevice(editing)}>{t("device.delete")}</button>}
         </div>
         <div className="device-footer-primary">
           <button type="button" onClick={closeDeviceDialog}>{t("dialog.cancel")}</button>

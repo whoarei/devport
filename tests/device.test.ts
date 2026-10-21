@@ -1,9 +1,105 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { deviceLabel, emptyDevice } from "../src/components/DeviceDialog";
-import { DeviceProfile } from "../src/api";
-import { selectedDeviceAfterLoad } from "../src/store";
+import { api, DeviceProfile } from "../src/api";
+import { selectedDeviceAfterLoad, useAppStore } from "../src/store";
 import { automaticDeviceName } from "../src/deviceNaming";
+import { deleteDevice, loadDeletedDeviceEvents } from "../src/deviceActions";
+import { eventText, useEventStore } from "../src/eventStore";
+import i18n from "../src/i18n";
+
+function resetDeviceActions(t: test.TestContext) {
+  const app = useAppStore.getState();
+  const events = useEventStore.getState();
+  t.after(() => { useAppStore.setState(app, true); useEventStore.setState(events, true); });
+  useEventStore.setState({ events: [], running: [] });
+  const first = { ...emptyDevice(), id: "first", name: "first", host: "example.com", is_default: true };
+  const second = { ...emptyDevice(), id: "second", name: "second", host: "second.example.com" };
+  useAppStore.setState({ devices: [first, second], selectedDeviceId: first.id, editingDevice: first });
+  return { first, second };
+}
+
+test("device deletion skips confirmation and its event can restore the original identity", async (t) => {
+  const { first, second } = resetDeviceActions(t);
+  const deleted_at = "2026-10-21T07:00:00Z";
+  const deletion = t.mock.method(api, "deleteDevice", async (id: string) => ({ id, name: first.name, deleted_at }));
+  let active = [second];
+  t.mock.method(api, "listDevices", async () => active);
+  t.mock.method(api, "restoreDevice", async (id: string) => { assert.equal(id, first.id); active = [first, second]; return first; });
+  assert.equal(await deleteDevice(first), true);
+  assert.equal(deletion.mock.callCount(), 1);
+  assert.equal(useAppStore.getState().editingDevice, null);
+  assert.equal(useAppStore.getState().selectedDeviceId, second.id);
+  const event = useEventStore.getState().events[0];
+  assert.equal(event.timestamp, Date.parse(deleted_at));
+  assert.equal(event.dismissible, false);
+  await useEventStore.getState().runAction(event.id);
+  assert.deepEqual(useAppStore.getState().devices.map((device) => device.id), [first.id, second.id]);
+  assert.equal(useAppStore.getState().selectedDeviceId, second.id);
+  assert.equal(useEventStore.getState().events.length, 0);
+});
+
+test("deleted device events are rebuilt without duplicates and remain translatable", async (t) => {
+  resetDeviceActions(t);
+  const originalLanguage = i18n.language;
+  t.after(() => { void i18n.changeLanguage(originalLanguage); });
+  t.mock.method(api, "listDeletedDevices", async () => [{ id: "old", name: "old box", deleted_at: "2026-10-20T02:00:00Z" }]);
+  await loadDeletedDeviceEvents();
+  await loadDeletedDeviceEvents();
+  assert.equal(useEventStore.getState().events.length, 1);
+  const event = useEventStore.getState().events[0];
+  assert.equal(event.timestamp, Date.parse("2026-10-20T02:00:00Z"));
+  await i18n.changeLanguage("zh");
+  assert.equal(eventText(event.action!.label), "撤销删除");
+  await i18n.changeLanguage("en");
+  assert.equal(eventText(event.action!.label), "Undo deletion");
+});
+
+test("deletion failure keeps the device and reports an event; restoration failure remains retryable", async (t) => {
+  const { first, second } = resetDeviceActions(t);
+  const deletion = t.mock.method(api, "deleteDevice", async () => { throw new Error("disk full"); });
+  assert.equal(await deleteDevice(first), false);
+  assert.deepEqual(useAppStore.getState().devices, [first, second]);
+  assert.equal(useEventStore.getState().events[0].level, "error");
+  deletion.mock.mockImplementation(async () => ({ id: first.id, name: first.name, deleted_at: new Date().toISOString() }));
+  t.mock.method(api, "listDevices", async () => [second]);
+  const restoration = t.mock.method(api, "restoreDevice", async () => { throw new Error("restore failed"); });
+  await deleteDevice(first);
+  const event = useEventStore.getState().events.find((event) => event.action)!;
+  await useEventStore.getState().runAction(event.id);
+  assert.equal(useEventStore.getState().events.find((item) => item.id === event.id)?.actionError, "restore failed");
+  assert.deepEqual(useAppStore.getState().devices, [second]);
+  restoration.mock.mockImplementation(async () => first);
+  t.mock.method(api, "listDevices", async () => [first, second]);
+  await useEventStore.getState().runAction(event.id);
+  assert.ok(useAppStore.getState().devices.some((device) => device.id === first.id));
+  assert.ok(!useEventStore.getState().events.some((item) => item.id === event.id));
+});
+
+test("a device-list refresh failure never removes the undo action after a successful deletion", async (t) => {
+  const { first, second } = resetDeviceActions(t);
+  t.mock.method(api, "deleteDevice", async () => ({ id: first.id, name: first.name, deleted_at: new Date().toISOString() }));
+  t.mock.method(api, "listDevices", async () => { throw new Error("refresh unavailable"); });
+  assert.equal(await deleteDevice(first), true);
+  assert.deepEqual(useAppStore.getState().devices.map((device) => device.id), [second.id]);
+  assert.equal(useAppStore.getState().devices[0].is_default, true);
+  assert.ok(useEventStore.getState().events.some((event) => event.action));
+  assert.ok(useEventStore.getState().events.some((event) => event.level === "error"));
+});
+
+test("an old event action cannot dismiss a replacement event with the same ID", async (t) => {
+  resetDeviceActions(t);
+  let finish!: () => void;
+  let calls = 0;
+  useEventStore.getState().add({ id: "event", timestamp: 1, title: "first", action: { label: "run", run: () => { calls++; return new Promise<void>((resolve) => { finish = resolve; }); } } });
+  const pending = useEventStore.getState().runAction("event");
+  await useEventStore.getState().runAction("event");
+  assert.equal(calls, 1);
+  useEventStore.getState().add({ id: "event", timestamp: 2, title: "replacement" });
+  finish();
+  await pending;
+  assert.equal(useEventStore.getState().events[0].title, "replacement");
+});
 
 test("automatic device names use each transport's connection identifiers", () => {
   const ssh = { ...emptyDevice(), host: "192.168.1.10" };

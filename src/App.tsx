@@ -26,6 +26,7 @@ import { checkForAvailableUpdate } from "./updateStatus";
 import { endConsoleTabCycle, handleConsoleTabKeyDown, handleConsoleTabKeyUp } from "./consoleTabs";
 import { applyUiZoom, changeUiZoom, loadUiZoom, saveUiZoom, uiZoomShortcut, type UiZoomAction } from "./uiZoom";
 import { restoreWorkEnvironment } from "./workEnvironment";
+import { loadDeletedDeviceEvents } from "./deviceActions";
 
 export default function App() {
   const { t } = useTranslation();
@@ -60,6 +61,7 @@ export default function App() {
   useEffect(() => {
     const report = (error: unknown) => useAppStore.setState({ editorError: errorMessage(error) });
     const devicesReady = loadDevices().catch(report);
+    void loadDeletedDeviceEvents();
     restoreWorkEnvironment(devicesReady);
     void loadRuns().catch(report);
     return onRunEvents((events) => { handleRunEvents(events); useWorkspaceRunStore.getState().events(events); }, report);
