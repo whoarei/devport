@@ -159,7 +159,7 @@ function InlineInput({ initial, label, onSubmit, onCancel }: {
     value={value}
     onChange={(event) => setValue(event.target.value)}
     onBlur={onCancel}
-    // 输入框内保留原生文本编辑菜单（复制/粘贴），不弹面板菜单
+    // 输入框内不弹面板菜单；WebView 默认菜单由应用入口统一禁用
     onContextMenu={(event) => event.stopPropagation()}
     onKeyDown={(event) => {
       // 中文输入法组词期间的 Enter/Esc 是确认/取消候选词，不是提交或取消输入

@@ -6,7 +6,7 @@ interface PanelTitleProps {
   onToggle: () => void;
   /** 追加的 class，用于复用区域特有样式（如控制台标题） */
   className?: string;
-  /** 标题栏右键菜单（在操作按钮上右键时不触发，保留按钮原生行为） */
+  /** 标题栏右键菜单（在操作按钮上右键时不触发） */
   onContextMenu?: (event: MouseEvent) => void;
   /** 标题右侧的额外操作按钮（不参与折叠切换） */
   children?: ReactNode;

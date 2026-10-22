@@ -17,6 +17,8 @@ React 18 + TypeScript，Zustand 管理状态，CodeMirror 6 编辑文本，xterm
 
 面板由 `panels/registry.tsx` 元数据和 `panels/components.ts` 懒加载映射注册，避免组件与布局模块循环依赖。侧栏为 Workspace / Commands / Runtime，中心为 Editor / Console / Transfer；Runtime 和 Transfer 默认隐藏，编辑器随文件打开出现。侧栏左右切换、宽度、面板显隐/折叠和中心分割比例归一化后持久化。隐藏/折叠保持需要保活的编辑器、终端实例。
 
+应用入口在 `document` 的捕获阶段统一阻止 `contextmenu` 默认行为，禁用 WebView 自带的返回、刷新、另存为、打印等右键菜单；文件树、控制台等区域仍通过事件处理器打开自定义菜单。未定义菜单的区域（含输入框和面板操作按钮）右键不弹菜单，文本编辑快捷键保持可用。
+
 `zh.ts` 是翻译键源，`en.ts` 约束同键，组件用 `useTranslation()`，逻辑模块用 i18n 实例。语言 `zh / en / system`，默认 system；主题 `light / dark / system`，默认 dark；界面缩放 70%–200%，支持恢复 100%。
 
 添加设备时默认聚焦连接参数：SSH 主机地址、串口、WSL 发行版或本机 Shell。切换连接方式时聚焦新方式对应的字段；名称放在连接参数之后。四种方式自动命名分别为 `ssh-root@192.168.1.10:22`、`serial-COM8:115200`、`wsl-Ubuntu-24.04`（指定用户时 `wsl-root@Ubuntu-24.04`）和 `local-pwsh`；SSH IPv6 地址加方括号。关键字段未填写时名称为空，自动模式随连接参数更新，手动修改后停止覆盖；点击“恢复自动命名”或清空名称并离开输入框后恢复自动模式。已有设备默认保留保存的名称。自动模式只在本次弹框中保留，测试连接和保存都使用当前最终名称，落盘仍为原有 `name` 字段。
