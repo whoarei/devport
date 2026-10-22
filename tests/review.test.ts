@@ -7,6 +7,7 @@ import { useAppStore } from "../src/store";
 import { panelVisibilityPatch } from "../src/layoutState";
 import i18n from "../src/i18n";
 import { RunToolbar } from "../src/components/RunToolbar";
+import { RunHistoryPanel } from "../src/components/RunHistoryPanel";
 import { MAX_OUTPUT_BYTES, MAX_TOTAL_OUTPUT_BYTES } from "../src/outputBuffer";
 import { createConsoleReplay } from "../src/consoleReplay";
 
@@ -53,16 +54,17 @@ test("canceling a workspace switch invalidates the in-flight read and preserves 
   assert.equal(await s.saveFile(), true);
 });
 
-test("running tasks remain selectable and stoppable from the console while viewing a completed task", (t) => {
+test("older running tasks remain visible and stoppable in history without changing the latest console task", (t) => {
   const s = setup(t);
   s.handleRunEvents([{ type: "status", status: status("long-task", "running") }, { type: "status", status: status("old-task") }]);
   s.setActiveRun("old-task");
   const toolbar = renderToStaticMarkup(createElement(RunToolbar));
-  assert.match(toolbar, /选择运行中的任务/);
-  assert.match(toolbar, /value="long-task"/);
-  assert.match(toolbar, /value="old-task"/);
-  s.setActiveRun("long-task");
-  assert.match(renderToStaticMarkup(createElement(RunToolbar)), /■ 停止/);
+  assert.doesNotMatch(toolbar, /选择运行中的任务/);
+  assert.match(toolbar, /old-task @ test/);
+  const history = renderToStaticMarkup(createElement(RunHistoryPanel, { visible: true, collapsed: false, onToggleCollapse() {} }));
+  assert.match(history, /long-task/);
+  assert.match(history, /停止.*long-task/);
+  assert.equal(useAppStore.getState().activeRunId, "old-task");
 });
 
 test("legacy drafts no longer expose arbitrary commands or argument forms in the toolbar", async (t) => {

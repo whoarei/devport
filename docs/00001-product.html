@@ -191,7 +191,7 @@ pre{background:#eee;color:#111}
 <div class="wb-side"><strong>工作区</strong>按需展开的目录树<br>脚本右键运行<br><br><strong>预置命令</strong>常用 Shell 操作<br><br><strong>Runtime</strong>按需显示</div>
 <div class="wb-center">
 <div class="wb-pane"><b>文件编辑 · 多标签</b><span>UTF-8 文本 / 保存与冲突 / 语言与位置</span></div>
-<div class="wb-pane"><b>运行控制台 · 独立终端标签</b><span>目标 / Python / 设置 / 任务切换 / 停止 / 重新运行</span></div>
+<div class="wb-pane"><b>运行控制台 · 独立终端标签</b><span>目标 / Python / 设置 / 最后一次任务 / 停止 / 重新启动；左下历史支持预览和重跑</span></div>
 <div class="wb-pane"><b>文件传输 · 按需显示</b><span>本机与设备双栏 / 单项或多选 / 任务队列</span></div>
 </div>
 </div>
@@ -241,7 +241,7 @@ pre{background:#eee;color:#111}
 
 <section id="console">
 <h2><small>05 / EXECUTION FEEDBACK</small>控制台与终端的交互</h2>
-<p>运行控制台展示任务、实际解释器/执行目录、准备阶段、同步统计、输出和结果；顶部保留设备、Python、设置、任务切换、停止及重新运行。自由 Shell 操作使用独立终端或预置命令。</p>
+<p>运行控制台展示最后一次任务、实际解释器/执行目录、准备阶段、同步统计、输出和结果；顶部保留设备、Python、设置、停止及重新启动。侧栏底部“历史命令”每次运行一条，保存完整参数、目标设备和执行设置，支持原设备重跑、当前设备重跑及编辑后运行。悬停 400ms 预览配置，单击打开独立详情与日志；查看历史不改变控制台任务。自由 Shell 操作使用独立终端或预置命令。</p>
 <div class="table">
 <table>
 <thead>
@@ -257,7 +257,7 @@ pre{background:#eee;color:#111}
 </table>
 </div>
 <p>PTY 适合终端交互，pipe 可分开接收 stdout/stderr；Serial 只有合并流。Windows Local pipe 的单次 Ctrl+C 不受支持，会报错并保持任务运行；可改用 PTY 或停止按钮。</p>
-<p>输出窗口有容量限制，过快时可能丢弃旧数据并提示缺口；不是无限完整日志查看器。后端最多保留 200 条完成任务状态，每任务磁盘日志最多 2 MiB。当前没有独立运行历史侧栏及其导出/清空功能。重启不会恢复运行进程或控制台输出。</p>
+<p>输出窗口有容量限制，过快时可能丢弃旧数据并提示缺口；不是无限完整日志查看器。后端最多保留 200 条完成任务及配置快照，每任务磁盘日志最多 2 MiB，可在历史详情中查看并删除单条记录。重启不会恢复运行进程；新记录可按保存的配置再次执行，旧版本记录缺少配置时仅支持查看已有日志。重跑使用当前源码与依赖文件。</p>
 </section>
 
 <section id="python">

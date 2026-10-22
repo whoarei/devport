@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api, errorMessage, workspaceRefEquals, type CommandSource, type PythonSelection, type RunEvent, type RunStatus, type RunnerConfigState, type WorkspaceCommand, type WorkspaceCommands, type WorkspaceExecutionSettings, type WorkspacePythonInfo, type WorkspaceRef, type WorkspaceRunRequest, type WorkspaceRunSession } from "./api";
-import { getWorkspaceGeneration, presetRunSessions, useAppStore } from "./store";
+import { getWorkspaceGeneration, useAppStore } from "./store";
 import { anyDirty } from "./editorDocument";
 import { workspaceKey, workspaceSourceRevision, commandLabel, pythonVersionMatches } from "./workspaceRun";
 import { revealConsolePanel } from "./consoleTabs";
@@ -36,7 +36,7 @@ interface State {
   start: (command: WorkspaceCommand, source?: CommandSource, workspace?: WorkspaceRef, operation?: WorkspaceRunRequest["operation"]) => Promise<string>;
   run: (command: WorkspaceCommand, source?: CommandSource, workspace?: WorkspaceRef) => void;
   prepare: (rebuild?: boolean) => Promise<void>; cancelPreparation: () => Promise<void>; syncPreparation: () => void;
-  events: (events: RunEvent[]) => void; recover: (id: string) => Promise<void>; rerun: (id: string) => void;
+  events: (events: RunEvent[]) => void; recover: (id: string) => Promise<void>;
 }
 let loadEpoch = 0, checkEpoch = 0, historyEpoch = 0, configEpoch = 0, preparationToken = 0;
 export function workspaceSourceCurrent(workspace: WorkspaceRef, revision: string | null): boolean {
@@ -184,9 +184,4 @@ export const useWorkspaceRunStore = create<State>((set, get) => ({
     }
   },
   recover: async (id) => { try { const session = await api.getWorkspaceRun(id); if (session) set((s) => ({ sessions: { ...s.sessions, [id]: session }, warnings: { ...s.warnings, [id]: session.warning } })); } catch { /* Legacy run has no workspace session. */ } },
-  rerun: (id) => {
-    const session = get().sessions[id], preset = presetRunSessions.get(id);
-    if (session?.request && (!session.request.operation || session.request.operation === "run") && workspaceRefEquals(session.request.workspace, useAppStore.getState().workspace)) get().run(session.request.command, session.request.source ?? undefined, session.request.workspace);
-    else if (preset && workspaceRefEquals(preset.workspace ?? null, useAppStore.getState().workspace)) void useAppStore.getState().startRun(preset).catch((e) => get().reportError(e));
-  },
 }));

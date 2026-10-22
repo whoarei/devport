@@ -7,6 +7,7 @@ import { UsbDialog } from "./components/UsbDialog";
 import { RemoteWorkspaceDialog } from "./components/RemoteWorkspaceDialog";
 import { UnsavedDialog } from "./components/UnsavedDialog";
 import { WorkspaceRunDialogs } from "./components/WorkspaceRunDialogs";
+import { RunHistoryDialogs } from "./components/RunHistoryDialogs";
 import { useWorkspaceRunStore } from "./workspaceRunStore";
 import { TitleBar } from "./components/TitleBar";
 import { AboutDialog } from "./components/AboutDialog";
@@ -145,6 +146,9 @@ export default function App() {
 
   const sideSectionStyle = (id: PanelId): CSSProperties | undefined => {
     if (collapsed(id)) return { flex: "0 0 auto" };
+    if (id === "history" && sidebarPanels.some(p => p.id !== "history" && visible(p.id) && !collapsed(p.id))) {
+      return { flex: `0 1 ${layout.historyHeight}px`, minHeight: 120, maxHeight: "65%" };
+    }
     if (id === "commands" && !otherSideExpanded) return { flex: 1, maxHeight: "none" };
     return undefined;
   };
@@ -166,11 +170,18 @@ export default function App() {
           const Component = PANEL_COMPONENTS[panel.id];
           return (
             visible(panel.id) && (
-              <div key={panel.id} className={`dock-section${panel.id === "commands" ? " commands-section" : ""}`} style={sideSectionStyle(panel.id)}>
-                <Suspense fallback={null}>
-                  <Component visible collapsed={collapsed(panel.id)} onToggleCollapse={toggleCollapse(panel.id)} />
-                </Suspense>
-              </div>
+              <Fragment key={panel.id}>
+                {panel.id === "history" && !collapsed(panel.id) && (
+                  <SplitHandle direction="horizontal" label={t("runHistory.resize")}
+                    onDelta={delta => setLayout({ historyHeight: Math.max(120, Math.min(600, layout.historyHeight - delta)) })}
+                    onReset={() => setLayout({ historyHeight: DEFAULT_LAYOUT.historyHeight })} />
+                )}
+                <div className={`dock-section${panel.id === "commands" ? " commands-section" : ""}`} style={sideSectionStyle(panel.id)}>
+                  <Suspense fallback={null}>
+                    <Component visible collapsed={collapsed(panel.id)} onToggleCollapse={toggleCollapse(panel.id)} />
+                  </Suspense>
+                </div>
+              </Fragment>
             )
           );
         })}
@@ -229,6 +240,7 @@ export default function App() {
     <div className="app">
       <UnsavedDialog />
       <WorkspaceRunDialogs />
+      <RunHistoryDialogs />
       <AboutDialog dialogRef={aboutDialog} autoCheckNonce={aboutAutoCheck} />
       <DeviceDialog />
       <UsbDialog />

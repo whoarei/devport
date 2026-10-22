@@ -296,7 +296,7 @@ workspace_sync = 路径与同步统计</code></pre>
 <tr><th>存储域</th><th>代表数据</th><th>设计约束</th></tr>
 </thead>
 <tbody>
-<tr><td>应用配置目录</td><td>设备、known_hosts、200 条完成状态、2 MiB/run 日志、传输 journal</td><td>各自持久化语义不同，不能统称事务存储；日志与历史同步淘汰。</td></tr>
+<tr><td>应用配置目录</td><td>设备、known_hosts、200 条完成状态及运行配置快照、2 MiB/run 日志、传输 journal</td><td>运行快照在暂存/环境解析前捕获，含目标修订、原始参数和显式设置；日志与历史同步淘汰。各自持久化语义不同，不能统称事务存储。</td></tr>
 <tr><td>本机 work-environment.json</td><td>当前/最近工作区、文件视图、脏草稿、终端描述、窗口、传输选项</td><td>version 1、32 MiB，有界读写、临时文件 sync_all 后替换；坏记录保留。</td></tr>
 <tr><td>WebView localStorage</td><td>布局/语言/主题/缩放、最近目录、预置命令、按工作区运行偏好</td><td>防御性读取；含 env 的偏好不是密钥存储。</td></tr>
 <tr><td>源/目标文件系统</td><td>.runner、.sync、Runtime 实例</td><td>按所有权、revision 和租约维护，不能随 UI 清空而删除。</td></tr>

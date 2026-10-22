@@ -4,6 +4,10 @@ import i18n from "./i18n";
 export const isActiveRun = (run: RunStatus) =>
   ["preparing", "syncing", "starting", "running", "stopping"].includes(run.state);
 
+export const isExecutionRun = (run: RunStatus) => !run.replay?.workspace_request?.operation || run.replay.workspace_request.operation === "run";
+export const latestExecution = (runs: Record<string, RunStatus>) => Object.values(runs).filter(isExecutionRun)
+  .sort((a, b) => b.started_at.localeCompare(a.started_at))[0] ?? null;
+
 /** 运行状态的界面展示名；后端未知状态原样显示。CSS class 仍用原始 state。 */
 export function runStateLabel(state: string): string {
   const key = `state.${state}`;

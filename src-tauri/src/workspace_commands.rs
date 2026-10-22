@@ -90,6 +90,7 @@ pub fn run_workspace(
     state: tauri::State<'_, AppState>,
     updates: tauri::State<'_, crate::update::UpdateState>,
     mut request: Request,
+    expected_source_revision: Option<String>,
 ) -> Result<String> {
     let _update = updates
         .allow_run()
@@ -111,6 +112,15 @@ pub fn run_workspace(
         ));
     }
     let source = source_device(&request.workspace, &state.device_store)?;
+    if expected_source_revision
+        .as_ref()
+        .is_some_and(|r| source.as_ref().map(device_revision).as_ref() != Some(r))
+    {
+        return Err(error(
+            "conflict",
+            "Workspace source configuration changed; refresh before running",
+        ));
+    }
     let managed = request.command.entry.python() && matches!(request.python, Python::Project);
     if request.operation != Operation::Run && !managed {
         return Err(error(

@@ -156,6 +156,8 @@ pub fn run() {
             commands::get_run_status,
             commands::list_running_runs,
             commands::get_run_history,
+            commands::delete_run_history,
+            commands::read_run_history_output,
             commands::drain_run_events,
             commands::inspect_python_project,
             commands::list_managed_runtimes,

@@ -83,14 +83,14 @@ test("history execution submits only entry and args, excluding all index metadat
   assert.deepEqual(submitted.command,command);
 });
 
-test("same-device project Python is selectable and rerun is gray for a different source workspace", (t) => {
+test("same-device project Python is selectable and old records without snapshots cannot guess rerun settings", (t) => {
   setup(t); t.mock.method(React, "useSyncExternalStore", (_subscribe, getSnapshot) => getSnapshot());
   const remote = deviceWorkspace("a", "/project");
   useAppStore.setState({ workspace: remote, activeRunId: "id", runs: { id: { run_id: "id", device_name: "a", label: "tools/test.py", state: "exited", exit_code: 0, error: null, started_at: "", ended_at: "" } } });
   useWorkspaceRunStore.setState({ sessions: { id: { request: { workspace, device_id: "a", device_revision: "rev-a", command, python: "project", settings: { cwd: ".", env: {}, console_mode: "pty", timeout_secs: 0, cols: 80, rows: 24 } }, launch: null, warning: null } } });
   const html = renderToStaticMarkup(createElement(RunToolbar));
   assert.match(html, /option value="project"/); assert.doesNotMatch(html, /option value="project" disabled/);
-  assert.match(html, /disabled="" title="当前工作区与任务工作区不一致/);
+  assert.match(html, /disabled="" title="这条旧记录没有保存运行配置/);
 });
 
 test("right-click run starts with empty arguments and never follows the active editor tab", async (t) => {

@@ -551,6 +551,16 @@ export const zh = {
       remote_command_failed: "Linux USB/IP 操作失败，请查看诊断信息。",
     },
   },
+  runHistory: {
+    title: "历史命令", resize: "调整历史命令区域高度", currentWorkspace: "当前工作区", allWorkspaces: "全部工作区", empty: "运行脚本或命令后，记录会显示在这里",
+    details: "运行详情与日志", command: "入口 / 命令", args: "运行参数", workspace: "源工作区", device: "原目标设备", environment: "Python / Shell", cwd: "工作目录",
+    envVars: "附加环境变量", consoleMode: "控制台模式", timeout: "超时（秒）", unlimited: "不限", started: "开始时间", ended: "结束时间", duration: "耗时", exitCode: "退出码",
+    logs: "输出日志", noOutput: "暂无可用输出", outputTruncated: "输出已截断，仅保留开头最多 2 MiB。", restart: "重新启动", original: "原设备重跑", current: "当前设备重跑", more: "其他运行方式",
+    edit: "编辑后运行…", delete: "删除记录", deleteTitle: "删除运行记录？", deleteMessage: "删除“{{name}}”的运行记录和已保存输出。", originalTooltip: "原设备重跑：{{device}}", currentTooltip: "当前设备重跑：{{device}}",
+    latest: "最后一次任务", result: "运行结果", noLatest: "尚未运行任务", showDetails: "查看 {{name}} 的详情与日志", notRecorded: "未记录", envSummary: "{{count}} 个变量（值在详情中查看）",
+    legacy: "这条旧记录没有保存运行配置，可查看已有日志；请从原入口重新运行。", deviceChanged: "原设备已删除或配置已变化，请在编辑窗口核对目标设备后运行。",
+    sourceChanged: "源工作区设备配置已变化，请核对源工作区后运行。", serialMode: "串口只支持 PTY，请在编辑窗口调整控制台模式。", missingTarget: "请选择运行设备", entry: "入口路径 / 模块名",
+  },
   replay: {
     gap: "[输出超过接收能力，部分输出已丢失；任务状态已重新同步]",
     trimmed: "[较早的输出已超过单任务或总缓存上限，仅显示保留的输出]",

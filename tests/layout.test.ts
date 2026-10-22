@@ -92,7 +92,7 @@ test("new-format panel flags take precedence over legacy fields", () => {
   assert.equal(layout.panelVisible.workspace, true);
 });
 
-test("saved layouts discard the removed history panel and sidebar split while preserving other preferences", (t) => {
+test("saved layouts restore history visibility and discard obsolete sidebar splits", (t) => {
   const data = mockLocalStorage(t);
   for (const oldFields of [
     { historyVisible: true, historyCollapsed: true, sideSplit: 0.7 },
@@ -100,8 +100,8 @@ test("saved layouts discard the removed history panel and sidebar split while pr
   ]) {
     data.set("remote-runner.layout.v1", JSON.stringify({ sidebarWidth: 320, sidebarPosition: "right", ...oldFields }));
     const layout = loadLayout();
-    assert.equal("history" in layout.panelVisible, false);
-    assert.equal("history" in layout.panelCollapsed, false);
+    assert.equal(layout.panelVisible.history, oldFields.panelVisible?.history ?? oldFields.historyVisible ?? true);
+    assert.equal(layout.panelCollapsed.history, oldFields.panelCollapsed?.history ?? oldFields.historyCollapsed ?? false);
     assert.equal("sidebar" in layout.splits, false);
     assert.equal(layout.sidebarWidth, 320);
     assert.equal(layout.sidebarPosition, "right");
@@ -109,7 +109,7 @@ test("saved layouts discard the removed history panel and sidebar split while pr
     assert.equal(layout.splits.center, oldFields.splits?.center ?? DEFAULT_LAYOUT.splits.center);
     saveLayout(layout);
     assert.deepEqual(loadLayout(), layout);
-    assert.doesNotMatch(data.get("remote-runner.layout.v1")!, /history|sideSplit/);
+    assert.doesNotMatch(data.get("remote-runner.layout.v1")!, /sideSplit/);
   }
 });
 

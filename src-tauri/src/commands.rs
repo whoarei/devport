@@ -566,10 +566,20 @@ pub fn run_script(
     state: tauri::State<'_, AppState>,
     updates: tauri::State<'_, crate::update::UpdateState>,
     request: crate::runner::RunRequest,
+    expected_device_revision: Option<String>,
+    expected_source_revision: Option<String>,
 ) -> Result<String> {
     let _update_guard = updates.allow_run()?;
     let _guard = crate::workspace::FILE_OPERATIONS.lock();
     let device = state.device_store.get(&request.device_id)?;
+    if expected_device_revision
+        .as_ref()
+        .is_some_and(|r| r != &crate::workspace_run::device_revision(&device))
+    {
+        return Err(crate::error::RunnerError::InvalidInput(
+            "Device configuration changed; refresh before running".into(),
+        ));
+    }
     // 远端工作区的来源设备（00004-workspace-and-sync.md）：在边界校验存在性、路径与宿主能力后随请求传递
     let workspace_source = match request.workspace.as_ref().and_then(|w| w.device_ref()) {
         Some((source_id, path)) => {
@@ -586,6 +596,17 @@ pub fn run_script(
         }
         None => None,
     };
+    if expected_source_revision.as_ref().is_some_and(|r| {
+        workspace_source
+            .as_ref()
+            .map(crate::workspace_run::device_revision)
+            .as_ref()
+            != Some(r)
+    }) {
+        return Err(crate::error::RunnerError::InvalidInput(
+            "Workspace source configuration changed; refresh before running".into(),
+        ));
+    }
     state
         .run_manager
         .start(request, device, state.config_dir.clone(), workspace_source)
@@ -631,6 +652,19 @@ pub fn list_running_runs(state: tauri::State<'_, AppState>) -> Result<Vec<RunSta
 #[tauri::command]
 pub fn get_run_history(state: tauri::State<'_, AppState>) -> Result<Vec<RunStatus>> {
     Ok(state.run_manager.history())
+}
+
+#[tauri::command]
+pub fn delete_run_history(state: tauri::State<'_, AppState>, run_id: String) -> Result<()> {
+    state.run_manager.delete_history(&run_id)
+}
+
+#[tauri::command]
+pub fn read_run_history_output(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+) -> Result<String> {
+    state.run_manager.read_history_output(&run_id)
 }
 
 // ---------- Managed Python Runtime（00005-python-runtime.md）----------

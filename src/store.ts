@@ -3,7 +3,7 @@ import { api, DeviceProfile, RunEvent, RunStatus, RunRequest, WorkspaceEntryKind
 import { anyDirty, ChangeChoice, dirtyTab, EditorLanguage, EditorTab, inferLanguage, neighborAfterClose, uploadBusy, withTab } from "./editorDocument";
 import i18n from "./i18n";
 import { appendOutput, MAX_TOTAL_OUTPUT_BYTES, OutputBuffer, trimOutput } from "./outputBuffer";
-import { DEFAULT_RUN_DRAFT, isActiveRun, newestStatus, RunDraft } from "./runState";
+import { DEFAULT_RUN_DRAFT, isActiveRun, latestExecution, newestStatus, RunDraft } from "./runState";
 import { loadWorkspaceHistory, rememberWorkspace, saveWorkspaceHistory } from "./workspaceHistory";
 import { LayoutState, loadLayout, normalizeLayout, panelCollapsePatch, panelVisibilityPatch, saveLayout } from "./layoutState";
 import { collectScripts, dropSubtree, isWithin, joinPath, nameOf, parentOf, rekeySubtree, rootTree, withNode, WORKSPACE_ROOT, WorkspacePath, WorkspaceTree } from "./workspaceTree";
@@ -675,7 +675,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Preserve events delivered while this snapshot was being fetched.
       for (const [id, run] of Object.entries(s.runs)) if (run !== before[id]) runs[id] = newestStatus(runs[id], run);
       const history = Object.values(runs).filter((r) => !isActiveRun(r)).sort((a, b) => (b.ended_at ?? "").localeCompare(a.ended_at ?? "")).slice(0, 200);
-      const activeRunId = s.activeRunId ?? live.find(isActiveRun)?.run_id ?? null;
+      const activeRunId = s.activeRunId ?? latestExecution(runs)?.run_id ?? null;
       return { ...pruneRuns({ ...s, runs, history, activeRunId }), history, activeRunId };
     });
   },

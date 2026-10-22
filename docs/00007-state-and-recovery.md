@@ -10,12 +10,19 @@ React 18 + TypeScript，Zustand 管理状态，CodeMirror 6 编辑文本，xterm
 | --- | --- |
 | 设备、工作区、编辑标签、运行状态与布局 | `store.ts` |
 | 工作区运行设置、命令、准备任务和实际启动摘要 | `workspaceRunStore.ts` |
+| 运行历史查看、配置草稿与快照重跑 | `runHistoryStore.ts`；展示与转换见 `runHistory.ts` |
 | 独立终端标签及连接 | `terminalStore.ts` |
 | 文件传输计划/任务/浏览 | `transferStore.ts` |
 | USB 设备与操作 | `usbStore.ts` |
 | 工作环境快照编排 | `workEnvironment.ts`；窗口由 `windowState.ts` 约束 |
 
-面板由 `panels/registry.tsx` 元数据和 `panels/components.ts` 懒加载映射注册，避免组件与布局模块循环依赖。侧栏为 Workspace / Commands / Runtime，中心为 Editor / Console / Transfer；Runtime 和 Transfer 默认隐藏，编辑器随文件打开出现。侧栏左右切换、宽度、面板显隐/折叠和中心分割比例归一化后持久化。隐藏/折叠保持需要保活的编辑器、终端实例。
+面板由 `panels/registry.tsx` 元数据和 `panels/components.ts` 懒加载映射注册，避免组件与布局模块循环依赖。侧栏为 Workspace / Commands / Runtime / History，中心为 Editor / Console / Transfer；Runtime 和 Transfer 默认隐藏，编辑器随文件打开出现。历史命令位于侧栏底部，默认高 260px，可拖动调整，保存范围 120–600px；旧布局缺失该面板时默认显示。侧栏左右切换、宽度、面板显隐/折叠和中心分割比例归一化后持久化。隐藏/折叠保持需要保活的编辑器、终端实例。
+
+历史命令每次运行一条，默认筛选当前源工作区，可切换全部工作区，所有进行中的任务置顶且跨工作区可见。准备/重建任务不进入脚本运行列表。控制台移除任务下拉框，固定展示最后一次运行的任务、状态、输出、停止和重新启动；历史详情使用独立对话框，不修改控制台任务。
+
+记录右侧 `▶` 按保存配置在原设备重跑，`▾` 只有“当前设备重跑”和“编辑后运行”；两处重跑均生成新任务。当前设备模式只替换目标，保留字面参数、Python 环境模式、cwd、附加 env、控制台模式和超时，终端大小使用当前值。原设备配置修订或源设备修订变化、设备删除时进入编辑窗口，不回退到当前设备。跨工作区先走现有未保存修改与工作区切换流程；提交前后核对工作区 generation 和设备修订，Rust 再验证目标/源修订和所有输入。运行使用当前源码与项目依赖文件，不恢复源码快照。
+
+单击记录查看详情和最多 2 MiB 的保存输出，运行中可停止；每秒有界刷新输出，不接管旧任务的交互输入。记录悬停或键盘聚焦 400ms 后预览完整入口、参数、工作区、目标、环境、cwd、模式、超时和结果，附加变量只显示数量。移开、Escape、滚动、失焦、隐藏或折叠关闭预览；浮层通过 portal 避免侧栏裁切，视口边缘翻转和约束。变量值需在详情中主动展开。删除收在右键菜单，确认后删除完成记录及日志，活跃任务在前后端均拒绝删除。
 
 应用入口在 `document` 的捕获阶段统一阻止 `contextmenu` 默认行为，禁用 WebView 自带的返回、刷新、另存为、打印等右键菜单；文件树、控制台等区域仍通过事件处理器打开自定义菜单。未定义菜单的区域（含输入框和面板操作按钮）右键不弹菜单，文本编辑快捷键保持可用。
 
@@ -44,7 +51,7 @@ CodeMirror 标签保留 content、savedContent、revision、EOL、BOM、语言�
 | `devices.json` | 四种设备配置及可恢复删除记录（`deleted_at`）；密码当前明文保存，无系统钥匙串集成；写入为同目录临时文件同步后原子替换，进程内串行修改 |
 | `known_hosts.json` | `host:port → SHA-256`；TOFU，变更/损坏拒绝；进程内锁防陈旧连接覆盖 |
 | `workspace-client-id` | 持久 UUID，参与目标同步来源身份；换配置目录会形成新来源身份 |
-| `history.json` | 最多 200 个完成任务状态；落盘失败不影响运行，损坏按空记录加载 |
+| `history.json` | 最多 200 个完成任务状态及可选 replay 快照：原请求、工作区运行请求、目标/源修订、目标摘要和实际启动摘要；快照在暂存和 Shell 环境解析前捕获，只含显式 env，不含设备认证信息或完整 profile 环境。落盘失败不影响运行，损坏按空记录加载 |
 | `run_logs/<run_id>.log` | 每任务原始输出开头最多 2 MiB，随历史淘汰及启动孤儿清理删除 |
 | `transfers.json` / `transfer-journal/` | 传输结果与提交检查点；不包含文件正文/认证快照；恢复规则见 00006 |
 | `work-environment.json` | 本机工作视图及脏草稿快照，version 1，详见下节 |
@@ -65,7 +72,7 @@ CodeMirror 标签保留 content、savedContent、revision、EOL、BOM、语言�
 | `remote-runner.transfer-directories.v1` | 本机及各设备上次成功打开的目录；不存勾选项 |
 | `runner.settings.v1:<workspace-key>` | 目标、按设备 Python/Bash 选择、env、模式、超时；cwd 来自源 `.runner` |
 
-偏好坏数据防御性回落，写入失败保留会话设置。客户端附加 env 会落在本机 WebView 偏好中，不应描述为秘密保险箱。运行上下文及准备弹框任务只在当前会话保留，不能据 `history.json` 重建完整运行意图。
+偏好坏数据防御性回落，写入失败保留会话设置。客户端附加 env 会落在本机 WebView 偏好及运行快照中，不应描述为秘密保险箱。完成任务的 replay 足以在重启后按原配置重新提交；旧记录缺少 replay 时只允许查看已有输出，不能猜测目标或设置。源 `.runner/commands.json` 继续保存可共享的入口/参数索引，与本机每次运行的快照分开。准备弹框任务和长连接上下文仍只在当前会话保留。
 
 ## 4. 工作环境恢复范围
 

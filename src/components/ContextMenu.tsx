@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 export type MenuEntry =
   | {
       label: string;
+      detail?: string;
       danger?: boolean;
       disabled?: boolean;
       /** 悬停展开的子菜单（与 MenuBar 同一套样式）；设置后自身不再触发 onSelect */
@@ -86,6 +87,7 @@ function MenuItem({ entry, disabled, close }: {
     >
       <span className="menu-check" aria-hidden="true" />
       <span className="menu-label">{entry.label}</span>
+      {entry.detail && <span className="menu-detail">{entry.detail}</span>}
     </button>
   );
 }

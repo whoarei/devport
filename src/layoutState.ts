@@ -18,6 +18,7 @@ export interface LayoutState {
   sidebarPosition: "left" | "right";
   /** 侧栏 dock 整体显隐：隐藏时保留各面板自身的显隐设置，恢复时原样展示 */
   sidebarVisible: boolean;
+  historyHeight: number;
   /** 中间 dock 两个展开面板的分割比例（0..1） */
   splits: { center: number };
 }
@@ -36,11 +37,13 @@ export const DEFAULT_LAYOUT: LayoutState = {
   sidebarWidth: 260,
   sidebarPosition: "left",
   sidebarVisible: true,
+  historyHeight: 260,
   splits: { center: 0.6 },
 };
 
 /** v1 旧字段名 → 面板 id，用于迁移已持久化的布局数据 */
 const LEGACY_VISIBLE_KEYS: Record<PanelId, string> = {
+  history: "historyVisible",
   transfer: "transferVisible",
   workspace: "workspaceVisible",
   commands: "commandsVisible",
@@ -50,6 +53,7 @@ const LEGACY_VISIBLE_KEYS: Record<PanelId, string> = {
 };
 
 const LEGACY_COLLAPSED_KEYS: Record<PanelId, string> = {
+  history: "historyCollapsed",
   transfer: "transferCollapsed",
   workspace: "workspaceCollapsed",
   commands: "commandsCollapsed",
@@ -131,6 +135,7 @@ export function normalizeLayout(value: unknown): LayoutState {
     sidebarWidth: clampSidebarWidth(source.sidebarWidth as number),
     sidebarPosition: source.sidebarPosition === "right" ? "right" : "left",
     sidebarVisible: clampBoolean(source.sidebarVisible, DEFAULT_LAYOUT.sidebarVisible),
+    historyHeight: clampNumber(source.historyHeight, 120, 600, DEFAULT_LAYOUT.historyHeight),
     splits: {
       center: clampSplit(splits.center as number, DEFAULT_LAYOUT.splits.center),
     },

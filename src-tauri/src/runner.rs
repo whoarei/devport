@@ -131,6 +131,53 @@ pub struct RunStatus {
     pub workspace_sync: Option<crate::workspace_sync::Report>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub waiting_workspace: bool,
+    /// Submitted inputs only, captured before staging or shell environment resolution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<Box<RunReplay>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunReplay {
+    pub request: RunRequest,
+    pub workspace_request: Option<crate::workspace_run::Request>,
+    pub device_revision: String,
+    pub device_target: String,
+    pub source_revision: Option<String>,
+    pub launch: Option<crate::workspace_run::Launch>,
+}
+
+impl RunReplay {
+    fn capture(req: &RunRequest, device: &DeviceProfile, source: Option<&DeviceProfile>) -> Self {
+        let mut request = req.clone();
+        let workspace_request = request.workspace_context.take().map(|c| c.request);
+        request.project_inputs = None;
+        let device_target = match device.transport {
+            TransportKind::Ssh => format!("{}@{}:{}", device.username, device.host, device.port),
+            TransportKind::Wsl => device
+                .wsl
+                .as_ref()
+                .map(|w| format!("{} / {}", w.distribution, w.user))
+                .unwrap_or_default(),
+            TransportKind::Serial => device
+                .serial
+                .as_ref()
+                .map(|s| format!("{} / {}", s.port, s.baud_rate))
+                .unwrap_or_default(),
+            TransportKind::Local => device
+                .local
+                .as_ref()
+                .map(|l| l.shell.clone())
+                .unwrap_or_default(),
+        };
+        Self {
+            request,
+            workspace_request,
+            device_revision: crate::workspace_run::device_revision(device),
+            device_target,
+            source_revision: source.map(crate::workspace_run::device_revision),
+            launch: None,
+        }
+    }
 }
 
 impl RunStatus {
@@ -153,6 +200,7 @@ impl RunStatus {
             lock_sha256: None,
             workspace_sync: None,
             waiting_workspace: false,
+            replay: None,
         }
     }
 }
@@ -416,6 +464,47 @@ impl RunManager {
         self.history.lock().iter().cloned().collect()
     }
 
+    pub fn delete_history(&self, run_id: &str) -> Result<()> {
+        let handles = self.handles.lock();
+        if handles.contains_key(run_id) {
+            return Err(RunnerError::InvalidInput(
+                "Cannot delete an active run".into(),
+            ));
+        }
+        let mut history = self.history.lock();
+        let mut next = history.clone();
+        next.retain(|s| s.run_id != run_id);
+        let data = serde_json::to_vec_pretty(&next)
+            .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
+        std::fs::create_dir_all(self.history_path.parent().unwrap())?;
+        std::fs::write(&self.history_path, data)?;
+        *history = next;
+        remove_log(&self.logs_dir, run_id);
+        self.workspace_contexts.lock().remove(run_id);
+        self.launches.lock().remove(run_id);
+        self.workspace_warnings.lock().remove(run_id);
+        Ok(())
+    }
+
+    pub fn read_history_output(&self, run_id: &str) -> Result<String> {
+        if self.status(run_id).is_none() {
+            return Err(RunnerError::RunNotFound(run_id.into()));
+        }
+        let path = log_path(&self.logs_dir, run_id)
+            .ok_or_else(|| RunnerError::InvalidInput("Invalid run ID".into()))?;
+        use base64::Engine;
+        use std::io::Read;
+        match std::fs::File::open(path) {
+            Ok(file) => {
+                let mut bytes = Vec::new();
+                file.take(RUN_LOG_LIMIT).read_to_end(&mut bytes)?;
+                Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub fn send_input(&self, run_id: &str, data: Vec<u8>) -> Result<()> {
         if data.len() > 64 * 1024 {
             return Err(RunnerError::InvalidInput(
@@ -577,6 +666,14 @@ impl RunManager {
         });
     }
     fn publish_launch(&self, id: &str, launch: crate::workspace_run::Launch) {
+        if let Some(replay) = self
+            .handles
+            .lock()
+            .get_mut(id)
+            .and_then(|h| h.status.replay.as_mut())
+        {
+            replay.launch = Some(launch.clone());
+        }
         self.launches.lock().insert(id.into(), launch.clone());
         let _ = self.event_tx.send(RunEvent::Launch {
             run_id: id.into(),
@@ -811,7 +908,12 @@ impl RunManager {
         };
         let run_id = uuid::Uuid::new_v4().to_string();
         let label = describe_request(&req);
-        let status = RunStatus::new(run_id.clone(), device.name.clone(), label);
+        let mut status = RunStatus::new(run_id.clone(), device.name.clone(), label);
+        status.replay = Some(Box::new(RunReplay::capture(
+            &req,
+            &device,
+            workspace_source.as_ref(),
+        )));
 
         // 预占位：control 待 spawn 成功后替换；stop 通道立即生效
         let (placeholder, rx) = mpsc::unbounded_channel::<SessionControl>();
@@ -2382,6 +2484,75 @@ mod tests {
             "device_id": "test", "kind": "command", "command": "true"
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn run_replay_persists_original_inputs_and_launch_without_device_credentials() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let device: DeviceProfile = serde_json::from_value(serde_json::json!({
+            "id":"test", "name":"test device", "host":"example", "username":"user",
+            "auth":{"type":"password", "password":"device-secret-never-copy"}
+        }))
+        .unwrap();
+        let mut req = request();
+        req.args = vec!["".into(), "a b".into(), "汉字".into(), "$(echo x)".into()];
+        req.env.insert("EXPLICIT".into(), "input".into());
+        let replay = RunReplay::capture(&req, &device, None);
+        req.env
+            .insert("INHERITED_SECRET".into(), "probe-only".into());
+        let (tx, _) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        let mut handle = test_handle("snapshot");
+        handle.status.replay = Some(Box::new(replay));
+        manager.handles.lock().insert("snapshot".into(), handle);
+        manager.publish_launch(
+            "snapshot",
+            crate::workspace_run::Launch {
+                program: "/usr/bin/python3".into(),
+                version: Some("3.12.9".into()),
+                cwd: "/project".into(),
+                python_path: vec![],
+                environment: "device_default".into(),
+            },
+        );
+        manager.finish("snapshot", RunState::Exited, Some(0), None);
+        let serialized = std::fs::read_to_string(root.join("history.json")).unwrap();
+        assert!(!serialized.contains("device-secret-never-copy"));
+        assert!(!serialized.contains("INHERITED_SECRET"));
+        let (tx, _) = crate::events::channel();
+        let reloaded = RunManager::new(&root, tx);
+        let status = reloaded.status("snapshot").unwrap();
+        let replay = status.replay.unwrap();
+        assert_eq!(replay.request.args, req.args);
+        assert_eq!(replay.request.env.len(), 1);
+        assert_eq!(replay.device_target, "user@example:22");
+        assert_eq!(replay.launch.unwrap().program, "/usr/bin/python3");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn history_output_is_raw_and_deletion_rejects_live_runs_and_removes_saved_output() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        manager
+            .handles
+            .lock()
+            .insert("saved".into(), test_handle("saved"));
+        manager.emit_output("saved", OutputStream::Stdout, &[0xff, 0, 0xfe, b'\n']);
+        assert!(manager.delete_history("saved").is_err());
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(manager.read_history_output("saved").unwrap())
+            .unwrap();
+        assert_eq!(bytes, [0xff, 0, 0xfe, b'\n']);
+        manager.finish("saved", RunState::Exited, Some(0), None);
+        assert!(manager.read_history_output("../history").is_err());
+        manager.delete_history("saved").unwrap();
+        assert!(manager.status("saved").is_none());
+        assert!(!root.join("run_logs/saved.log").exists());
+        let (tx, _) = crate::events::channel();
+        assert!(RunManager::new(&root, tx).history().is_empty());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

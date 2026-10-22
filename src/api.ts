@@ -112,6 +112,18 @@ export interface RunRequest {
   cols?: number;
   rows?: number;
   timeout_secs?: number;
+  module?: boolean;
+  cwd?: string;
+  bash?: string | null;
+}
+
+export interface RunReplay {
+  request: RunRequest;
+  workspace_request: WorkspaceRunRequest | null;
+  device_revision: string;
+  device_target: string;
+  source_revision: string | null;
+  launch: WorkspaceLaunch | null;
 }
 
 export interface RunStatus {
@@ -135,6 +147,7 @@ export interface RunStatus {
   python_version?: string;
   lock_sha256?: string;
   waiting_workspace?: boolean;
+  replay?: RunReplay | null;
   workspace_sync?: {
     destination: string; added: number; updated: number; deleted: number;
     skipped: number; permissions: number; uploaded_bytes: number;
@@ -305,7 +318,7 @@ export const api = {
   probePythonEnvironment: (deviceId: string) => invoke<PythonProbe>("probe_python_environment", { deviceId }),
   runnerLockInfo: (workspace: WorkspaceRef) => invoke<{ content: string; revision: string } | null>("runner_lock_info", { workspace }),
   recoverRunnerLock: (workspace: WorkspaceRef, expectedRevision: string) => invoke<void>("recover_runner_lock", { workspace, expectedRevision }),
-  runWorkspace: (request: WorkspaceRunRequest) => invoke<string>("run_workspace", { request }),
+  runWorkspace: (request: WorkspaceRunRequest, expectedSourceRevision?: string | null) => invoke<string>("run_workspace", { request, expectedSourceRevision }),
   getWorkspaceRun: (runId: string) => invoke<WorkspaceRunSession | null>("get_workspace_run", { runId }),
   retryWorkspaceHistory: (runId: string) => invoke<void>("retry_workspace_history", { runId }),
   renameWorkspaceCommands: (workspace: WorkspaceRef, oldPath: string, newPath: string) => invoke<WorkspaceCommands>("rename_workspace_commands", { workspace, oldPath, newPath }),
@@ -357,7 +370,7 @@ export const api = {
   /** 关闭远端工作区编辑会话（关闭或切换工作区时调用；本机工作区为 no-op） */
   closeWorkspaceSession: () => invoke<void>("close_workspace_session"),
 
-  runScript: (request: RunRequest) => invoke<string>("run_script", { request }),
+  runScript: (request: RunRequest, expectedDeviceRevision?: string, expectedSourceRevision?: string | null) => invoke<string>("run_script", { request, expectedDeviceRevision, expectedSourceRevision }),
   stopRun: (runId: string) => invoke<void>("stop_run", { runId }),
   sendRunInput: (runId: string, data: string) =>
     invoke<void>("send_run_input", { runId, data }),
@@ -367,6 +380,8 @@ export const api = {
     invoke<RunStatus | null>("get_run_status", { runId }),
   listRunningRuns: () => invoke<RunStatus[]>("list_running_runs"),
   getRunHistory: () => invoke<RunStatus[]>("get_run_history"),
+  deleteRunHistory: (runId: string) => invoke<void>("delete_run_history", { runId }),
+  readRunHistoryOutput: (runId: string) => invoke<string>("read_run_history_output", { runId }),
   drainRunEvents: () => invoke<RunEvent[]>("drain_run_events"),
 
   inspectPythonProject: (workspaceDir: string) =>
