@@ -72,7 +72,7 @@ interface AppState {
   /** 在工作区根生成 pyproject.toml 配置模板（已存在时后端拒绝），成功后打开 */
   generateWorkspaceConfig: () => Promise<boolean>;
   renameWorkspaceEntry: (path: WorkspacePath, newName: string) => Promise<boolean>;
-  deleteWorkspaceEntry: (path: WorkspacePath) => Promise<boolean>;
+  deleteWorkspaceEntry: (path: WorkspacePath, canProceed?: () => boolean) => Promise<boolean>;
   dismissWorkspaceError: () => void;
   openWorkspaceFile: (name: string, reveal?: boolean) => Promise<void>;
   activateFile: (name: string) => void;
@@ -374,17 +374,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  deleteWorkspaceEntry: async (path) => {
+  deleteWorkspaceEntry: async (path, canProceed) => {
     const state = get();
     const blocked = workspaceChangeBlocker(state);
     if (blocked) { set({ workspaceError: blocked }); return false; }
     const root = state.workspace!;
     const dir = parentOf(path);
+    const sequence = workspaceSequence;
     // 删除会连带丢掉受影响标签的未保存修改，逐个复用既有的保存 / 放弃 / 取消确认
     for (const tab of state.openTabs.filter((t) => isWithin(t.name, path))) {
       if (!await get().confirmUnsaved(tab.name)) return false;
+      if (sequence !== workspaceSequence || canProceed?.() === false) return false;
     }
-    const sequence = workspaceSequence;
+    if (sequence !== workspaceSequence || canProceed?.() === false) return false;
+    const currentBlocker = workspaceChangeBlocker(get());
+    if (currentBlocker) { set({ workspaceError: currentBlocker }); return false; }
     set({ workspaceMutating: true, workspaceError: null });
     try {
       await api.deleteWorkspaceEntry(root, path);

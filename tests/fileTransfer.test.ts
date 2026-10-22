@@ -13,6 +13,8 @@ import { canRetryTransfer, splitTransferQueue, transferPercent, transferQueueSta
 import { loadTransferDirectories, rememberedDeviceDirectory, TRANSFER_DIRECTORIES_KEY } from "../src/transferDirectories";
 import { emptyDevice } from "../src/components/DeviceDialog";
 import { workspaceTransferMenuEntry } from "../src/components/WorkspacePanel";
+import { deviceFileContext, mutateDeviceFile } from "../src/transferFileActions";
+import { TransferFileDialog } from "../src/components/TransferFileDialog";
 
 const local: WorkspaceRef = { type: "local", dir: "C:\\data" };
 const device: WorkspaceRef = { type: "device", device_id: "ssh", path: "/data" };
@@ -28,6 +30,176 @@ function reset(t: test.TestContext) {
 const plan: TransferPlan = { id: "plan", request: { source: local, target: device, paths: ["a.bin"], exclude_project_files: false, protected_paths: [] }, items: [{ path: "a.bin", attrs, target_attrs: null, state: "pending", target_path: null, error: null }], total_bytes: 4, conflicts: 0, warnings: [], overwrite: true, keep_both: true };
 const task = (state: string): TransferSummary => ({ id: "task", source: local, target: device, state, sequence: 1, first_path: "a.bin", selection_count: 1, total_bytes: 4, transferred_bytes: 0, current_path: "a.bin", error: null, item_count: 1, completed: 0, skipped: 0, failed: 0, pending_count: 0, unknown_count: 0, residual_count: 0, warning_count: 0 });
 test.before(async () => { await i18n.changeLanguage("zh"); });
+
+async function fileBrowser(t: test.TestContext, transport: "ssh" | "wsl" = "ssh") {
+  reset(t);
+  memoryStorage(t);
+  const endpoint = { ...device, device_id: transport };
+  useAppStore.setState({ devices: [{ ...emptyDevice(), id: transport, transport, revision: "connection-1" }],
+    saving: false, starting: false, guarding: false, updating: false, workspaceMutating: false, runs: {} });
+  t.mock.method(transferApi, "list", async (endpoint) => ({ ...directory(endpoint), entries: [
+    ...directory(endpoint).entries, { name: "folder", ...attrs, kind: "dir" }, { name: "workspace", ...attrs, kind: "dir" },
+  ] }));
+  await useTransferStore.getState().browse("device", endpoint);
+  return { endpoint, context: deviceFileContext()! };
+}
+
+for (const transport of ["ssh", "wsl"] as const) {
+  test(`${transport} device file operations use the listed endpoint and refresh after success`, async (t) => {
+    const { endpoint } = await fileBrowser(t, transport);
+    const create = t.mock.method(api, "createWorkspaceEntry", async () => {});
+    const rename = t.mock.method(api, "renameWorkspaceEntry", async () => {});
+    const remove = t.mock.method(api, "deleteWorkspaceEntry", async () => {});
+    for (const kind of ["file", "dir"] as const) {
+      assert.equal(await mutateDeviceFile(deviceFileContext()!, { type: "create", name: kind === "file" ? "new.bin" : "folder", kind }), true);
+      assert.deepEqual(create.mock.calls.at(-1)?.arguments, [endpoint, kind === "file" ? "new.bin" : "folder", kind]);
+    }
+    assert.equal(await mutateDeviceFile(deviceFileContext()!, { type: "rename", name: "a.bin", newName: "renamed.bin" }), true);
+    assert.deepEqual(rename.mock.calls[0].arguments, [endpoint, "a.bin", "renamed.bin"]);
+    for (const name of ["a.bin", "folder"]) {
+      assert.equal(await mutateDeviceFile(deviceFileContext()!, { type: "delete", name }), true);
+      assert.deepEqual(remove.mock.calls.at(-1)?.arguments, [endpoint, name]);
+    }
+    assert.equal(useTransferStore.getState().deviceMutating, false);
+    assert.equal(useTransferStore.getState().device.error, null);
+  });
+}
+
+test("device file operations reject stale directories, stale connections and invalid names", async (t) => {
+  const { context, endpoint } = await fileBrowser(t);
+  const create = t.mock.method(api, "createWorkspaceEntry", async () => {});
+  for (const name of ["", ".", "..", "../escape", "/absolute", "a/b", "a\\b", "a\0b"]) {
+    assert.equal(await mutateDeviceFile(context, { type: "create", name, kind: "file" }), false);
+  }
+  await useTransferStore.getState().browse("device", { ...endpoint, path: "/elsewhere" });
+  assert.equal(await mutateDeviceFile(context, { type: "create", name: "safe", kind: "file" }), false);
+  const changedConnection = deviceFileContext()!;
+  useAppStore.setState((s) => ({ devices: s.devices.map((d) => ({ ...d, revision: "connection-2" })) }));
+  assert.equal(await mutateDeviceFile(changedConnection, { type: "create", name: "safe", kind: "file" }), false);
+  assert.equal(create.mock.callCount(), 0);
+});
+
+test("a directory response from an obsolete connection cannot enable device file operations", async (t) => {
+  const { endpoint } = await fileBrowser(t);
+  let finish!: (result: TransferDirectory) => void;
+  t.mock.method(transferApi, "list", () => new Promise<TransferDirectory>((resolve) => { finish = resolve; }));
+  const pending = useTransferStore.getState().browse("device", endpoint);
+  useAppStore.setState((s) => ({ devices: s.devices.map((d) => ({ ...d, revision: "connection-2" })) }));
+  finish(directory(endpoint)); await pending;
+  assert.equal(deviceFileContext(), null);
+  assert.equal(useTransferStore.getState().device.loading, false);
+  assert.match(useTransferStore.getState().device.error!, /设备或目录已变化/);
+});
+
+test("file mutations are blocked by device transfers and prevent duplicate mutation or planning", async (t) => {
+  const { context } = await fileBrowser(t);
+  const create = t.mock.method(api, "createWorkspaceEntry", async () => {});
+  useTransferStore.setState({ tasks: [task("transferring")] });
+  assert.equal(await mutateDeviceFile(context, { type: "create", name: "safe", kind: "file" }), false);
+  assert.equal(create.mock.callCount(), 0);
+  useTransferStore.setState({ tasks: [], registeredIds: ["awaiting-first-snapshot"] });
+  assert.equal(await mutateDeviceFile(context, { type: "create", name: "safe", kind: "file" }), false);
+  assert.equal(create.mock.callCount(), 0);
+  useTransferStore.setState({ registeredIds: [], plan });
+  assert.equal(await mutateDeviceFile(context, { type: "create", name: "safe", kind: "file" }), false);
+  useTransferStore.setState({ plan: null });
+  let finish!: () => void;
+  t.mock.method(api, "createWorkspaceEntry", () => new Promise<void>((resolve) => { finish = resolve; }));
+  await useTransferStore.getState().browse("local", local, ["a.bin"]);
+  const scan = t.mock.method(transferApi, "plan", async () => plan);
+  const retry = t.mock.method(transferApi, "retry", async () => plan);
+  const pending = mutateDeviceFile(context, { type: "create", name: "safe", kind: "file" });
+  assert.equal(useTransferStore.getState().deviceMutating, true);
+  assert.equal(await mutateDeviceFile(context, { type: "create", name: "second", kind: "file" }), false);
+  await useTransferStore.getState().prepare("local", false);
+  await useTransferStore.getState().retry("task");
+  assert.equal(scan.mock.callCount(), 0); assert.equal(retry.mock.callCount(), 0);
+  finish(); await pending;
+  assert.equal(useTransferStore.getState().deviceMutating, false);
+});
+
+test("backend file-operation errors remain visible and do not discard the directory", async (t) => {
+  const { context } = await fileBrowser(t);
+  t.mock.method(api, "renameWorkspaceEntry", async () => { throw { code: "exists", message: "目标已存在" }; });
+  assert.equal(await mutateDeviceFile(context, { type: "rename", name: "a.bin", newName: ".env" }), false);
+  assert.match(useTransferStore.getState().error!, /目标已存在/);
+  assert.equal(useTransferStore.getState().deviceMutating, false);
+  assert.ok(deviceFileContext());
+  t.mock.method(api, "deleteWorkspaceEntry", async () => { throw new Error("permission denied"); });
+  const before = useTransferStore.getState().device.generation;
+  assert.equal(await mutateDeviceFile(context, { type: "delete", name: "folder" }), false);
+  assert.ok(useTransferStore.getState().device.generation > before, "refresh partially deleted directories");
+  assert.match(useTransferStore.getState().error!, /permission denied/);
+});
+
+test("device mutations inside a workspace keep open tabs, drafts and directories in sync", async (t) => {
+  const { endpoint } = await fileBrowser(t);
+  const workspace = { ...endpoint, path: "/data" };
+  const tab = { name: "a.bin", fileContent: "dirty", savedContent: "saved", revision: "r", generation: 1, language: "text" as const, eol: "lf" as const, bom: false, conflict: false };
+  useAppStore.setState({ workspace, openTabs: [tab], activeFile: "a.bin", runDraft: { ...useAppStore.getState().runDraft, entry: "a.bin" },
+    workspaceTree: { "": { entries: [], loaded: true, expanded: true } } });
+  t.mock.method(api, "listWorkspaceDir", async () => []);
+  t.mock.method(api, "createWorkspaceEntry", async () => {});
+  t.mock.method(api, "renameWorkspaceEntry", async () => {});
+  t.mock.method(api, "renameWorkspaceCommands", async () => {});
+  const remove = t.mock.method(api, "deleteWorkspaceEntry", async () => {});
+  assert.equal(await mutateDeviceFile(deviceFileContext()!, { type: "create", name: "created", kind: "dir" }), true);
+  assert.equal(await mutateDeviceFile(deviceFileContext()!, { type: "rename", name: "a.bin", newName: "renamed.bin" }), true);
+  assert.equal(useAppStore.getState().openTabs[0].name, "renamed.bin");
+  assert.equal(useAppStore.getState().openTabs[0].fileContent, "dirty");
+  assert.equal(useAppStore.getState().activeFile, "renamed.bin");
+  assert.equal(useAppStore.getState().runDraft.entry, "renamed.bin");
+  // Simulate a fresh listing containing the renamed file.
+  t.mock.method(transferApi, "list", async (endpoint) => ({ ...directory(endpoint), entries: [{ name: "renamed.bin", ...attrs }] }));
+  await useTransferStore.getState().browse("device", endpoint);
+  const guard = t.mock.method(useAppStore.getState(), "confirmUnsaved", async () => false);
+  assert.equal(await mutateDeviceFile(deviceFileContext()!, { type: "delete", name: "renamed.bin" }), false);
+  assert.equal(guard.mock.callCount(), 1); assert.equal(remove.mock.callCount(), 0);
+  assert.equal(useAppStore.getState().openTabs.length, 1);
+  t.mock.method(useAppStore.getState(), "confirmUnsaved", async () => true);
+  assert.equal(await mutateDeviceFile(deviceFileContext()!, { type: "delete", name: "renamed.bin" }), true);
+  assert.equal(useAppStore.getState().openTabs.length, 0);
+  assert.equal(useAppStore.getState().runDraft.entry, "");
+});
+
+test("changing device directories during an unsaved-file prompt cancels deletion", async (t) => {
+  const { context, endpoint } = await fileBrowser(t);
+  useAppStore.setState({ workspace: endpoint, openTabs: [{ name: "a.bin", fileContent: "dirty", savedContent: "saved", revision: "r", generation: 1, language: "text", eol: "lf", bom: false, conflict: false }] });
+  let confirm!: (answer: boolean) => void;
+  t.mock.method(useAppStore.getState(), "confirmUnsaved", () => new Promise<boolean>((resolve) => { confirm = resolve; }));
+  const remove = t.mock.method(api, "deleteWorkspaceEntry", async () => {});
+  const pending = mutateDeviceFile(context, { type: "delete", name: "a.bin" });
+  await useTransferStore.getState().browse("device", { ...endpoint, path: "/other" });
+  confirm(true);
+  assert.equal(await pending, false);
+  assert.equal(remove.mock.callCount(), 0);
+  assert.equal(useTransferStore.getState().device.endpoint?.type === "device" && useTransferStore.getState().device.endpoint.path, "/other");
+});
+
+test("workspace roots and their ancestors cannot be renamed or deleted from the device browser", async (t) => {
+  const { context, endpoint } = await fileBrowser(t);
+  const rename = t.mock.method(api, "renameWorkspaceEntry", async () => {});
+  const remove = t.mock.method(api, "deleteWorkspaceEntry", async () => {});
+  for (const path of ["/data/workspace", "/data/workspace/nested"]) {
+    useAppStore.setState({ workspace: { ...endpoint, path } });
+    assert.equal(await mutateDeviceFile(context, { type: "rename", name: "workspace", newName: "other" }), false);
+    assert.equal(await mutateDeviceFile(context, { type: "delete", name: "workspace" }), false);
+  }
+  assert.equal(rename.mock.callCount(), 0); assert.equal(remove.mock.callCount(), 0);
+  assert.match(useTransferStore.getState().error!, /先关闭工作区/);
+});
+
+test("device file controls and recursive-delete confirmation are translated", async (t) => {
+  const { context } = await fileBrowser(t);
+  const panel = renderToStaticMarkup(React.createElement(FileTransferPanel, { visible: true, collapsed: false, onToggleCollapse() {} }));
+  assert.match(panel, /设备文件管理/); assert.match(panel, /新建文件夹/); assert.match(panel, /重命名/);
+  for (const [language, expected] of [["zh", "将永久删除此目录及其中的所有内容"], ["en", "Permanently delete this directory and all its contents"]]) {
+    await i18n.changeLanguage(language);
+    const html = renderToStaticMarkup(React.createElement(TransferFileDialog, { request: { context, type: "delete", name: "folder", directory: true }, onClose() {} }));
+    assert.ok(html.includes(expected)); assert.ok(html.includes("/data/folder"));
+  }
+  await i18n.changeLanguage("zh");
+});
 
 for (const source of [local, { type: "local", dir: "/home/user/project" } as WorkspaceRef, device, { ...device, device_id: "wsl" }]) {
   for (const path of [undefined, "a.bin", "nested/a.bin", "nested/folder"]) {

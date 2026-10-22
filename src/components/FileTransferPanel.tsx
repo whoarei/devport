@@ -1,12 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { errorMessage, type DeviceProfile, type WorkspaceRef } from "../api";
 import { useAppStore, workspaceLabel } from "../store";
 import { useTransferStore } from "../transferStore";
-import { appendEndpoint, endpointPath, sameTransferFilename, transferApi, transferBytes, type ConflictPolicy, type TransferPlan } from "../transferApi";
+import { appendEndpoint, endpointPath, sameTransferFilename, transferActive, transferApi, transferBytes, type ConflictPolicy, type TransferEntry, type TransferPlan } from "../transferApi";
+import { deviceFileBlocker, deviceFileContext } from "../transferFileActions";
+import { workspaceSourceRevision } from "../workspaceRun";
+import { uploadBusy } from "../editorDocument";
 import type { PanelComponentProps } from "../panels/components";
 import { PanelTitle } from "./PanelTitle";
 import { TransferQueue } from "./TransferQueue";
+import { ContextMenu, contextMenuPosition, type MenuEntry, type MenuState } from "./ContextMenu";
+import { TransferFileDialog, type TransferFileRequest } from "./TransferFileDialog";
 import "../fileTransfer.css";
 
 function parentEndpoint(endpoint: WorkspaceRef): WorkspaceRef {
@@ -23,7 +28,14 @@ function Browser({ side, hidden, exclude }: { side: "local" | "device"; hidden: 
   const target = useTransferStore((s) => s[side === "local" ? "device" : "local"]);
   const planning = useTransferStore((s) => s.planning);
   const plan = useTransferStore((s) => s.plan);
+  const deviceMutating = useTransferStore((s) => s.deviceMutating);
+  const deviceTransferring = useTransferStore((s) => s.registeredIds.some((id) => !s.tasks.some((task) => task.id === id))
+    || s.tasks.some((task) => transferActive(task.state)
+      && [task.source, task.target].some((endpoint) => endpoint.type === "device" && browser.endpoint?.type === "device" && endpoint.device_id === browser.endpoint.device_id)));
   const devices = useAppStore((s) => s.devices);
+  const appBusy = useAppStore((s) => s.updating || s.saving || s.starting || s.guarding || s.workspaceMutating || uploadBusy(s));
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const [fileRequest, setFileRequest] = useState<TransferFileRequest | null>(null);
   const hosts = devices.filter((d) => ["ssh", "wsl"].includes(d.transport));
   const [path, setPath] = useState(browser.endpoint ? endpointPath(browser.endpoint) : "");
   const [deviceId, setDeviceId] = useState(browser.endpoint?.type === "device" ? browser.endpoint.device_id : "");
@@ -35,6 +47,11 @@ function Browser({ side, hidden, exclude }: { side: "local" | "device"; hidden: 
     setDeviceId(browser.endpoint?.type === "device" ? browser.endpoint.device_id : "");
     setPage(0);
   }, [browser.endpoint]);
+  const sourceRevision = workspaceSourceRevision(browser.endpoint, devices);
+  useEffect(() => {
+    setMenu(null);
+    if (!useTransferStore.getState().deviceMutating) setFileRequest(null);
+  }, [browser.generation, sourceRevision]);
   const browse = (endpoint: WorkspaceRef) => void useTransferStore.getState().browse(side, endpoint);
   const submit = () => {
     if (browser.loading || !path.trim() || (side === "device" && !deviceId)) return;
@@ -50,7 +67,36 @@ function Browser({ side, hidden, exclude }: { side: "local" | "device"; hidden: 
   const entries = browser.directory?.entries.filter((e) => hidden || !e.name.startsWith(".")) ?? [];
   const selectable = entries.filter((e) => ["file", "dir"].includes(e.kind));
   const currentPage = Math.min(page, Math.max(0, Math.ceil(entries.length / 100) - 1));
-  const unavailable = planning || !!plan || browser.loading || target.loading || !browser.directory || !target.directory;
+  const unavailable = planning || !!plan || deviceMutating || browser.loading || target.loading || !browser.directory || !target.directory;
+  const fileBlocker = deviceFileBlocker(side === "device" ? deviceFileContext() : null);
+  const fileUnavailable = !!fileBlocker || appBusy || deviceMutating || deviceTransferring;
+  const selectedEntry = browser.selected.length === 1 ? selectable.find((e) => e.name === browser.selected[0]) : undefined;
+  const requestFileAction = (type: TransferFileRequest["type"], entry?: TransferEntry) => {
+    const context = deviceFileContext();
+    if (!context) return;
+    const blocked = deviceFileBlocker(context);
+    if (blocked) { useTransferStore.setState({ error: blocked }); return; }
+    setFileRequest({ context, type, name: entry?.name, directory: entry?.kind === "dir" });
+  };
+  const openFileMenu = (event: MouseEvent, entry?: TransferEntry) => {
+    if (side !== "device") return;
+    event.preventDefault(); event.stopPropagation();
+    const context = deviceFileContext();
+    if (!context) return;
+    const disabled = !!deviceFileBlocker(context);
+    const open = (type: TransferFileRequest["type"]) => {
+      if (deviceFileBlocker(context)) return;
+      setFileRequest({ context, type, name: entry?.name, directory: entry?.kind === "dir" });
+    };
+    const entries: MenuEntry[] = entry ? [
+      { label: t("workspace.rename"), disabled: disabled || !["file", "dir"].includes(entry.kind), onSelect: () => open("rename") },
+      { label: t("workspace.delete"), danger: true, disabled: disabled || !["file", "dir"].includes(entry.kind), onSelect: () => open("delete") },
+    ] : [
+      { label: t("workspace.newFile"), disabled, onSelect: () => open("create-file") },
+      { label: t("workspace.newDir"), disabled, onSelect: () => open("create-dir") },
+    ];
+    setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
+  };
   const targetLabel = target.directory ? workspaceLabel(target.directory.endpoint, devices) : "";
   const actionTitle = (name: string) => targetLabel ? t(side === "local" ? "transfer.uploadTo" : "transfer.downloadTo", { name, path: targetLabel }) : t("transfer.chooseTarget");
   return <div className="transfer-browser">
@@ -61,25 +107,31 @@ function Browser({ side, hidden, exclude }: { side: "local" | "device"; hidden: 
         <select aria-label={t("transfer.selectDevice")} title={selectedDevice ? deviceLabel(selectedDevice) : t("transfer.selectDevice")} value={deviceId} onChange={(event) => {
           const id = event.target.value; setDeviceId(id);
           void useTransferStore.getState().openDevice(id);
-        }}><option value="">{t("transfer.selectDevice")}</option>{hosts.map((d) => <option key={d.id} value={d.id}>{deviceLabel(d)}</option>)}</select>}
+        }} disabled={deviceMutating}><option value="">{t("transfer.selectDevice")}</option>{hosts.map((d) => <option key={d.id} value={d.id}>{deviceLabel(d)}</option>)}</select>}
     </div>
-    <form className="transfer-path" onSubmit={(event) => { event.preventDefault(); submit(); }}>
-      <button type="button" aria-label={t("transfer.up")} title={t("transfer.up")} disabled={!browser.directory || browser.loading} onClick={() => browser.endpoint && browse(parentEndpoint(browser.endpoint))}>↑</button>
+    <form className="transfer-path" onSubmit={(event) => { event.preventDefault(); if (!deviceMutating) submit(); }}>
+      <button type="button" aria-label={t("transfer.up")} title={t("transfer.up")} disabled={!browser.directory || browser.loading || deviceMutating} onClick={() => browser.endpoint && browse(parentEndpoint(browser.endpoint))}>↑</button>
       <div className="transfer-address"><input aria-label={t("transfer.path")} placeholder={side === "local" ? t("transfer.localPath") : "/home"} value={path} onChange={(event) => setPath(event.target.value)} />
         {side === "local" && <button type="button" aria-label={t("transfer.chooseFolder")} title={t("transfer.chooseFolder")} disabled={browser.loading} onClick={() => void chooseFolder()}>
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 4a1 1 0 0 1 1-1h3l2 2h5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4Z" stroke="currentColor" /></svg>
         </button>}
-        <button type="submit" aria-label={t("transfer.go")} title={t("transfer.go")} disabled={browser.loading || !path.trim() || (side === "device" && !deviceId)}>→</button>
+        <button type="submit" aria-label={t("transfer.go")} title={t("transfer.go")} disabled={deviceMutating || browser.loading || !path.trim() || (side === "device" && !deviceId)}>→</button>
       </div>
-      <button type="button" aria-label={t("transfer.refresh")} title={t("transfer.refresh")} disabled={!browser.endpoint || browser.loading} onClick={() => browser.endpoint && browse(browser.endpoint)}>↻</button>
+      <button type="button" aria-label={t("transfer.refresh")} title={t("transfer.refresh")} disabled={!browser.endpoint || browser.loading || deviceMutating} onClick={() => browser.endpoint && browse(browser.endpoint)}>↻</button>
     </form>
+    {side === "device" && <div className="transfer-file-actions" role="toolbar" aria-label={t("transfer.fileManagement")} title={fileBlocker ?? undefined}>
+      <button disabled={fileUnavailable} onClick={() => requestFileAction("create-file")}>{t("workspace.newFile")}</button>
+      <button disabled={fileUnavailable} onClick={() => requestFileAction("create-dir")}>{t("workspace.newDir")}</button>
+      <button disabled={fileUnavailable || !selectedEntry} onClick={() => selectedEntry && requestFileAction("rename", selectedEntry)}>{t("workspace.rename")}</button>
+      <button disabled={fileUnavailable || !selectedEntry} onClick={() => selectedEntry && requestFileAction("delete", selectedEntry)}>{t("workspace.delete")}</button>
+    </div>}
     {browser.loading && <p role="status" className="transfer-hint">{t("transfer.loading")}</p>}
     {browser.error && <p role="alert" className="transfer-error">{browser.error}</p>}
-    <div className="transfer-files">
+    <div className="transfer-files" onContextMenu={(event) => openFileMenu(event)}>
       <table><thead><tr><th className="transfer-select-column"><input type="checkbox" aria-label={t("transfer.selectAll")} disabled={!selectable.length} checked={selectable.length > 0 && selectable.every((e) => browser.selected.includes(e.name))} onChange={(event) => useTransferStore.getState().select(side, event.target.checked ? selectable.map((e) => e.name) : [])} /></th><th>{t("transfer.name")}</th><th className="transfer-size-column">{t("transfer.size")}</th><th className="transfer-action-column">{t("transfer.action")}</th></tr></thead>
-        <tbody>{entries.slice(currentPage * 100, (currentPage + 1) * 100).map((entry) => <tr key={entry.name} className={browser.selected.includes(entry.name) ? "selected" : undefined}>
+        <tbody>{entries.slice(currentPage * 100, (currentPage + 1) * 100).map((entry) => <tr key={entry.name} className={browser.selected.includes(entry.name) ? "selected" : undefined} onContextMenu={(event) => openFileMenu(event, entry)}>
           <td><input type="checkbox" aria-label={t("transfer.selectEntry", { name: entry.name })} disabled={!["file", "dir"].includes(entry.kind)} checked={browser.selected.includes(entry.name)} onChange={(event) => useTransferStore.getState().select(side, event.target.checked ? [...browser.selected, entry.name] : browser.selected.filter((n) => n !== entry.name))} /></td>
-          <td><button className="transfer-file-name" title={entry.name} disabled={!["file", "dir"].includes(entry.kind)} onClick={() => {
+          <td><button className="transfer-file-name" title={entry.name} disabled={deviceMutating || !["file", "dir"].includes(entry.kind)} onClick={() => {
             if (entry.kind === "dir" && browser.endpoint) browse(appendEndpoint(browser.endpoint, entry.name));
             else useTransferStore.getState().select(side, browser.selected.includes(entry.name) ? browser.selected.filter((n) => n !== entry.name) : [...browser.selected, entry.name]);
           }}><span aria-hidden="true">{entry.kind === "dir" ? "▸" : entry.kind === "file" ? "·" : "⊘"}</span> {entry.name}</button>
@@ -93,6 +145,8 @@ function Browser({ side, hidden, exclude }: { side: "local" | "device"; hidden: 
     {browser.selected.length > 0 && <div className="transfer-selection-actions">
       <button className="transfer-batch-action" disabled={unavailable} title={actionTitle(browser.selected.join(", "))} onClick={() => void useTransferStore.getState().prepare(side, exclude)}>{t(side === "local" ? "transfer.uploadSelected" : "transfer.downloadSelected", { count: browser.selected.length })}</button>
     </div>}
+    {side === "device" && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+    {fileRequest && <TransferFileDialog request={fileRequest} onClose={() => setFileRequest(null)} />}
   </div>;
 }
 

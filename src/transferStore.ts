@@ -6,14 +6,17 @@ import { useAppStore } from "./store";
 import { loadTransferDirectories, rememberTransferDirectory, rememberedDeviceDirectory, type TransferDirectories } from "./transferDirectories";
 import { sameTransferFilename, transferActive, transferApi, workspaceTransferPath, type TransferDirectory, type TransferSummary, type TransferPlan } from "./transferApi";
 import type { TransferOptions } from "./environmentState";
+import { workspaceSourceRevision } from "./workspaceRun";
+import i18n from "./i18n";
 
-interface BrowserState { endpoint: WorkspaceRef | null; directory: TransferDirectory | null; selected: string[]; loading: boolean; error: string | null; generation: number }
+interface BrowserState { endpoint: WorkspaceRef | null; directory: TransferDirectory | null; selected: string[]; loading: boolean; error: string | null; generation: number; sourceRevision: string | null }
 type Side = "local" | "device";
-const emptyBrowser = (): BrowserState => ({ endpoint: null, directory: null, selected: [], loading: false, error: null, generation: 0 });
+const emptyBrowser = (): BrowserState => ({ endpoint: null, directory: null, selected: [], loading: false, error: null, generation: 0, sourceRevision: null });
 interface State {
   options: TransferOptions;
   local: BrowserState; device: BrowserState; tasks: TransferSummary[]; error: string | null;
   plan: TransferPlan | null; planning: boolean;
+  deviceMutating: boolean;
   registeredIds: string[];
   completionNotices: Record<string, number>;
   directories: TransferDirectories;
@@ -31,17 +34,19 @@ interface State {
 
 export const useTransferStore = create<State>((set, get) => ({
   options: { device_id: null, hidden: false, exclude: false },
-  local: emptyBrowser(), device: emptyBrowser(), tasks: [], error: null, plan: null, planning: false, registeredIds: [], completionNotices: {},
+  local: emptyBrowser(), device: emptyBrowser(), tasks: [], error: null, plan: null, planning: false, deviceMutating: false, registeredIds: [], completionNotices: {},
   directories: loadTransferDirectories(),
   register: (id) => set((s) => ({ registeredIds: [...s.registeredIds.filter((old) => old !== id), id].slice(-100) })),
   browse: async (side, endpoint, selection = []) => {
     const generation = get()[side].generation + 1;
+    const sourceRevision = workspaceSourceRevision(endpoint, useAppStore.getState().devices);
     set({ [side]: { ...get()[side], endpoint, directory: null, selected: [], loading: true, error: null, generation } });
     try {
       const directory = await transferApi.list(endpoint);
       if (get()[side].generation !== generation) return;
+      if (workspaceSourceRevision(endpoint, useAppStore.getState().devices) !== sourceRevision) throw new Error(i18n.t("transfer.directoryChanged"));
       const directories = rememberTransferDirectory(get().directories, directory.endpoint);
-      set({ directories, [side]: { endpoint: directory.endpoint, directory, selected: selection.filter((name) => directory.entries.some((entry) => entry.name === name)), loading: false, error: null, generation } });
+      set({ directories, [side]: { endpoint: directory.endpoint, directory, selected: selection.filter((name) => directory.entries.some((entry) => entry.name === name)), loading: false, error: null, generation, sourceRevision } });
       if (side === "device" && directory.endpoint.type === "device") set({ options: { ...get().options, device_id: directory.endpoint.device_id } });
     } catch (error) {
       if (get()[side].generation === generation) set({ [side]: { ...get()[side], loading: false, error: errorMessage(error) } });
@@ -75,7 +80,7 @@ export const useTransferStore = create<State>((set, get) => ({
   select: (side, selected) => set({ [side]: { ...get()[side], selected } }),
   prepare: async (side, excludeProjectFiles, paths) => {
     const state = get();
-    if (state.planning || state.plan) return;
+    if (state.planning || state.plan || state.deviceMutating) return;
     const source = state[side], target = state[side === "local" ? "device" : "local"];
     const selected = (paths ?? source.selected).slice();
     if (source.loading || target.loading || !source.directory || !target.directory || !selected.length) return;
@@ -96,7 +101,7 @@ export const useTransferStore = create<State>((set, get) => ({
   },
   discard: () => { const plan = get().plan; set({ plan: null }); if (plan) void transferApi.discard(plan.id).catch(() => {}); },
   retry: async (id) => {
-    if (get().planning || get().plan) return;
+    if (get().planning || get().plan || get().deviceMutating) return;
     set({ planning: true, error: null });
     try { set({ plan: await transferApi.retry(id) }); }
     catch (error) { set({ error: errorMessage(error) }); }

@@ -14,6 +14,10 @@
 .transfer-browser-title strong { font-size: 13px; font-weight: 500; color: var(--text-primary, #d4d9e3); }
 .transfer-browser-heading select { min-width: 0; max-width: 75%; height: 28px; padding: 3px 6px; font-family: inherit; font-size: 12px; background: var(--surface-panel, #1b1d23); border-color: var(--border, #343844); }
 .transfer-path { display: flex; align-items: center; gap: 4px; padding: 8px; }
+.transfer-file-actions { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 8px 8px; }
+.transfer-file-actions button { padding: 4px 8px; font-size: 12px; }
+.transfer-file-dialog form > label { display: flex; flex-direction: column; gap: 8px; }
+.transfer-file-dialog input { width: 100%; box-sizing: border-box; font: inherit; }
 .transfer-path button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: 0 0 28px; padding: 0; border: 0; background: transparent; color: var(--text-secondary, #9ea8ba); font-size: 15px; }
 .transfer-path button:hover:not(:disabled) { background: var(--hover-overlay, #ffffff0c); color: var(--text-primary, #e5eafa); }
 .transfer-address { display: flex; align-items: center; flex: 1; min-width: 0; background: var(--surface-base, #17191e); border: 1px solid var(--border, #343844); border-radius: 4px; padding-right: 2px; }
