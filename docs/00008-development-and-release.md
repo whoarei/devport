@@ -76,7 +76,7 @@ node scripts/release.mjs sync vX.Y.Z
 
 更新 `package.json`、`package-lock.json`、Tauri 配置、Cargo manifest 和 Cargo lock。实际发版时创建新的 `docs/releases/vX.Y.Z.md`，采用本文件第 6 节格式；无需恢复本次删除的旧发布说明。
 
-版本与说明提交后，对确认的提交打标签并推送，GitHub Actions 精确 checkout 标签（包含 Git LFS 图标），构建 Windows x86_64 NSIS 与 portable exe，创建 draft Release，上传 updater 签名与 `latest.json` 并用 `scripts/release.mjs verify` 验证资产。workflow_dispatch 可重建已有稳定标签。构建通过不等于已公开；安装/升级验收后再公开草稿。
+版本与说明提交后，对确认的提交打标签并推送，GitHub Actions 精确 checkout 标签（包含 Git LFS 图标），构建 Windows x86_64 NSIS 与 portable exe，先创建 draft Release 并上传 updater 签名与 `latest.json`，再用 `scripts/release.mjs verify` 验证资产。全部通过后，工作流自动公开 Release 并设为 Latest，无需手动 Publish；上传或校验失败时不会执行公开步骤。workflow_dispatch 可重建已有稳定标签，校验通过后同样自动发布为 Latest。
 
 CI 需要 `TAURI_SIGNING_PRIVATE_KEY`，有口令时需要 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`，缺私钥失败。私钥不得提交仓库。签名是 Tauri updater 的 minisign 校验，不等同于 Windows Authenticode。
 

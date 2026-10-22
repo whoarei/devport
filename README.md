@@ -151,7 +151,7 @@ Windows 本地构建安装包：
 npm run tauri -- build --bundles nsis -- --locked
 ```
 
-默认输出在 `src-tauri/target/release/bundle/nsis/`。正式版本的签名、更新清单和草稿发布由 [Release 工作流](.github/workflows/release.yml) 完成。
+默认输出在 `src-tauri/target/release/bundle/nsis/`。正式版本的签名、更新清单、产物校验和自动发布为 Latest 由 [Release 工作流](.github/workflows/release.yml) 完成。
 
 ### 代码目录
 

@@ -93,6 +93,7 @@ jobs:
         with:
           tagName: ${{ steps.meta.outputs.tag }}
           releaseName: "Remote Runner ${{ steps.meta.outputs.tag }}"
+          # Keep uploads private until all assets and the updater manifest pass validation.
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: true
@@ -115,7 +116,7 @@ jobs:
           Copy-Item $exe $portable
           gh release upload $tag $portable --clobber
 
-      - name: Validate draft updater manifest and assets
+      - name: Validate updater manifest and assets
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -127,3 +128,12 @@ jobs:
           gh release view $env:RELEASE_TAG --json assets | Set-Content release-check/assets.json
           if ($LASTEXITCODE -ne 0) { throw '无法读取 Release 产物' }
           node scripts/release.mjs verify release-check/latest.json release-check/assets.json $env:RELEASE_TAG
+
+      - name: Publish release as Latest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          gh release edit $env:RELEASE_TAG --draft=false --prerelease=false --latest
+          if ($LASTEXITCODE -ne 0) { throw '无法公开 Release 并设为 Latest' }

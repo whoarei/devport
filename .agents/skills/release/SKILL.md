@@ -1,6 +1,6 @@
 ---
 name: release
-description: Remote Runner 版本发布流程：先展示更新内容并确定版本号，再同步版本号、写发布说明、提交、打 tag 推送触发 GitHub Actions 构建 draft release。当用户要求本项目发布/发版/release 时使用，版本号可以尚未指定。
+description: Remote Runner 版本发布流程：先展示更新内容并确定版本号，再同步版本号、写发布说明、提交、打 tag 推送触发 GitHub Actions 构建、校验并自动发布为 Latest。当用户要求本项目发布/发版/release 时使用，版本号可以尚未指定。
 ---
 
 # Remote Runner 发布流程
@@ -53,18 +53,18 @@ description: Remote Runner 版本发布流程：先展示更新内容并确定�
    git push origin vX.Y.Z
    ```
 
-8. **跟踪构建**：
+8. **跟踪构建和发布**：
    ```powershell
    gh run list --workflow=release.yml --limit 3
    gh run watch <run-id>
    ```
-   工作流约 7 分钟，产出 NSIS 安装包、`.exe.sig` 签名、`latest.json` 更新清单、`Remote.Runner_X.Y.Z_x64-portable.exe` 便携版，并自动校验清单与产物一致性（`scripts/release.mjs verify`）。
+   工作流产出 NSIS 安装包、`.exe.sig` 签名、`latest.json` 更新清单、`Remote.Runner_X.Y.Z_x64-portable.exe` 便携版，并自动校验清单与产物一致性（`scripts/release.mjs verify`）。上传期间保持草稿状态，校验通过后自动公开并设为 Latest；任何前置步骤失败均不会执行公开步骤。
 
-9. **告知用户**：工作流创建的是 **draft release**，构建成功后需到 GitHub 发布页手动 Publish 正式对外发布。
+9. **核实并告知用户**：确认工作流成功、Release 已公开且为 Latest，核对安装包、便携版、签名和更新清单齐全，再提供发布页链接。无需用户手动 Publish；若仍为草稿或发布步骤失败，明确报告未完成发布。
 
 ## 注意事项
 
 - 签名私钥在仓库 Secrets（`TAURI_SIGNING_PRIVATE_KEY`），本地无法构建带签名的发布产物；发布必须走 CI。
 - 工作流内也会执行一次 `release.mjs sync`，但仓库里的版本提交仍要提前做（安装包「关于」页等读取的是仓库版本）。
 - 也可用 `workflow_dispatch` 对已有 tag 重新触发发布（workflow 的 `tag` 输入）。
-- 若构建失败，修复后删除远端 tag（`git push origin :vX.Y.Z`）并删除对应 draft release，再重新打 tag 推送；不要复用同一个 tag 名指到不同提交后静默重发。
+- 若构建、上传或校验失败，保留草稿并排查原因；无需改代码时可用 `workflow_dispatch` 重试原标签，代码修复则提交后用新版本标签发布。不要移动已有标签，或覆盖已公开版本的产物。
