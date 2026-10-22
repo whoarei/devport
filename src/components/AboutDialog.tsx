@@ -4,7 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { productName, version as buildVersion } from "../../src-tauri/tauri.conf.json";
-import appIcon from "../../src-tauri/icons/128x128.png";
+import appIcon from "../../src-tauri/icons/128x128@2x.png";
 import { api, errorMessage, type AppUpdateInfo } from "../api";
 import { installCheckedUpdate } from "../updateFlow";
 import { formatDownloadProgress, updateInstallBlocker } from "../updateStatus";
@@ -12,7 +12,8 @@ import { useAppStore } from "../store";
 import { transferActive } from "../transferApi";
 import { useTransferStore } from "../transferStore";
 
-const RELEASES_URL = "https://github.com/whoarei/remote-runner/releases/latest";
+const PROJECT_URL = "https://github.com/whoarei/remote-runner";
+const RELEASES_URL = `${PROJECT_URL}/releases/latest`;
 
 type UpdatePhase =
   | { kind: "idle" }
@@ -87,44 +88,52 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
   const busy = updating || phase.kind === "checking" || phase.kind === "closingTerminals" || phase.kind === "downloading" || phase.kind === "verifying" || phase.kind === "installing";
 
   return (
-    <section className="about-update" aria-label={t("about.checkAria")} aria-live="polite">
-      <div className="about-update-row">
-        <button type="button" className="primary" disabled={busy} onClick={() => void check()}>
+    <section className="about-update" data-phase={phase.kind} aria-label={t("about.checkAria")} aria-live="polite">
+      <div className="about-update-heading">
+        <div>
+          <h3>{t("about.updateTitle")}</h3>
+          {phase.kind === "idle" && <p className="about-update-hint">{t("about.updateHint")}</p>}
+        </div>
+        <button type="button" className={`about-check-button${phase.kind === "available" ? "" : " primary"}`} disabled={busy} onClick={() => void check()}>
           {phase.kind === "checking" ? t("about.checking") : t("about.check")}
         </button>
-        {phase.kind === "available" && (
-          <>
-            {phase.info.can_auto_install && (
-              <button type="button" disabled={busy || !!blocker} onClick={() => void install(phase.info)}>{t("about.installButton")}</button>
-            )}
-            <button type="button" onClick={openDownload}>{t("about.openDownload")}</button>
-          </>
-        )}
-        {phase.kind === "error" && (
-          <button type="button" onClick={openDownload}>{t("about.openDownload")}</button>
-        )}
       </div>
       {phase.kind === "uptodate" && <p className="about-update-status">{t("about.upToDate")}</p>}
       {phase.kind === "available" && (
         <div className="about-update-status">
-          <p>
-            {t("about.available", { latest: phase.info.latest_version, current: phase.info.current_version })}
-            {!phase.info.can_auto_install && t("about.manualOnly")}
-          </p>
+          <p>{t("about.available", { latest: phase.info.latest_version, current: phase.info.current_version })}</p>
+          {!phase.info.can_auto_install && <p>{t("about.manualOnly")}</p>}
           {phase.info.can_auto_install && blocker && <p className="about-update-error">{blocker}</p>}
-          {phase.info.notes && <pre className="about-update-notes">{phase.info.notes}</pre>}
+          <div className="about-update-actions">
+            {phase.info.can_auto_install && (
+              <button type="button" className="primary" disabled={busy || !!blocker} onClick={() => void install(phase.info)}>{t("about.installButton")}</button>
+            )}
+            <button type="button" onClick={openDownload}>{t("about.openDownload")}</button>
+          </div>
+          {phase.info.can_auto_install && <p>{t("about.restartHint")}</p>}
+          {phase.info.notes && (
+            <details className="about-release-notes">
+              <summary>{t("about.releaseNotes")}</summary>
+              <pre className="about-update-notes">{phase.info.notes}</pre>
+            </details>
+          )}
         </div>
       )}
       {phase.kind === "closingTerminals" && <p className="about-update-status">{t("update.closingTerminals")}</p>}
       {phase.kind === "downloading" && (
         <div className="about-update-status">
-          <progress value={phase.total ? phase.downloaded : undefined} max={phase.total ?? undefined} />
+          <progress aria-label={t("about.downloadProgress")} value={phase.total ? phase.downloaded : undefined} max={phase.total ?? undefined} />
           <p>{formatDownloadProgress(phase.downloaded, phase.total)}</p>
         </div>
       )}
       {phase.kind === "verifying" && <p className="about-update-status">{t("about.verifying")}</p>}
       {phase.kind === "installing" && <p className="about-update-status">{t("about.installing")}</p>}
-      {phase.kind === "error" && <p className="about-update-status about-update-error">{phase.message}</p>}
+      {phase.kind === "error" && (
+        <div className="about-update-status">
+          <p className="about-update-error">{phase.message}</p>
+          <div className="about-update-actions"><button type="button" onClick={openDownload}>{t("about.openDownload")}</button></div>
+        </div>
+      )}
     </section>
   );
 }
@@ -132,7 +141,13 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
 export function AboutDialog({ dialogRef, autoCheckNonce = 0 }: { dialogRef: RefObject<HTMLDialogElement>; autoCheckNonce?: number }) {
   const { t } = useTranslation();
   const [version, setVersion] = useState(buildVersion);
+  const [linkError, setLinkError] = useState<string | null>(null);
   const updating = useAppStore((state) => state.updating);
+  // Native showModal() should focus the introduction without scrolling to an
+  // action below the fold. React's autoFocus does not write the native attribute.
+  const headingRef = useCallback((heading: HTMLHeadingElement | null) => {
+    heading?.setAttribute("autofocus", "");
+  }, []);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -153,25 +168,65 @@ export function AboutDialog({ dialogRef, autoCheckNonce = 0 }: { dialogRef: RefO
           event.currentTarget.close();
         }
       }}>
-      <div className="about-heading">
-        <img className="about-logo" src={appIcon} alt="" width="40" height="40" />
-        <div>
-          <h2 id="about-title">{t("about.title", { name: productName })}</h2>
-          <p className="about-version">{t("about.version", { version })}</p>
+      <header className="about-hero">
+        <div className="about-heading">
+          <img className="about-logo" src={appIcon} alt="" width="72" height="72" />
+          <div className="about-brand">
+            <p className="about-eyebrow">{t("about.tagline")}</p>
+            <h2 id="about-title" ref={headingRef} tabIndex={-1} aria-label={t("about.title", { name: productName })}>{productName}</h2>
+            <p className="about-version">{t("about.version", { version })}</p>
+          </div>
+        </div>
+        <p id="about-description" className="about-description">{t("about.description")}</p>
+      </header>
+      <div className="about-content">
+        <ul className="about-capabilities" aria-label={t("about.features")}>
+          <li>
+            <svg className="about-feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z" /><path d="M3 11h18" />
+            </svg>
+            <h3>{t("about.workspaceTitle")}</h3>
+            <p>{t("about.workspaceDescription")}</p>
+          </li>
+          <li>
+            <svg className="about-feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="16" rx="2" /><path d="m7 9 3 3-3 3m6 0h4" />
+            </svg>
+            <h3>{t("about.executionTitle")}</h3>
+            <p>{t("about.executionDescription")}</p>
+          </li>
+          <li>
+            <svg className="about-feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M4 8h15m-4-4 4 4-4 4M20 16H5m4-4-4 4 4 4" />
+            </svg>
+            <h3>{t("about.transferTitle")}</h3>
+            <p>{t("about.transferDescription")}</p>
+          </li>
+        </ul>
+        <div className="about-targets">
+          <span className="about-targets-label">{t("about.runTargets")}</span>
+          <ul className="about-transports" aria-label={t("about.transportsAria")}>
+            <li>{t("about.localShell")}</li>
+            <li>SSH</li>
+            <li>WSL</li>
+            <li>{t("about.serialShell")}</li>
+          </ul>
         </div>
       </div>
-      <p id="about-description">{t("about.description")}</p>
-      <ul className="about-transports" aria-label={t("about.transportsAria")}>
-        <li>SSH</li>
-        <li>{t("about.serialShell")}</li>
-        <li>WSL</li>
-        <li>{t("about.localShell")}</li>
-      </ul>
-      <p className="about-features">{t("about.features")}</p>
       {isTauri() && <UpdateSection autoCheckNonce={autoCheckNonce} />}
-      <form method="dialog" className="dialog-actions">
-        <button type="submit" disabled={updating} autoFocus>{t("about.close")}</button>
-      </form>
+      {linkError && <p className="about-link-error" role="alert">{linkError}</p>}
+      <footer className="about-footer">
+        <a className="about-project-link" href={PROJECT_URL} target="_blank" rel="noreferrer" onClick={(event) => {
+          if (!isTauri()) return;
+          event.preventDefault();
+          setLinkError(null);
+          void openUrl(PROJECT_URL).catch((error) => setLinkError(t("update.openBrowserFailed", { message: errorMessage(error) })));
+        }}>
+          {t("about.projectLink")}
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 2.5h4.5V7m0-4.5L7 9m-1-6H3a.5.5 0 0 0-.5.5V13a.5.5 0 0 0 .5.5h9.5a.5.5 0 0 0 .5-.5v-3" /></svg>
+        </a>
+        <form method="dialog"><button type="submit" className="about-close" disabled={updating}>{t("about.close")}</button></form>
+      </footer>
     </dialog>
   );
 }

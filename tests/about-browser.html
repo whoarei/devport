@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>关于对话框交互验收</title>
+    <style>
+      body:has(dialog[open]) main { visibility: hidden; }
+      dialog.about-dialog { max-width: var(--about-fixture-width, none); }
+    </style>
+  </head>
+  <body><div id="root"></div><script type="module" src="/tests/about-browser.tsx"></script></body>
+</html>

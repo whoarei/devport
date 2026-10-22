@@ -56,6 +56,8 @@ export async function applyUiZoom(percent: number): Promise<void> {
     await getCurrentWebview().setZoom(scale);
   } else {
     // Keep browser development/preview behavior aligned with the desktop app.
+    // CSS zoom leaves viewport units unscaled; dialogs use this for their bounds.
+    document.documentElement.style.setProperty("--browser-ui-zoom", String(scale));
     document.documentElement.style.setProperty("zoom", String(scale));
   }
 }
