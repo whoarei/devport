@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { MouseEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers, drawSelection } from "@codemirror/view";
@@ -11,9 +12,12 @@ import { python } from "@codemirror/lang-python";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
-import { useAppStore } from "../store";
+import { getWorkspaceGeneration, useAppStore } from "../store";
 import { dirtyTab, EditorLanguage, EditorTab, uploadBusy, withTab } from "../editorDocument";
-import { workspaceRefEquals } from "../api";
+import { workspaceRefEquals, type WorkspaceRef } from "../api";
+import { workspaceSourceRevision } from "../workspaceRun";
+import { editorCloseTargets, type EditorCloseScope } from "../editorTabActions";
+import { ContextMenu, contextMenuPosition, type MenuEntry, type MenuState } from "./ContextMenu";
 import { nameOf } from "../workspaceTree";
 import { useThemeStore, type Theme } from "../theme";
 
@@ -142,11 +146,52 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
   const { t } = useTranslation();
   const state = useAppStore(useShallow((s) => ({ tabs: s.openTabs, activeFile: s.activeFile,
     loading: s.loading, saving: s.saving, starting: s.starting, guarding: s.guarding,
+    workspace: s.workspace, devices: s.devices, workspaceMutating: s.workspaceMutating,
     error: s.editorError, uploadBusy: uploadBusy(s) })));
   const [cursor, setCursor] = useState("1:1");
+  const [tabMenu, setTabMenu] = useState<{
+    x: number; y: number; name: string; generation: number;
+    workspace: WorkspaceRef | null; workspaceGeneration: number; sourceRevision: string | null;
+  } | null>(null);
   const languageSelect = useRef<HTMLSelectElement>(null);
   const locked = state.loading || state.starting || state.guarding;
   const active = state.tabs.find((tab) => tab.name === state.activeFile);
+  const closeLocked = locked || state.saving || state.workspaceMutating;
+  const menuCurrent = () => {
+    const current = useAppStore.getState();
+    return !!tabMenu && workspaceRefEquals(tabMenu.workspace, current.workspace)
+      && tabMenu.workspaceGeneration === getWorkspaceGeneration()
+      && tabMenu.sourceRevision === workspaceSourceRevision(current.workspace, current.devices)
+      && current.openTabs.some((tab) => tab.name === tabMenu.name && tab.generation === tabMenu.generation);
+  };
+  useEffect(() => { if (tabMenu && !menuCurrent()) setTabMenu(null); }, [tabMenu, state.tabs, state.workspace, state.devices]);
+  const openTabMenu = (event: MouseEvent, tab: EditorTab) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setTabMenu({ ...contextMenuPosition(event.clientX || rect.left, event.clientY || rect.bottom, 6),
+      name: tab.name, generation: tab.generation, workspace: state.workspace,
+      workspaceGeneration: getWorkspaceGeneration(), sourceRevision: workspaceSourceRevision(state.workspace, state.devices) });
+  };
+  const closeEntry = (scope: EditorCloseScope, label: string): MenuEntry => {
+    const target = tabMenu?.name;
+    const names = target ? editorCloseTargets(state.tabs, target, scope) : [];
+    return { label: t(label, { count: names.length }), disabled: names.length === 0,
+      detail: scope === "current" ? "Ctrl+W" : undefined,
+      onSelect: () => {
+        const current = useAppStore.getState();
+        if (target && menuCurrent()) void current.closeFiles(editorCloseTargets(current.openTabs, target, scope));
+      } };
+  };
+  const menu: MenuState | null = tabMenu && menuCurrent() ? { x: tabMenu.x, y: tabMenu.y, entries: [
+    closeEntry("current", "editor.close"),
+    closeEntry("others", "editor.closeOthers"),
+    closeEntry("left", "editor.closeLeft"),
+    closeEntry("right", "editor.closeRight"),
+    "separator",
+    closeEntry("saved", "editor.closeSaved"),
+    closeEntry("all", "editor.closeAll"),
+  ] } : null;
   return <div className={`editor${state.tabs.length === 0 ? " empty" : ""}`}>
     {state.error && <div className="editor-error" role="alert">{state.error}
       {active?.conflict && <button disabled={locked || state.saving} onClick={() => void useAppStore.getState().reloadFile()}>{t("editor.reloadDisk")}</button>}
@@ -158,13 +203,14 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
           title={collapsed ? t("editor.expand") : t("editor.collapse")} onClick={onToggleCollapse}>{collapsed ? "▸" : "▾"}</button>
         {state.tabs.map((tab) => (
           <div key={tab.name} role="tab" aria-selected={tab.name === state.activeFile}
+            onContextMenu={(event) => openTabMenu(event, tab)}
             className={`editor-tab${tab.name === state.activeFile ? " active" : ""}`}>
             <button className="editor-tab-label" title={tab.name}
               onClick={() => useAppStore.getState().activateFile(tab.name)}>
               {nameOf(tab.name)}{dirtyTab(tab) ? " ●" : ""}
             </button>
             <button className="editor-tab-close" aria-label={t("editor.closeTab", { name: tab.name })} title={t("editor.closeFileTitle")}
-              disabled={locked || state.saving}
+              disabled={closeLocked}
               onClick={() => void useAppStore.getState().closeFile(tab.name)}>×</button>
           </div>
         ))}
@@ -202,5 +248,6 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
         </>}
       </div>
     </>}
+    <ContextMenu menu={menu} disabled={closeLocked} onClose={() => setTabMenu(null)} />
   </div>;
 }

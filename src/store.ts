@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create, type StoreApi } from "zustand";
 import { api, DeviceProfile, RunEvent, RunStatus, RunRequest, WorkspaceEntryKind, WorkspaceRef, errorMessage, workspaceRefEquals, AppUpdateInfo } from "./api";
 import { anyDirty, ChangeChoice, dirtyTab, EditorLanguage, EditorTab, inferLanguage, neighborAfterClose, uploadBusy, withTab } from "./editorDocument";
 import i18n from "./i18n";
@@ -7,6 +7,7 @@ import { DEFAULT_RUN_DRAFT, isActiveRun, latestExecution, newestStatus, RunDraft
 import { loadWorkspaceHistory, rememberWorkspace, saveWorkspaceHistory } from "./workspaceHistory";
 import { LayoutState, loadLayout, normalizeLayout, panelCollapsePatch, panelVisibilityPatch, saveLayout } from "./layoutState";
 import { collectScripts, dropSubtree, isWithin, joinPath, nameOf, parentOf, rekeySubtree, rootTree, withNode, WORKSPACE_ROOT, WorkspacePath, WorkspaceTree } from "./workspaceTree";
+import { workspaceSourceRevision } from "./workspaceRun";
 
 interface AppState {
   updating: boolean;
@@ -88,6 +89,8 @@ interface AppState {
   confirmAllUnsaved: () => Promise<boolean>;
   reloadFile: () => Promise<void>;
   closeFile: (name?: string) => Promise<void>;
+  /** Confirm every target before removing any tabs; cancel/failure keeps the batch open. */
+  closeFiles: (names: string[]) => Promise<void>;
   startRun: (request: RunRequest) => Promise<string>;
   handleRunEvent: (ev: RunEvent) => void;
   handleRunEvents: (events: RunEvent[]) => void;
@@ -146,6 +149,27 @@ function hideEmptyEditor(get: () => AppState) {
   if (state.openTabs.length === 0 && state.layout.panelVisible.editor) {
     state.setLayout(panelVisibilityPatch(state.layout, "editor", false));
   }
+}
+
+/** Caller holds guarding across the whole operation, including saves between prompts. */
+async function confirmTabUnsaved(name: string, get: () => AppState, set: StoreApi<AppState>["setState"], discardRecovery = true): Promise<boolean> {
+  const state = get();
+  const tab = state.openTabs.find((tab) => tab.name === name);
+  if (!tab || !dirtyTab(tab)) return true;
+  const sequence = workspaceSequence;
+  const revision = workspaceSourceRevision(state.workspace, state.devices);
+  const sourceCurrent = () => sequence === workspaceSequence && workspaceRefEquals(get().workspace, state.workspace)
+    && revision === workspaceSourceRevision(get().workspace, get().devices);
+  const choice = await new Promise<ChangeChoice>((resolve) => set({ changePrompt: { name, resolve } }));
+  set({ changePrompt: null });
+  const current = get().openTabs.find((tab) => tab.name === name);
+  if (!sourceCurrent() || !current || current.generation !== tab.generation || current.fileContent !== tab.fileContent || choice === "cancel") return false;
+  if (choice === "discard") {
+    if (discardRecovery) set((s) => ({ openTabs: withTab(s.openTabs, name, (tab) => ({ ...tab, discardRecovery: true })) }));
+    return true;
+  }
+  return await get().saveFile(name) && sourceCurrent()
+    && !dirtyTab(get().openTabs.find((tab) => tab.name === name) ?? tab);
 }
 
 /** Retain live runs and the selected history entry; bound output across all runs. */
@@ -453,6 +477,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   activateFile: (name) => {
+    if (get().guarding) return;
     if (get().openTabs.some((tab) => tab.name === name)) {
       if (get().activeFile !== name) { ++loadSequence; set({ loading: false }); }
       set({ activeFile: name, editorError: null });
@@ -533,15 +558,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Freeze input while the choice is pending, so the approved content is stable.
     set({ guarding: true });
     try {
-      const choice = await new Promise<ChangeChoice>((resolve) => set({ changePrompt: { name: tab.name, resolve } }));
-      set({ changePrompt: null });
-      if (choice === "cancel") return false;
-      if (choice === "discard") {
-        set((s) => ({ openTabs: withTab(s.openTabs, tab.name, (current) => ({ ...current, discardRecovery: true })) }));
-        return true;
-      }
-      return await get().saveFile(tab.name)
-        && !dirtyTab(get().openTabs.find((t) => t.name === tab.name) ?? tab);
+      return await confirmTabUnsaved(tab.name, get, set);
     } finally {
       set({ guarding: false, changePrompt: null });
     }
@@ -579,18 +596,48 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   closeFile: async (name) => {
+    const target = name ?? get().activeFile;
+    if (target) await get().closeFiles([target]);
+  },
+
+  closeFiles: async (names) => {
     const state = get();
-    if (state.loading || state.saving || state.starting || state.guarding) return;
-    const tab = state.openTabs.find((t) => t.name === (name ?? state.activeFile));
-    if (!tab) return;
-    // 关闭会丢掉未保存修改，复用保存 / 放弃 / 取消确认
-    if (!await get().confirmUnsaved(tab.name)) return;
-    set((s) => {
-      const openTabs = s.openTabs.filter((t) => t.name !== tab.name);
-      return { openTabs, editorError: null,
-        activeFile: s.activeFile === tab.name ? neighborAfterClose(s.openTabs, tab.name, openTabs) : s.activeFile };
-    });
-    hideEmptyEditor(get);
+    if (state.loading || state.saving || state.starting || state.guarding || state.workspaceMutating) return;
+    const requested = new Set(names);
+    const tabs = state.openTabs.filter((tab) => requested.has(tab.name));
+    if (!tabs.length) return;
+    const targets = new Set(tabs.map((tab) => tab.name));
+    const sequence = workspaceSequence;
+    const revision = workspaceSourceRevision(state.workspace, state.devices);
+    const sourceCurrent = () => sequence === workspaceSequence && workspaceRefEquals(get().workspace, state.workspace)
+      && revision === workspaceSourceRevision(get().workspace, get().devices);
+    const approved: EditorTab[] = [];
+    set({ guarding: true });
+    try {
+      for (const tab of tabs) {
+        const current = get().openTabs.find((candidate) => candidate.name === tab.name);
+        if (!sourceCurrent() || !current || current.generation !== tab.generation || current.fileContent !== tab.fileContent) return;
+        // Keep draft backups eligible until the entire batch commits.
+        if (!await confirmTabUnsaved(tab.name, get, set, false)) return;
+        const confirmed = get().openTabs.find((candidate) => candidate.name === tab.name);
+        if (!confirmed || confirmed.fileContent !== tab.fileContent) return;
+        approved.push(confirmed);
+      }
+      if (!sourceCurrent() || approved.some((tab) => {
+        const current = get().openTabs.find((candidate) => candidate.name === tab.name);
+        return !current || current.generation !== tab.generation || current.fileContent !== tab.fileContent;
+      })) return;
+      set((s) => {
+        const openTabs = s.openTabs.filter((tab) => !targets.has(tab.name));
+        return { openTabs, editorError: null,
+          activeFile: s.activeFile && targets.has(s.activeFile) ? neighborAfterClose(s.openTabs, s.activeFile, openTabs) : s.activeFile };
+      });
+      hideEmptyEditor(get);
+    } finally {
+      set({ guarding: false, changePrompt: null });
+    }
+    const active = get().openTabs.find((tab) => tab.name === get().activeFile);
+    if (active?.loaded === false && active.name !== state.activeFile) await get().openWorkspaceFile(active.name, false);
   },
 
   startRun: async (request) => {

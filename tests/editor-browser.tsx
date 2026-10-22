@@ -7,7 +7,7 @@ import { WorkspacePanel } from "../src/components/WorkspacePanel";
 import { RunToolbar } from "../src/components/RunToolbar";
 import { RunConsole } from "../src/components/RunConsole";
 import { UnsavedDialog } from "../src/components/UnsavedDialog";
-import { api, WorkspaceEntry } from "../src/api";
+import { api, localWorkspace, WorkspaceEntry } from "../src/api";
 import { useAppStore } from "../src/store";
 import { rootTree, WORKSPACE_ROOT } from "../src/workspaceTree";
 import "../src/styles.css";
@@ -89,8 +89,9 @@ api.deleteWorkspaceEntry = async (_dir, name) => {
 api.runScript = async () => "fixture-run";
 api.getRunStatus = async () => ({ run_id: "fixture-run", device_name: "模拟设备", label: "界面测试", state: "exited", exit_code: 0, error: null, started_at: "", ended_at: "" });
 api.resizeRunConsole = async () => {};
-useAppStore.setState({ workspaceDir: "/mock-workspace", recentWorkspaces: ["/mock-workspace"],
-  workspaceTree: rootTree(await api.listWorkspaceDir("/mock-workspace", WORKSPACE_ROOT)),
+const workspace = localWorkspace("/mock-workspace");
+useAppStore.setState({ workspace, recentWorkspaces: [workspace],
+  workspaceTree: rootTree(await api.listWorkspaceDir(workspace, WORKSPACE_ROOT)),
   selectedDeviceId: "mock",
   openTabs: [{ name: "main.py", fileContent: files["main.py"].content, savedContent: files["main.py"].content,
     revision: "1", eol: "lf", bom: false, language: "python", conflict: false, generation: 1 }],
@@ -99,13 +100,13 @@ useAppStore.setState({ workspaceDir: "/mock-workspace", recentWorkspaces: ["/moc
 function Fixture() {
   return <div className="app">
     <UnsavedDialog />
-    <header className="app-header">编辑器与文件管理交互验收（模拟文件接口，不连接设备）
+    <header style={{ padding: 8, flexShrink: 0 }}>编辑器与文件管理交互验收（模拟文件接口，不连接设备）
       <button onClick={() => { const name = useAppStore.getState().activeFile!; files[name] = { content: "# 外部修改\n", revision: String(Number(files[name].revision) + 1) }; }}>模拟外部修改</button>
       <button onClick={() => { for (let i = 0; i < 200; i++) useAppStore.getState().handleRunEvent({ type: "output", run_id: "fixture-run", stream: "stdout", data: btoa("output line\r\n".repeat(50)) }); }}>模拟大量终端输出</button>
       <button onClick={() => { useAppStore.getState().handleRunEvent({ type: "status", status: { run_id: "fixture-run", device_name: "模拟设备", label: "同步中", state: "syncing", exit_code: null, error: null, started_at: "", ended_at: null } }); }}>模拟同步中（禁止改动工作区）</button>
     </header>
-    <main className="app-main"><aside className="side"><WorkspacePanel collapsed={false} onToggleCollapse={() => {}} /></aside><section className="center"><Editor /></section></main>
-    <footer className="app-footer"><RunToolbar /><RunConsole collapsed={false} onToggleCollapse={() => {}} /></footer>
+    <main className="app-main"><aside className="dock-side" style={{ width: 240 }}><WorkspacePanel collapsed={false} onToggleCollapse={() => {}} /></aside><section className="dock-center"><Editor /></section></main>
+    <footer style={{ height: 220, flexShrink: 0, display: "flex", flexDirection: "column" }}><RunToolbar /><RunConsole collapsed={false} onToggleCollapse={() => {}} /></footer>
   </div>;
 }
 createRoot(document.getElementById("root")!).render(<React.StrictMode><Fixture /></React.StrictMode>);

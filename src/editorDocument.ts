@@ -47,7 +47,10 @@ export function withTab(tabs: EditorTab[], name: string, update: (tab: EditorTab
 /** 关闭标签后的活动标签：优先右侧邻居，否则左侧，都没有则 null */
 export function neighborAfterClose(tabs: EditorTab[], closing: string, remaining: EditorTab[]): string | null {
   const index = tabs.findIndex((tab) => tab.name === closing);
-  return remaining[Math.min(Math.max(index, 0), remaining.length - 1)]?.name ?? null;
+  const names = new Set(remaining.map((tab) => tab.name));
+  return tabs.slice(index + 1).find((tab) => names.has(tab.name))?.name
+    ?? tabs.slice(0, index).reverse().find((tab) => names.has(tab.name))?.name
+    ?? remaining[0]?.name ?? null;
 }
 
 export function uploadBusy(state: { runs: Record<string, { state: string }> }): boolean {

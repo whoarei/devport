@@ -379,7 +379,7 @@ test("delete confirms unsaved changes, then closes the affected tabs and drops c
   assert.equal(state.workspaceMutating, false);
 
   // 与打开文件无关的删除不需要确认，但会清掉指向被删文件的入口草稿
-  useAppStore.getState().closeFile("main.py");
+  await useAppStore.getState().closeFile("main.py");
   useAppStore.setState({ runDraft: { ...DEFAULT_RUN_DRAFT, entry: "main.py" } });
   assert.equal(await useAppStore.getState().deleteWorkspaceEntry("main.py"), true);
   assert.deepEqual(deleted, ["sub", "main.py"]);
