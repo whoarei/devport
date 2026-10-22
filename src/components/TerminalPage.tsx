@@ -47,6 +47,9 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
     const subscription = term.onData((data) => {
       if (current.current.tab.status?.state === "connected" && !current.current.tab.busy) input.send(data);
     });
+    const titleSubscription = term.onTitleChange((title) => {
+      if (!disposed) useTerminalStore.getState().setTitle(tab.id, sessionId, title);
+    });
     term.attachCustomKeyEventHandler((event) => {
       if (!event.ctrlKey || !event.shiftKey || !["c", "v"].includes(event.key.toLowerCase())) return true;
       if (event.type === "keydown") {
@@ -61,7 +64,7 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
       ({ status }) => useTerminalStore.getState().update(tab.id, sessionId, status), report);
     return () => {
       disposed = true;
-      stop(); input.dispose(); subscription.dispose(); observer.disconnect(); term.dispose();
+      stop(); input.dispose(); subscription.dispose(); titleSubscription.dispose(); observer.disconnect(); term.dispose();
       terminal.current = undefined; fit.current = undefined;
     };
   }, [tab.id, sessionId]);

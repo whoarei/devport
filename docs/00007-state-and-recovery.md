@@ -44,6 +44,8 @@ CodeMirror 标签保留 content、savedContent、revision、EOL、BOM、语言�
 
 终端上限 8，会话输出环形缓冲 1 MiB，每次读取最多 64 KiB，输入 16 KiB。读泵等 xterm 消费完上一批再读，隐藏标签仍有界排空；状态更新检查 session ID 防止旧会话串台。Ctrl+Tab 在控制台页内切换运行页/终端标签，释放修饰键提交选择。
 
+终端标签跟随 Shell 输出的 OSC 0 / OSC 2 标题，由 xterm.js 的 `onTitleChange` 更新；未收到标题或标题为空白时回退到设备名。隐藏标签继续更新，长标题省略显示，悬停可查看完整标题。标题回调检查 session ID，重连新会话时清除旧标题；标题仅在当前会话保留，不进入工作环境快照。
+
 ## 3. 持久化地图
 
 应用配置目录使用 Tauri `app_config_dir`，Windows 通常为 `%APPDATA%/com.devrunner.remote-runner`，解析失败回退 `dirs::config_dir()/remote-runner`。WebView localStorage 是另一存储位置。

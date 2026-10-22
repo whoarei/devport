@@ -11,6 +11,8 @@ export interface TerminalTab {
   id: string;
   deviceId: string;
   deviceName: string;
+  /** 当前会话通过 OSC 0/2 提供的标题；不进入恢复快照。 */
+  title?: string;
   /** 工作区终端：打开时的工作区来源参数，重连时原样复放 */
   workspace?: { workspace: WorkspaceRef; subdir: string };
   status?: TerminalStatus;
@@ -45,6 +47,7 @@ interface TerminalStore {
   close: (id: string) => Promise<void>;
   closeAll: () => Promise<void>;
   update: (id: string, sessionId: string, status: TerminalStatus) => void;
+  setTitle: (id: string, sessionId: string, title: string) => void;
   report: (id: string, sessionId: string, error: unknown) => void;
 }
 
@@ -84,7 +87,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => {
       return track((async () => {
         try {
           if (tab.status) await api.closeTerminal(tab.status.session_id);
-          patch(id, { status: undefined });
+          patch(id, { status: undefined, title: undefined });
           patch(id, { status: await openSession(tab.deviceId, tab.workspace), busy: false });
         } catch (error) { patch(id, { busy: false, error: errorMessage(error) }); }
       })());
@@ -122,6 +125,12 @@ export const useTerminalStore = create<TerminalStore>((set, get) => {
     update: (id, sessionId, status) => {
       const tab = get().tabs.find((t) => t.id === id);
       if (tab?.status?.session_id === sessionId) patch(id, { status });
+    },
+    setTitle: (id, sessionId, title) => {
+      const tab = get().tabs.find((t) => t.id === id);
+      if (tab?.status?.session_id !== sessionId) return;
+      const value = title.trim() || undefined;
+      if (tab.title !== value) patch(id, { title: value });
     },
     report: (id, sessionId, error) => {
       if (get().tabs.find((t) => t.id === id)?.status?.session_id === sessionId) patch(id, { error: errorMessage(error) });

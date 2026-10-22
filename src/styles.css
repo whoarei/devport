@@ -701,6 +701,7 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .terminal-connected { color: var(--success, #9bcea5); }
 .terminal-failed { color: var(--danger, #eda4a4); }
 .terminal-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: inline-block; margin-right: 7px; vertical-align: middle; }
+.terminal-tab-label { display: inline-block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 .terminal-number { color: var(--text-secondary, #777e92); font-size: 11px; margin-left: 4px; }
 .terminal-error { color: var(--danger, #eda4a4); background: var(--danger-surface, #302328); padding: 6px 12px; font-size: 12px; overflow-wrap: anywhere; max-height: 72px; overflow: auto; }
 .run-toolbar {

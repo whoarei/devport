@@ -120,11 +120,11 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
         <button role="tab" id="tab-run" aria-controls="panel-run" aria-selected={activeTab === "run"} tabIndex={activeTab === "run" ? 0 : -1} onClick={() => select("run")}>{t("console.runTab")}</button>
         {tabs.map((tab, index) => <div className="console-tab" key={tab.id} onContextMenu={(event) => openTabMenu(event, tab)}>
           <button role="tab" id={`tab-${tab.id}`} aria-controls={`panel-${tab.id}`} aria-selected={activeTab === tab.id} tabIndex={activeTab === tab.id ? 0 : -1}
-            onClick={() => select(tab.id)} title={t("console.terminalTitle", { name: tab.deviceName, index: index + 1 })}>
+            onClick={() => select(tab.id)} title={t("console.terminalTitle", { name: tab.title ?? tab.deviceName, index: index + 1 })}>
             <span className={`terminal-dot terminal-${tab.status?.state ?? "connecting"}`} aria-hidden="true" />
-            {t("console.terminalTab", { name: tab.deviceName })} <span className="terminal-number">{index + 1}</span>
+            <span className="terminal-tab-label">{t("console.terminalTab", { name: tab.title ?? tab.deviceName })}</span> <span className="terminal-number">{index + 1}</span>
           </button>
-          <button className="terminal-tab-close" disabled={tab.busy} aria-label={t("console.closeTerminalAria", { name: tab.deviceName, index: index + 1 })} onClick={() => void useTerminalStore.getState().close(tab.id)}>×</button>
+          <button className="terminal-tab-close" disabled={tab.busy} aria-label={t("console.closeTerminalAria", { name: tab.title ?? tab.deviceName, index: index + 1 })} onClick={() => void useTerminalStore.getState().close(tab.id)}>×</button>
         </div>)}
       </div>
       <div className="terminal-add-group">
