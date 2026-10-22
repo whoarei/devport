@@ -64,6 +64,10 @@ cargo test --offline --lib wsl::tests -- --include-ignored
 
 ## 4. 发布、版本与打包
 
+应用图标以根目录 `app-icon.png` 为唯一母版：深蓝圆角底、蓝色 R 和负形命令箭头。修改母版后运行 `npm run icons`，同时重建 `src-tauri/icons/` 中的 PNG、Windows ICO、macOS ICNS 及现有移动平台资源，避免打包图标与界面图标不一致。PNG 继续由 Git LFS 管理。`build.rs` 显式跟踪 `icons/`，保证增量构建也会更新 Windows 可执行文件内嵌的图标资源。
+
+标题栏显示 18px，使用 18 / 36 / 54px PNG 适配 1× / 2× / 3× 屏幕；关于对话框使用 128px PNG。托盘通过 `tauri::include_image!` 编译嵌入 32px PNG，窗口与可执行文件使用 Tauri 配置中的图标。修改后需要重建并重启原生应用才能看到托盘与可执行文件图标；验收时分别检查浅色、深色背景和 16 / 18 / 24 / 32px 显示。
+
 正式流程见 [release skill](../.agents/skills/release/SKILL.md) 和 [Release workflow](../.github/workflows/release.yml)。确认版本号前，先以当前分支上次稳定发布标签为基线核对提交及差异，在对话中展示新功能、修复、文档/维护调整、兼容性影响和建议版本，帮助用户判断。版本号尚未指定时再询问确认，已明确指定时沿用已有授权。稳定标签仅 `vX.Y.Z`；版本字段及 lockfile 用仓库脚本同步：
 
 ```powershell

@@ -45,7 +45,8 @@ pub fn setup(app: &tauri::App) -> tauri::Result<()> {
 
     let autostart_item = autostart.clone();
     TrayIconBuilder::with_id("main")
-        .icon(app.default_window_icon().expect("window icon").clone())
+        // Embed the small icon directly, rather than resampling a bundle-sized image.
+        .icon(tauri::include_image!("icons/32x32.png"))
         .tooltip("Remote Runner")
         .menu(&menu)
         .show_menu_on_left_click(false)

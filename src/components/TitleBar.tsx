@@ -12,7 +12,9 @@ import { startOneClickUpdate } from "../updateFlow";
 import { updateButtonLabel, type UpdateButtonPhase } from "../updateStatus";
 import { MenuBar } from "./MenuBar";
 import { EventCenter } from "./EventCenter";
-import appIcon from "../../src-tauri/icons/64x64.png";
+import appIcon from "../../src-tauri/icons/18x18.png";
+import appIcon2x from "../../src-tauri/icons/36x36.png";
+import appIcon3x from "../../src-tauri/icons/54x54.png";
 import type { UiZoomAction } from "../uiZoom";
 
 function reportWindowError(error: unknown) {
@@ -72,7 +74,7 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
   return (
     <div className={`titlebar${focused ? "" : " titlebar-inactive"}`}>
       <div className="titlebar-brand">
-        <img className="titlebar-logo" src={appIcon} alt="" width="18" height="18" />
+        <img className="titlebar-logo" src={appIcon} srcSet={`${appIcon2x} 2x, ${appIcon3x} 3x`} alt="" width="18" height="18" />
       </div>
       <MenuBar uiZoom={uiZoom} onUiZoom={onUiZoom} onAbout={onAbout} onCheckUpdate={onCheckUpdate} />
       <div className="titlebar-drag" data-tauri-drag-region>
