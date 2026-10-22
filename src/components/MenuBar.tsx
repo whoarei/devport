@@ -4,7 +4,6 @@ import { isTauri } from "@tauri-apps/api/core";
 import { errorMessage } from "../api";
 import { isAutostartEnabled, setAutostartEnabled } from "../autostart";
 import { requestQuit } from "../appLifecycle";
-import { dirtyTab } from "../editorDocument";
 import { loadLanguagePreference, setLanguage, type LanguagePreference } from "../i18n/language";
 import { useAppStore, workspaceLabel } from "../store";
 import { useUsbStore } from "../usbStore";
@@ -17,6 +16,11 @@ import { openWorkspace } from "../workspacePicker";
 import { UI_ZOOM_LEVELS, type UiZoomAction } from "../uiZoom";
 import { useThemeStore } from "../theme";
 import { deleteDevice } from "../deviceActions";
+import { useShallow } from "zustand/react/shallow";
+import { useRunHistoryStore } from "../runHistoryStore";
+import { appCommandEnabled, executeAppCommand } from "../appCommands";
+import { shortcutLabel, type AppCommandId, type ShortcutContext } from "../shortcuts";
+import { useCommandUiStore } from "../commandUiStore";
 
 interface MenuEntry {
   type?: "item" | "checkbox" | "separator";
@@ -26,6 +30,7 @@ interface MenuEntry {
   onSelect?: () => void;
   children?: MenuEntry[];
   shortcut?: string;
+  title?: string;
 }
 
 interface TopMenu {
@@ -73,6 +78,7 @@ function MenuItem({ entry, close }: { entry: MenuEntry; close: () => void }) {
       role={entry.type === "checkbox" ? "menuitemcheckbox" : "menuitem"}
       aria-checked={entry.type === "checkbox" ? entry.checked : undefined}
       className="menu-item"
+      title={entry.title}
       disabled={entry.disabled}
       onClick={() => {
         close();
@@ -110,16 +116,24 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
   const workspace = useAppStore((state) => state.workspace);
   const devices = useAppStore((state) => state.devices);
   const fileDevices = devices.filter((device) => device.transport === "ssh" || device.transport === "wsl");
-  const dirty = useAppStore((state) => {
-    const tab = state.openTabs.find((t) => t.name === state.activeFile);
-    return tab ? dirtyTab(tab) : false;
-  });
   const openFile = useAppStore((state) => state.activeFile);
   const fileBusy = useAppStore((state) => state.loading || state.saving || state.starting || state.guarding);
   const [autostart, setAutostart] = useState(false);
   const tabCycleOrder = useTerminalStore((state) => state.tabCycleOrder);
   const setTabCycleOrder = useTerminalStore((state) => state.setTabCycleOrder);
+  const terminalState = useTerminalStore(useShallow(state => ({ count: state.tabs.length, shuttingDown: state.shuttingDown, activeTab: state.activeTab })));
+  useRunHistoryStore(state => state.busy);
+  // Re-evaluate shared command guards when file or run state changes.
+  const commandState = useAppStore(useShallow(state => ({ tabs: state.openTabs, runs: state.runs, activeRunId: state.activeRunId,
+    loading: state.loading, saving: state.saving, starting: state.starting, guarding: state.guarding, workspaceMutating: state.workspaceMutating, updating: state.updating })));
   const shortcutModifier = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
+  const currentRunId = layout.panelVisible.console && !layout.panelCollapsed.console && terminalState.activeTab === "run"
+    ? commandState.activeRunId : null;
+  const currentRun = currentRunId ? commandState.runs[currentRunId] : undefined;
+  const runContext: ShortcutContext = { area: "run", runId: currentRunId ?? undefined };
+  const commandEntry = (id: AppCommandId, label: string, context: ShortcutContext = { area: "other" }): MenuEntry => ({
+    label, shortcut: shortcutLabel(id), disabled: !appCommandEnabled(id, context), onSelect: () => void executeAppCommand(id, context),
+  });
 
   useEffect(() => {
     void isAutostartEnabled().then(setAutostart).catch(() => {});
@@ -154,8 +168,8 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
     {
       label: t("menu.file"),
       entries: [
-        { label: t("menu.openWorkspace"), onSelect: () => void openWorkspace() },
-        { label: t("menu.openRemoteWorkspace"), onSelect: () => useAppStore.getState().openRemoteWorkspaceDialog() },
+        commandEntry("openWorkspace", t("menu.openWorkspace")),
+        commandEntry("openRemoteWorkspace", t("menu.openRemoteWorkspace")),
         {
           label: t("menu.recentWorkspaces"),
           disabled: recentWorkspaces.length === 0,
@@ -173,8 +187,9 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
           onSelect: () => void useAppStore.getState().setWorkspace(null),
         },
         { type: "separator" },
-        { label: t("menu.saveFile"), disabled: !dirty, onSelect: () => void useAppStore.getState().saveFile() },
-        { label: t("menu.closeFile"), disabled: !openFile || fileBusy, onSelect: () => void useAppStore.getState().closeFile() },
+        commandEntry("saveFile", t("menu.saveFile")),
+        commandEntry("saveAll", t("shortcuts.saveAll")),
+        commandEntry("closeFile", t("menu.closeFile")),
         { type: "separator" },
         {
           label: t("menu.quit"),
@@ -223,6 +238,16 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
       ],
     },
     {
+      label: t("shortcuts.runMenu"),
+      entries: [
+        commandEntry("runFile", t("shortcuts.runFile"), { area: "editor", filePath: openFile ?? undefined }),
+        commandEntry("runWithArgs", t("shortcuts.runWithArgs"), { area: "editor", filePath: openFile ?? undefined }),
+        { type: "separator" },
+        { ...commandEntry("rerun", t("shortcuts.rerun"), runContext), title: currentRun ? `${currentRun.label} @ ${currentRun.device_name}` : undefined },
+        { ...commandEntry("stop", t("shortcuts.stop"), runContext), title: currentRun ? `${currentRun.label} @ ${currentRun.device_name}` : undefined },
+      ],
+    },
+    {
       label: t("menu.view"),
       entries: [
         {
@@ -244,7 +269,10 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
             })),
           ],
         },
-        { type: "checkbox", label: t("menu.sidebar"), checked: layout.sidebarVisible, onSelect: () => setLayout({ sidebarVisible: !layout.sidebarVisible }) },
+        { ...commandEntry("toggleSidebar", t("menu.sidebar")), type: "checkbox", checked: layout.sidebarVisible },
+        commandEntry("focusEditor", t("shortcuts.focusEditor")),
+        commandEntry("focusConsole", t("shortcuts.focusConsole")),
+        commandEntry("newTerminal", t("shortcuts.newTerminal")),
         {
           label: t("menu.sidebarPosition"),
           children: [
@@ -294,6 +322,7 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
     {
       label: t("menu.help"),
       entries: [
+        { label: t("shortcuts.title"), onSelect: () => useCommandUiStore.setState({ shortcutsOpen: true }) },
         { label: t("menu.checkUpdate"), disabled: !isTauri(), onSelect: onCheckUpdate },
         { label: t("menu.about"), onSelect: onAbout },
       ],

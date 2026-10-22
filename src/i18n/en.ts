@@ -2,6 +2,19 @@ import type { Messages } from "./zh";
 
 /** 英文字典：key 集合与 zh 完全一致（typeof zh 约束，漏翻编译报错）。 */
 export const en: Messages = {
+  shortcuts: {
+    title: "Keyboard Shortcuts", action: "Action", keys: "Shortcut", scope: "Where it works", runMenu: "Run",
+    hint: "Shortcuts work inside the application window. Background actions pause during dialogs and IME composition. Action shortcuts do not run while typing in forms.",
+    terminalHint: "Terminals reserve only tab switching, panel focus, new terminal and UI zoom shortcuts. F5 combinations and Ctrl+C/D/Z/L/R/S/W/B still go to the terminal. In the run console, Ctrl+C copies a selection or sends one interrupt without a selection. Stopping a task is a separate action.",
+    openWorkspace: "Open Local Workspace", openRemoteWorkspace: "Open Device Workspace",
+    saveFile: "Save Current File", saveAll: "Save All Files", closeFile: "Close Current File",
+    runFile: "Run Current Script", runWithArgs: "Run Current Script with Arguments…", rerun: "Run Again with Original Settings", stop: "Stop Selected Task",
+    newTerminal: "New Default Device Terminal", focusConsole: "Focus Console", focusEditor: "Focus Editor", toggleSidebar: "Show / Hide Sidebar",
+    cycleTabs: "Switch Run / Terminal Tab", zoom: "Zoom In / Out / Reset", find: "Find in File", clipboard: "Copy / Paste",
+    scope_app: "Main window, outside terminals", scope_files: "File tree or editor", scope_editor: "Editor",
+    scope_script: "Current .py / .sh file in editor, or focused script in tree", scope_run: "Run toolbar or focused history record",
+    scope_navigation: "Main window, including terminals", scope_tabs: "Run and terminal tabs, outside dialogs", scope_terminal: "Standalone terminal",
+  },
   environment: {
     saveFailed: "Could not save the work environment: {{message}}",
     restoreFailed: "Could not restore the work environment. The original snapshot was preserved: {{message}}",

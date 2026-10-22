@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
+import { appCommandEnabled, executeAppCommand } from "../appCommands";
+import { shortcutLabel } from "../shortcuts";
 import { useShallow } from "zustand/react/shallow";
 import { api, errorMessage, type DeviceProfile, type WorkspaceEntry, type WorkspaceRef } from "../api";
 import { useAppStore, workspaceLabel } from "../store";
@@ -47,8 +49,8 @@ export function workspacePickerMenuEntries(
   devices: DeviceProfile[] = [],
 ): MenuEntry[] {
   return [
-    { label: t("menu.openWorkspace"), onSelect: () => void openWorkspace() },
-    { label: t("menu.openRemoteWorkspace"), onSelect: () => useAppStore.getState().openRemoteWorkspaceDialog() },
+    { label: t("menu.openWorkspace"), detail: shortcutLabel("openWorkspace"), disabled: !appCommandEnabled("openWorkspace"), onSelect: () => void executeAppCommand("openWorkspace") },
+    { label: t("menu.openRemoteWorkspace"), detail: shortcutLabel("openRemoteWorkspace"), disabled: !appCommandEnabled("openRemoteWorkspace"), onSelect: () => void executeAppCommand("openRemoteWorkspace") },
     "separator",
     ...recentWorkspaceEntries(t, recentWorkspaces, devices),
   ];
@@ -61,8 +63,8 @@ export function workspaceSwitchMenuEntries(
   devices: DeviceProfile[] = [],
 ): MenuEntry[] {
   return [
-    { label: t("menu.openWorkspace"), onSelect: () => void openWorkspace() },
-    { label: t("menu.openRemoteWorkspace"), onSelect: () => useAppStore.getState().openRemoteWorkspaceDialog() },
+    { label: t("menu.openWorkspace"), detail: shortcutLabel("openWorkspace"), disabled: !appCommandEnabled("openWorkspace"), onSelect: () => void executeAppCommand("openWorkspace") },
+    { label: t("menu.openRemoteWorkspace"), detail: shortcutLabel("openRemoteWorkspace"), disabled: !appCommandEnabled("openRemoteWorkspace"), onSelect: () => void executeAppCommand("openRemoteWorkspace") },
     { label: t("menu.closeWorkspace"), onSelect: () => useAppStore.getState().setWorkspace(null) },
     "separator",
     ...recentWorkspaceEntries(t, recentWorkspaces, devices),
@@ -213,6 +215,7 @@ function TreeLevel(props: TreeProps) {
               <button
                 type="button"
                 className="tree-row"
+                data-workspace-file={entry.is_dir ? undefined : path}
                 disabled={disabled && !entry.is_dir}
                 aria-expanded={entry.is_dir ? !!child?.expanded : undefined}
                 onClick={() => (entry.is_dir ? onToggle(path) : onOpen(path))}

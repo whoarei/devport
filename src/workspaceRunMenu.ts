@@ -3,6 +3,8 @@ import { useWorkspaceRunStore, workspaceSourceCurrent } from "./workspaceRunStor
 import { commandLabel, commandsFor, inferModule } from "./workspaceRun";
 import type { MenuEntry } from "./components/ContextMenu";
 import i18n from "./i18n";
+import { appCommandEnabled, executeAppCommand } from "./appCommands";
+import { shortcutLabel } from "./shortcuts";
 
 export async function missingCommandIds(workspace:WorkspaceRef,records:WorkspaceCommandRecord[]):Promise<Set<string>> {
   const directories=new Map<string,Promise<WorkspaceEntry[]>>();
@@ -29,8 +31,11 @@ export async function workspaceRunMenu(workspace: WorkspaceRef, path: string, di
   const missing = await missingCommandIds(workspace,recent.slice(0,10));
   const seedArgs = (command: WorkspaceCommand) => recent.find((r) => JSON.stringify(r.entry) === JSON.stringify(command.entry))?.args ?? [];
   if (!directory && /\.(py|sh)$/i.test(path)) {
-    const command: WorkspaceCommand = { entry: { type: /\.py$/i.test(path) ? "python_script" : "bash_script", path }, args: [] };
-    entries.push({ label: i18n.t("run.run"), onSelect: () => run(command) }, { label: t("withArgs"), onSelect: () => edit({ ...command, args: seedArgs(command) }) });
+    const context = { area: "workspace" as const, filePath: path };
+    entries.push({ label: i18n.t("run.run"), detail: shortcutLabel("runFile"), disabled: !appCommandEnabled("runFile", context),
+      onSelect: () => { if (current()) void executeAppCommand("runFile", context); } },
+    { label: t("withArgs"), detail: shortcutLabel("runWithArgs"), disabled: !appCommandEnabled("runWithArgs", context),
+      onSelect: () => { if (current()) void executeAppCommand("runWithArgs", context); } });
     if (/\.py$/i.test(path)) entries.push({ label: t("asModule"), onSelect: () => edit({ entry: { type: "python_module", name: module ?? "" }, args: [] }, true) });
   } else if (!path) entries.push({ label: t("runModule"), onSelect: () => edit({ entry: { type: "python_module", name: "" }, args: [] }, true) });
   else if (directory) {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
-import { api, type RunStatus } from "../api";
+import type { RunStatus } from "../api";
 import { useAppStore } from "../store";
 import { historyArgs, historyCommand, historyEntries } from "../runHistory";
 import { isActiveRun, runStateLabel } from "../runState";
@@ -10,10 +10,12 @@ import { PanelTitle } from "./PanelTitle";
 import { RunReplayButton } from "./RunReplayButton";
 import { RunHistoryPreview } from "./RunHistoryPreview";
 import { ContextMenu, type MenuEntry, type MenuState } from "./ContextMenu";
+import { appCommandEnabled, executeAppCommand } from "../appCommands";
+import { shortcutTitle } from "../shortcuts";
 
 export function RunHistoryPanel({ visible, collapsed, onToggleCollapse }: { visible: boolean; collapsed: boolean; onToggleCollapse: () => void }) {
   const { t } = useTranslation();
-  const { runs, workspace } = useAppStore(useShallow(s => ({ runs: s.runs, workspace: s.workspace })));
+  const { runs, workspace } = useAppStore(useShallow(s => ({ runs: s.runs, workspace: s.workspace, updating: s.updating })));
   const state = useRunHistoryStore();
   const [all, setAll] = useState(false), [menu, setMenu] = useState<MenuState | null>(null);
   const [preview, setPreview] = useState<{ id: string; anchor: DOMRect } | null>(null);
@@ -43,7 +45,7 @@ export function RunHistoryPanel({ visible, collapsed, onToggleCollapse }: { visi
         <option value="workspace">{t("runHistory.currentWorkspace")}</option><option value="all">{t("runHistory.allWorkspaces")}</option>
       </select>
       <ul className="run-history-list" onScroll={close}>
-        {entries.map(run => <li key={run.run_id} className={`run-history-row${state.detailId === run.run_id ? " selected" : ""}`}
+        {entries.map(run => <li key={run.run_id} data-shortcut-run-id={run.run_id} className={`run-history-row${state.detailId === run.run_id ? " selected" : ""}`}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); close(); setMenu({ x: e.clientX, y: e.clientY, entries: [
             { label: t("runHistory.delete"), danger: true, disabled: state.historyBusy || isActiveRun(run), onSelect: () => void state.remove(run) },
             "separator", clearEntry,
@@ -54,7 +56,9 @@ export function RunHistoryPanel({ visible, collapsed, onToggleCollapse }: { visi
             <span className="history-meta"><span className={`history-status state-${run.state}`}>{runStateLabel(run.state)}</span> · {run.device_name} · {run.started_at ? new Date(run.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</span>
           </button>
           <div className="history-row-actions" onMouseEnter={close}>
-            {isActiveRun(run) ? <button type="button" className="history-stop" title={t("run.stop")} aria-label={`${t("run.stop")} · ${run.label} @ ${run.device_name}`} onClick={() => void api.stopRun(run.run_id).catch(e => useRunHistoryStore.setState({ error: String(e) }))}>■</button> : <RunReplayButton run={run} compact />}
+            {isActiveRun(run) ? <button type="button" className="history-stop" disabled={!appCommandEnabled("stop", { area: "history", runId: run.run_id })}
+              title={shortcutTitle(`${t("run.stop")} · ${run.label} @ ${run.device_name}`, "stop")} aria-label={`${t("run.stop")} · ${run.label} @ ${run.device_name}`}
+              onClick={() => void executeAppCommand("stop", { area: "history", runId: run.run_id })}>■</button> : <RunReplayButton run={run} compact />}
           </div>
         </li>)}
         {!entries.length && <li className="empty">{t("runHistory.empty")}</li>}

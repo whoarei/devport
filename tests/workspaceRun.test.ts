@@ -471,7 +471,10 @@ test("a queued workspace run remains active and exposes a cancellable waiting st
   useAppStore.setState({ activeRunId: waiting.run_id });
   const html = renderToStaticMarkup(createElement(RunToolbar));
   assert.ok(html.includes(i18n.t("workspaceSync.waiting")));
-  assert.ok(html.includes(`<button class="danger">${i18n.t("run.stop")}</button>`));
+  const stopButton = html.match(/<button class="danger"([^>]*)>[^<]+<\/button>/);
+  assert.ok(stopButton, "waiting tasks retain the stop action");
+  assert.doesNotMatch(stopButton[1], /disabled/);
+  assert.ok(stopButton[0].includes(i18n.t("run.stop")));
   assert.equal(useAppStore.getState().history.length, 0);
 });
 

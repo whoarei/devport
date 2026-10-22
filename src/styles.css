@@ -621,6 +621,30 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
   line-height: 1.6;
 }
 .about-dialog::backdrop { background: #0009; }
+.shortcuts-dialog {
+  width: min(940px, calc(100vw / var(--browser-ui-zoom, 1) - 32px));
+  max-height: calc(100vh / var(--browser-ui-zoom, 1) - 32px);
+  overflow: auto;
+  padding: 24px;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 13px;
+}
+.shortcuts-dialog::backdrop { background: #0009; }
+.shortcuts-dialog h2 { margin: 0 0 12px; font-size: 18px; }
+.shortcuts-dialog h2:focus { outline: none; }
+.shortcuts-dialog table { width: 100%; border-collapse: collapse; text-align: left; }
+.shortcuts-dialog th, .shortcuts-dialog td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.shortcuts-dialog th { color: var(--text-secondary); font-weight: 500; }
+.shortcuts-dialog kbd { font: 12px Consolas, "Cascadia Mono", monospace; white-space: nowrap; }
+.shortcuts-dialog .dialog-actions { margin-top: 16px; }
+@media (max-width: 650px) {
+  .shortcuts-dialog { padding: 16px; }
+  .shortcuts-dialog th, .shortcuts-dialog td { padding: 7px 5px; }
+  .shortcuts-dialog kbd { white-space: normal; overflow-wrap: anywhere; }
+}
 .about-hero { padding: 24px 28px 20px; background: linear-gradient(135deg, var(--accent-surface, #253044), var(--surface-raised, #23252d) 70%); }
 .about-heading { display: flex; align-items: center; gap: 18px; }
 .about-logo { display: block; flex-shrink: 0; width: 72px; height: 72px; }

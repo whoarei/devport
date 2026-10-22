@@ -9,10 +9,13 @@ import { useTerminalStore, terminalActive, type TerminalTab } from "../terminalS
 import { readTerminal, terminalInput } from "../terminalIO";
 import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
 import { terminalTheme, useThemeStore } from "../theme";
+import { useCommandUiStore } from "../commandUiStore";
 
 export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: boolean }) {
   const { t } = useTranslation();
   const theme = useThemeStore((state) => state.theme);
+  const focus = useCommandUiStore((state) => state.focus);
+  const page = useRef<HTMLElement>(null);
   const container = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal>();
   const fit = useRef<() => void>();
@@ -78,6 +81,13 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
     }
   }, [visible, tab.status?.state, sessionId]);
 
+  useEffect(() => {
+    if (focus !== "console" || !visible) return;
+    if (terminal.current) terminal.current.focus();
+    else page.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    useCommandUiStore.setState({ focus: null });
+  }, [focus, visible, sessionId]);
+
   // 右键菜单：复制/粘贴/全选/清空/重连/关闭终端
   const [menu, setMenu] = useState<MenuState | null>(null);
   const openMenu = (event: MouseEvent) => {
@@ -115,7 +125,7 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
     setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
   };
 
-  return <section className="terminal-page" role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} hidden={!visible}>
+  return <section ref={page} className="terminal-page" role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} hidden={!visible}>
     {!sessionId && !tab.busy && <div className="terminal-restore">
       <span>{t("environment.terminalRestored")}</span>
       <button onClick={() => void useTerminalStore.getState().reconnect(tab.id)}>{t("environment.connect")}</button>

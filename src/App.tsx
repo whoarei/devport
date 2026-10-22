@@ -24,11 +24,13 @@ import { clampSidebarWidth, clampSplit, panelCollapsePatch, DEFAULT_LAYOUT } fro
 import { panelsInDock, type PanelId } from "./panels/registry";
 import { PANEL_COMPONENTS } from "./panels/components";
 import { checkForAvailableUpdate } from "./updateStatus";
-import { endConsoleTabCycle, handleConsoleTabKeyDown, handleConsoleTabKeyUp } from "./consoleTabs";
-import { applyUiZoom, changeUiZoom, loadUiZoom, saveUiZoom, uiZoomShortcut, type UiZoomAction } from "./uiZoom";
+import { endConsoleTabCycle, handleConsoleTabKeyUp } from "./consoleTabs";
+import { applyUiZoom, changeUiZoom, loadUiZoom, saveUiZoom, type UiZoomAction } from "./uiZoom";
 import { restoreWorkEnvironment } from "./workEnvironment";
 import { loadDeletedDeviceEvents } from "./deviceActions";
 import { loadDeletedRunHistoryEvents } from "./runHistoryStore";
+import { handleAppKeyDown } from "./appShortcuts";
+import { ShortcutsDialog } from "./components/ShortcutsDialog";
 
 export default function App() {
   const { t } = useTranslation();
@@ -78,16 +80,7 @@ export default function App() {
 
   useEffect(() => {
     // capture 阶段统一接管，确保事件不会先后被 xterm 与 window 处理两次。
-    const onKeyDown = (event: KeyboardEvent) => {
-      const zoomAction = uiZoomShortcut(event);
-      if (zoomAction) {
-        event.preventDefault();
-        event.stopPropagation();
-        updateUiZoom(zoomAction);
-        return;
-      }
-      handleConsoleTabKeyDown(event);
-    };
+    const onKeyDown = (event: KeyboardEvent) => { handleAppKeyDown(event, updateUiZoom); };
     const onKeyUp = (event: KeyboardEvent) => { handleConsoleTabKeyUp(event); };
     const onBlur = () => endConsoleTabCycle();
     window.addEventListener("keydown", onKeyDown, true);
@@ -241,6 +234,7 @@ export default function App() {
   return (
     <div className="app">
       <UnsavedDialog />
+      <ShortcutsDialog />
       <WorkspaceRunDialogs />
       <RunHistoryDialogs />
       <AboutDialog dialogRef={aboutDialog} autoCheckNonce={aboutAutoCheck} />

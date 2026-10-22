@@ -20,6 +20,9 @@ import { editorCloseTargets, type EditorCloseScope } from "../editorTabActions";
 import { ContextMenu, contextMenuPosition, type MenuEntry, type MenuState } from "./ContextMenu";
 import { nameOf } from "../workspaceTree";
 import { useThemeStore, type Theme } from "../theme";
+import { useCommandUiStore } from "../commandUiStore";
+import { appCommandEnabled, executeAppCommand } from "../appCommands";
+import { shortcutLabel, shortcutTitle } from "../shortcuts";
 
 function editorTheme(theme: Theme) {
   return [syntaxHighlighting(theme === "dark" ? oneDarkHighlightStyle : defaultHighlightStyle),
@@ -41,6 +44,7 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
   const readOnlyConfig = useRef(new Compartment());
   const themeConfig = useRef(new Compartment());
   const theme = useThemeStore((state) => state.theme);
+  const focus = useCommandUiStore((state) => state.focus);
   const restoreLocation = useRef<(() => void) | null>(null);
   // 回调随渲染更新，编辑器扩展内始终读到最新值
   const handlers = useRef({ active, onCursor, focusToolbar });
@@ -86,8 +90,6 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
           }),
           EditorView.contentAttributes.of({ "aria-label": i18n.t("editor.contentAria", { name: tab }), spellcheck: "false" }),
           keymap.of([
-            { key: "Mod-s", preventDefault: true, run: () => { void useAppStore.getState().saveFile(tab); return true; } },
-            { key: "Mod-w", preventDefault: true, run: () => { void useAppStore.getState().closeFile(tab); return true; } },
             ...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...searchKeymap,
             { key: "Escape", run: () => { handlers.current.focusToolbar(); return true; } }, indentWithTab,
           ]),
@@ -136,6 +138,13 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
     onCursor(`${line.number}:${pos - line.from + 1}`);
   }, [active]);
 
+  useEffect(() => {
+    if (focus === "editor" && active && view.current) {
+      view.current.focus();
+      useCommandUiStore.setState({ focus: null });
+    }
+  }, [focus, active]);
+
   useEffect(() => { view.current?.dispatch({ effects: languageConfig.current.reconfigure(languageExtension(language)) }); }, [language]);
   useEffect(() => { view.current?.dispatch({ effects: readOnlyConfig.current.reconfigure(EditorState.readOnly.of(locked)) }); }, [locked]);
   useEffect(() => { view.current?.dispatch({ effects: themeConfig.current.reconfigure(editorTheme(theme)) }); }, [theme]);
@@ -147,6 +156,7 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
   const state = useAppStore(useShallow((s) => ({ tabs: s.openTabs, activeFile: s.activeFile,
     loading: s.loading, saving: s.saving, starting: s.starting, guarding: s.guarding,
     workspace: s.workspace, devices: s.devices, workspaceMutating: s.workspaceMutating,
+    updating: s.updating,
     error: s.editorError, uploadBusy: uploadBusy(s) })));
   const [cursor, setCursor] = useState("1:1");
   const [tabMenu, setTabMenu] = useState<{
@@ -177,7 +187,7 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
     const target = tabMenu?.name;
     const names = target ? editorCloseTargets(state.tabs, target, scope) : [];
     return { label: t(label, { count: names.length }), disabled: names.length === 0,
-      detail: scope === "current" ? "Ctrl+W" : undefined,
+      detail: scope === "current" ? shortcutLabel("closeFile") : undefined,
       onSelect: () => {
         const current = useAppStore.getState();
         if (target && menuCurrent()) void current.closeFiles(editorCloseTargets(current.openTabs, target, scope));
@@ -209,7 +219,7 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
               onClick={() => useAppStore.getState().activateFile(tab.name)}>
               {nameOf(tab.name)}{dirtyTab(tab) ? " ●" : ""}
             </button>
-            <button className="editor-tab-close" aria-label={t("editor.closeTab", { name: tab.name })} title={t("editor.closeFileTitle")}
+            <button className="editor-tab-close" aria-label={t("editor.closeTab", { name: tab.name })} title={shortcutTitle(t("editor.closeFileTitle"), "closeFile")}
               disabled={closeLocked}
               onClick={() => void useAppStore.getState().closeFile(tab.name)}>×</button>
           </div>
@@ -232,12 +242,16 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
                 : state.error ? t("editor.failed")
                 : dirtyTab(active)
                   ? <button className="editor-status-save" disabled={locked || state.uploadBusy}
-                      title={t("editor.saveTitle")}
-                      onClick={() => void useAppStore.getState().saveFile()}>{t("editor.save")}</button>
+                      title={shortcutTitle(t("menu.saveFile"), "saveFile")}
+                      onClick={() => void executeAppCommand("saveFile")}>{t("editor.save")}</button>
                   : t("editor.saved")}
               {state.uploadBusy ? t("editor.uploadBusyHint") : ""}
             </span>
             <span className="editor-status-right">
+              <button disabled={!appCommandEnabled("runFile", { area: "editor" })}
+                title={shortcutTitle(t("run.run"), "runFile")} onClick={() => void executeAppCommand("runFile", { area: "editor" })}>{t("run.run")}</button>
+              <button disabled={!appCommandEnabled("runWithArgs", { area: "editor" })}
+                title={shortcutTitle(t("workspaceRun.withArgs"), "runWithArgs")} onClick={() => void executeAppCommand("runWithArgs", { area: "editor" })}>{t("workspaceRun.withArgs")}</button>
               <select ref={languageSelect} aria-label={t("editor.languageAria")} value={active.language} disabled={locked}
                 onChange={(event) => useAppStore.getState().setLanguage(event.target.value as EditorLanguage)}>
                 <option value="python">Python</option><option value="shell">Shell</option><option value="text">{t("editor.plainText")}</option>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../store";
 import { terminalActive, useTerminalStore, type TerminalTab } from "../terminalStore";
 import { terminalCloseTargets, type TerminalCloseScope } from "../terminalTabActions";
@@ -10,6 +11,8 @@ import { deviceLabel } from "./DeviceDialog";
 import { RunToolbar } from "./RunToolbar";
 import { RunConsole } from "./RunConsole";
 import { TerminalPage } from "./TerminalPage";
+import { appCommandEnabled, executeAppCommand } from "../appCommands";
+import { shortcutTitle } from "../shortcuts";
 
 export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
   visible: boolean; collapsed: boolean; onToggleCollapse: () => void;
@@ -17,7 +20,7 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
   const { t } = useTranslation();
   const { tabs, activeTab, select, shuttingDown } = useTerminalStore();
   const devices = useAppStore((s) => s.devices);
-  const updating = useAppStore((s) => s.updating);
+  const { updating } = useAppStore(useShallow(s => ({ updating: s.updating, guarding: s.guarding })));
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [error, setError] = useState("");
   const deviceButton = useRef<HTMLButtonElement>(null);
@@ -128,11 +131,11 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
         </div>)}
       </div>
       <div className="terminal-add-group">
-        <button className="terminal-add" aria-label={t("console.newDefaultTerminal")} title={defaultTerminalAvailable
+        <button className="terminal-add" aria-label={t("console.newDefaultTerminal")} title={shortcutTitle(defaultTerminalAvailable
           ? t("console.newDefaultTerminalTitle", { name: defaultDevice.name })
-          : defaultDevice?.transport === "serial" ? t("console.defaultSerialNoTerminal") : t("console.noDefaultDevice")}
-          disabled={updating || shuttingDown || tabs.length >= 8 || !defaultTerminalAvailable}
-          onClick={() => defaultDevice && open(defaultDevice.id)}>＋</button>
+          : defaultDevice?.transport === "serial" ? t("console.defaultSerialNoTerminal") : t("console.noDefaultDevice"), "newTerminal")}
+          disabled={!appCommandEnabled("newTerminal")}
+          onClick={() => void executeAppCommand("newTerminal")}>＋</button>
         <button className="terminal-device-picker" ref={deviceButton} aria-label={t("console.chooseTerminalDevice")}
           title={t("console.chooseTerminalDevice")} aria-haspopup="menu" aria-expanded={!!menu}
           disabled={updating || shuttingDown || tabs.length >= 8} onClick={toggleMenu}>

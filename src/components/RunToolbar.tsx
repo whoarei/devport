@@ -3,9 +3,11 @@ import { useTranslation } from "react-i18next";
 import { api } from "../api";
 import { presetRunSessions, useAppStore } from "../store";
 import { useWorkspaceRunStore } from "../workspaceRunStore";
-import { isActiveRun, runPhaseLabel, runStateLabel } from "../runState";
+import { runPhaseLabel, runStateLabel } from "../runState";
 import { deviceLabel } from "./DeviceDialog";
 import { RunReplayButton } from "./RunReplayButton";
+import { appCommandEnabled, executeAppCommand } from "../appCommands";
+import { shortcutTitle } from "../shortcuts";
 
 export function RunToolbar() {
   const { t } = useTranslation();
@@ -41,7 +43,9 @@ export function RunToolbar() {
     <div className="run-toolbar-options">
       <span className="run-latest-task" aria-label={t("runHistory.latest")} title={active ? `${active.label} @ ${active.device_name}` : undefined}>{active ? `${active.label} @ ${active.device_name}` : t("runHistory.noLatest")}</span>
       {active && <span className={`run-state state-${active.state}`} role="status">{active.waiting_workspace ? t("workspaceSync.waiting") : runStateLabel(active.state)}{active.phase ? ` · ${runPhaseLabel(active.phase)}` : ""}{progress ? ` · ${progress}` : ""}{active.exit_code != null ? ` (${active.exit_code})` : ""}</span>}
-      <button className="danger" disabled={!active || !isActiveRun(active)} onClick={() => activeRunId && void api.stopRun(activeRunId).catch((e) => feature.reportError(e))}>{t("run.stop")}</button>
+      <button className="danger" disabled={!appCommandEnabled("stop", { area: "run", runId: activeRunId ?? undefined })}
+        title={shortcutTitle(`${t("run.stop")}${active ? ` · ${active.label} @ ${active.device_name}` : ""}`, "stop")}
+        onClick={() => void executeAppCommand("stop", { area: "run", runId: activeRunId ?? undefined })}>{t("run.stop")}</button>
       <RunReplayButton run={active} />
     </div>
     {launch && <div className="run-launch" title={launch.python_path.join("\n")}>

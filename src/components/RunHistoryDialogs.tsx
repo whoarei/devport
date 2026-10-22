@@ -40,7 +40,7 @@ function DetailsDialog() {
       {error && <div role="alert" className="runtime-error">{error}</div>}
       <pre className="history-output">{output || t("runHistory.noOutput")}</pre>
       {run.output_truncated && <p className="secondary-text">{t("runHistory.outputTruncated")}</p>}
-      <div className="dialog-actions">{live && <button className="danger" onClick={() => void api.stopRun(run.run_id).catch(e => setError(errorMessage(e)))}>{t("run.stop")}</button>}<RunReplayButton run={run} /><button onClick={() => state.view(null)}>{t("workspaceRun.close")}</button></div>
+      <div className="dialog-actions">{live && <button className="danger" onClick={() => void api.stopRun(run.run_id).catch(e => setError(errorMessage(e)))}>{t("run.stop")}</button>}<RunReplayButton run={run} showShortcut={false} /><button onClick={() => state.view(null)}>{t("workspaceRun.close")}</button></div>
     </>}
   </Modal>;
 }

@@ -13,6 +13,7 @@ import { createConsoleReplay } from "../consoleReplay";
 import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
 import { handleRunConsoleKey } from "../runConsoleInput";
 import { terminalTheme, useThemeStore } from "../theme";
+import { useCommandUiStore } from "../commandUiStore";
 
 /**
  * Run Console：绑定的是“远程进程”的 stdin/stdout/stderr，不是 SSH shell。
@@ -21,6 +22,7 @@ import { terminalTheme, useThemeStore } from "../theme";
 export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { collapsed: boolean; onToggleCollapse: () => void; embedded?: boolean }) {
   const { t } = useTranslation();
   const theme = useThemeStore((state) => state.theme);
+  const focus = useCommandUiStore((state) => state.focus);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -103,6 +105,13 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
       termRef.current?.focus();
     }
   }, [collapsed]);
+
+  useEffect(() => {
+    if (focus === "console" && !collapsed && termRef.current) {
+      termRef.current.focus();
+      useCommandUiStore.setState({ focus: null });
+    }
+  }, [focus, collapsed]);
 
   // 状态行
 

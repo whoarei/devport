@@ -3,6 +3,19 @@
  * en.ts 通过 typeof zh 约束保持 key 集合一致，漏翻会编译报错。
  */
 export const zh = {
+  shortcuts: {
+    title: "快捷键一览", action: "操作", keys: "快捷键", scope: "生效区域", runMenu: "运行",
+    hint: "快捷键只在应用窗口内生效。弹框和输入法组词期间暂停后台操作，普通表单输入不触发操作快捷键。",
+    terminalHint: "终端中仅保留标签切换、区域聚焦、新建终端和界面缩放。F5 系列及 Ctrl+C/D/Z/L/R/S/W/B 等按键继续交给终端。运行控制台中 Ctrl+C 有选区时复制，无选区时发送一次中断；停止任务是单独操作。",
+    openWorkspace: "打开本机工作区", openRemoteWorkspace: "打开设备工作区",
+    saveFile: "保存当前文件", saveAll: "保存全部文件", closeFile: "关闭当前文件",
+    runFile: "运行当前脚本", runWithArgs: "带参数运行当前脚本…", rerun: "按原配置重新运行", stop: "停止所选任务",
+    newTerminal: "新建默认设备终端", focusConsole: "聚焦控制台", focusEditor: "聚焦编辑器", toggleSidebar: "显示 / 隐藏侧栏",
+    cycleTabs: "切换运行页 / 终端标签", zoom: "放大 / 缩小 / 重置缩放", find: "查找文件内容", clipboard: "复制 / 粘贴",
+    scope_app: "主界面（终端除外）", scope_files: "文件树或文件编辑区", scope_editor: "文件编辑区",
+    scope_script: "编辑器当前 .py / .sh 文件或文件树聚焦的脚本", scope_run: "运行页工具栏或聚焦的历史记录",
+    scope_navigation: "主界面（含终端）", scope_tabs: "运行页和终端标签；弹框外", scope_terminal: "独立终端",
+  },
   environment: {
     saveFailed: "工作环境保存失败：{{message}}",
     restoreFailed: "工作环境恢复失败，原恢复记录已保留：{{message}}",
