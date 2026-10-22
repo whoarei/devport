@@ -712,9 +712,10 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .console-tab { display: flex; flex-shrink: 0; }
 .console-tabs button, .console-collapse, .terminal-add, .terminal-device-picker { border: 0; border-radius: 0; background: transparent; white-space: nowrap; }
 .console-tabs button[role="tab"] { padding: 4px var(--center-label-inset); font: inherit; border-bottom: 2px solid transparent; color: var(--text-secondary, #9fa2b0); }
+.console-tab button[role="tab"] { display: flex; align-items: center; min-width: 0; }
 .console-tabs button[aria-selected="true"] { color: var(--text-primary, #e5eafa); background: var(--surface-control, #242630); border-bottom-color: var(--accent-border, #8fa9e8); }
 .console-tabs button:focus-visible { outline: 1px solid var(--accent-border, #8fa9e8); outline-offset: -3px; }
-.terminal-tab-close { color: var(--text-secondary, #999daa); padding: 3px 7px; }
+.terminal-tab-close { flex-shrink: 0; color: var(--text-secondary, #999daa); padding: 3px 7px; }
 .terminal-tab-close:hover { color: var(--text-primary, #fff); background: var(--danger-surface, #3b3036); }
 .terminal-add-group { display: flex; flex-shrink: 0; border-left: 1px solid var(--border, #2f3037); }
 .terminal-add { padding: 4px 10px 4px 12px; }
@@ -724,9 +725,9 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .console-collapse { padding: 4px 12px; }
 .terminal-connected { color: var(--success, #9bcea5); }
 .terminal-failed { color: var(--danger, #eda4a4); }
-.terminal-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: inline-block; margin-right: 7px; vertical-align: middle; }
-.terminal-tab-label { display: inline-block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
-.terminal-number { color: var(--text-secondary, #777e92); font-size: 11px; margin-left: 4px; }
+.terminal-dot { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: currentColor; display: inline-block; margin-right: 7px; vertical-align: middle; }
+.terminal-tab-label { min-width: 0; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.terminal-number { flex-shrink: 0; color: var(--text-secondary, #777e92); font-size: 11px; margin-left: 4px; }
 .terminal-error { color: var(--danger, #eda4a4); background: var(--danger-surface, #302328); padding: 6px 12px; font-size: 12px; overflow-wrap: anywhere; max-height: 72px; overflow: auto; }
 .run-toolbar {
   display: flex;

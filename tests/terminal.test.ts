@@ -8,6 +8,7 @@ import { terminalInput, readTerminal } from "../src/terminalIO";
 import { loadTabCycleOrder, mruCycleOrder, nextMruId, nextSequentialId } from "../src/tabCycle";
 import { cycleConsoleTab, endConsoleTabCycle, handleConsoleTabKeyDown, handleConsoleTabKeyUp } from "../src/consoleTabs";
 import { terminalCloseTargets } from "../src/terminalTabActions";
+import { terminalTabLabel } from "../src/terminalTitle";
 import { useAppStore } from "../src/store";
 import i18n from "../src/i18n";
 
@@ -24,6 +25,69 @@ function reset(t: test.TestContext) {
   t.after(() => { endConsoleTabCycle(); useTerminalStore.setState(before); });
   return useTerminalStore.getState();
 }
+
+test("terminal labels compact Windows programs and Linux locations without guessing custom titles", () => {
+  const cases: [string | undefined, string][] = [
+    [String.raw`C:\Program Files\PowerShell\7\pwsh.exe`, "pwsh"],
+    ['"C:\\Program Files\\PowerShell\\7\\pwsh.exe"', "pwsh"],
+    ["C:/Windows/System32/CMD.EXE", "CMD"],
+    [String.raw`\\server\tools\powershell.exe`, "powershell"],
+    ["/usr/bin/bash", "bash"],
+    ["/bin/zsh", "zsh"],
+    ["mmeng@xuess-msi:/usr/share/applications", "xuess-msi · applications"],
+    ["mmeng@xuess-msi:~/projects/remote runner/", "xuess-msi · remote runner"],
+    ["mmeng@xuess-msi:~", "xuess-msi · ~"],
+    ["mmeng@xuess-msi:~/", "xuess-msi · ~"],
+    ["root@host:/", "host · /"],
+    ["user@[fd00::1]:/opt/app/", "[fd00::1] · app"],
+    ["编译日志", "编译日志"],
+    ["vim /tmp/main.py", "vim /tmp/main.py"],
+    ["Build / Deploy", "Build / Deploy"],
+    ["/usr/bin/bash /usr/bin/zsh", "/usr/bin/bash /usr/bin/zsh"],
+    ["user@host:building", "user@host:building"],
+    [String.raw`C:\tools\pwsh.exe -NoLogo`, String.raw`C:\tools\pwsh.exe -NoLogo`],
+    [String.raw`C:\tools\pwsh.exe -File build.exe`, String.raw`C:\tools\pwsh.exe -File build.exe`],
+    [String.raw`C:\tools\pwsh.exe -File C:\build.exe`, String.raw`C:\tools\pwsh.exe -File C:\build.exe`],
+    [String.raw`C:\tools\.exe`, String.raw`C:\tools\.exe`],
+    ["  htop  ", "htop"],
+    [undefined, "本机"], ["", "本机"], ["  ", "本机"],
+  ];
+  for (const [title, expected] of cases) {
+    assert.equal(terminalTabLabel({ title, deviceName: "本机" }), expected, title);
+  }
+});
+
+test("SSH and WSL labels retain the configured device identity and do not repeat identical titles", () => {
+  const tab = { deviceName: "原设备名", title: "mmeng@xuess-msi:/usr/share/applications" };
+  assert.equal(terminalTabLabel(tab, { name: "开发机", transport: "ssh" }), "开发机 · applications");
+  assert.equal(terminalTabLabel(tab, { name: "Ubuntu", transport: "wsl" }), "Ubuntu · applications");
+  assert.equal(terminalTabLabel({ ...tab, title: "htop" }, { name: "Ubuntu", transport: "wsl" }), "Ubuntu · htop");
+  assert.equal(terminalTabLabel({ ...tab, title: "Ubuntu" }, { name: "Ubuntu", transport: "wsl" }), "Ubuntu");
+  assert.equal(terminalTabLabel({ ...tab, title: undefined }, { name: "新设备名", transport: "ssh" }), "新设备名");
+  assert.equal(terminalTabLabel({ ...tab, title: String.raw`C:\tools\pwsh.exe` }, { name: "Windows", transport: "ssh" }), "Windows · pwsh");
+});
+
+test("compacting a terminal label keeps the full original title available for hover and rejects stale sessions", async (t) => {
+  const s = reset(t);
+  t.mock.method(api, "openTerminal", async (id) => status(id));
+  t.mock.method(api, "closeTerminal", async () => {});
+  await s.open("local", "本机");
+  const tab = useTerminalStore.getState().tabs[0];
+  const raw = String.raw`C:\Program Files\PowerShell\7\pwsh.exe`;
+  s.setTitle(tab.id, "local", raw);
+  const titled = useTerminalStore.getState().tabs[0];
+  assert.equal(terminalTabLabel(titled), "pwsh");
+  assert.equal(titled.title, raw);
+  assert.ok(i18n.t("console.terminalTitle", { name: titled.title, device: titled.deviceName, index: 1 }).includes(raw));
+  s.setTitle(tab.id, "stale-session", "old shell");
+  assert.equal(useTerminalStore.getState().tabs[0].title, raw);
+  s.setTitle(tab.id, "local", "   ");
+  assert.equal(terminalTabLabel(useTerminalStore.getState().tabs[0]), "本机");
+  s.update(tab.id, "local", status("local", "exited"));
+  s.setTitle(tab.id, "local", raw);
+  await s.reconnect(tab.id);
+  assert.equal(useTerminalStore.getState().tabs[0].title, undefined);
+});
 
 test("terminal page does not restore the duplicate status and close toolbar", () => {
   const component = readFileSync(resolve("src/components/TerminalPage.tsx"), "utf8");

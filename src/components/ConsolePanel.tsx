@@ -5,6 +5,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../store";
 import { terminalActive, useTerminalStore, type TerminalTab } from "../terminalStore";
 import { terminalCloseTargets, type TerminalCloseScope } from "../terminalTabActions";
+import { terminalTabLabel } from "../terminalTitle";
 import { errorMessage } from "../api";
 import { ContextMenu, contextMenuPosition, type MenuEntry, type MenuState } from "./ContextMenu";
 import { deviceLabel } from "./DeviceDialog";
@@ -121,14 +122,20 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
         select(ids[next]); document.getElementById(`tab-${ids[next]}`)?.focus();
       }}>
         <button role="tab" id="tab-run" aria-controls="panel-run" aria-selected={activeTab === "run"} tabIndex={activeTab === "run" ? 0 : -1} onClick={() => select("run")}>{t("console.runTab")}</button>
-        {tabs.map((tab, index) => <div className="console-tab" key={tab.id} onContextMenu={(event) => openTabMenu(event, tab)}>
-          <button role="tab" id={`tab-${tab.id}`} aria-controls={`panel-${tab.id}`} aria-selected={activeTab === tab.id} tabIndex={activeTab === tab.id ? 0 : -1}
-            onClick={() => select(tab.id)} title={t("console.terminalTitle", { name: tab.title ?? tab.deviceName, index: index + 1 })}>
-            <span className={`terminal-dot terminal-${tab.status?.state ?? "connecting"}`} aria-hidden="true" />
-            <span className="terminal-tab-label">{t("console.terminalTab", { name: tab.title ?? tab.deviceName })}</span> <span className="terminal-number">{index + 1}</span>
-          </button>
-          <button className="terminal-tab-close" disabled={tab.busy} aria-label={t("console.closeTerminalAria", { name: tab.title ?? tab.deviceName, index: index + 1 })} onClick={() => void useTerminalStore.getState().close(tab.id)}>×</button>
-        </div>)}
+        {tabs.map((tab, index) => {
+          const device = devices.find((candidate) => candidate.id === tab.deviceId);
+          const deviceName = device?.name.trim() || tab.deviceName;
+          const label = terminalTabLabel(tab, device);
+          const title = t("console.terminalTitle", { name: tab.title ?? deviceName, device: deviceName, index: index + 1 });
+          return <div className="console-tab" key={tab.id} onContextMenu={(event) => openTabMenu(event, tab)}>
+            <button role="tab" id={`tab-${tab.id}`} aria-controls={`panel-${tab.id}`} aria-selected={activeTab === tab.id} tabIndex={activeTab === tab.id ? 0 : -1}
+              onClick={() => select(tab.id)} title={title} aria-label={title}>
+              <span className={`terminal-dot terminal-${tab.status?.state ?? "connecting"}`} aria-hidden="true" />
+              <span className="terminal-tab-label">{t("console.terminalTab", { name: label })}</span><span className="terminal-number">{index + 1}</span>
+            </button>
+            <button className="terminal-tab-close" disabled={tab.busy} aria-label={t("console.closeTerminalAria", { name: label, index: index + 1 })} onClick={() => void useTerminalStore.getState().close(tab.id)}>×</button>
+          </div>;
+        })}
       </div>
       <div className="terminal-add-group">
         <button className="terminal-add" aria-label={t("console.newDefaultTerminal")} title={shortcutTitle(defaultTerminalAvailable
