@@ -154,6 +154,12 @@ export interface RunStatus {
   };
 }
 
+export interface DeletedRunHistory {
+  id: string;
+  deleted_at: string;
+  run_ids: string[];
+}
+
 export interface TerminalStatus {
   session_id: string;
   device_name: string;
@@ -381,6 +387,9 @@ export const api = {
   listRunningRuns: () => invoke<RunStatus[]>("list_running_runs"),
   getRunHistory: () => invoke<RunStatus[]>("get_run_history"),
   deleteRunHistory: (runId: string) => invoke<void>("delete_run_history", { runId }),
+  archiveRunHistory: (runIds: string[]) => invoke<DeletedRunHistory | null>("archive_run_history", { runIds }),
+  listDeletedRunHistory: () => invoke<DeletedRunHistory[]>("list_deleted_run_history"),
+  restoreRunHistory: (batchId: string) => invoke<RunStatus[]>("restore_run_history", { batchId }),
   readRunHistoryOutput: (runId: string) => invoke<string>("read_run_history_output", { runId }),
   drainRunEvents: () => invoke<RunEvent[]>("drain_run_events"),
 

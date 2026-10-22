@@ -134,6 +134,22 @@ pub struct RunStatus {
     /// Submitted inputs only, captured before staging or shell environment resolution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay: Option<Box<RunReplay>>,
+    /// Persisted tombstone; hidden records retain their logs until restored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_deletion: Option<HistoryDeletion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryDeletion {
+    pub id: String,
+    pub deleted_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeletedRunHistory {
+    pub id: String,
+    pub deleted_at: String,
+    pub run_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,6 +217,7 @@ impl RunStatus {
             workspace_sync: None,
             waiting_workspace: false,
             replay: None,
+            history_deletion: None,
         }
     }
 }
@@ -321,6 +338,25 @@ fn remove_log(logs_dir: &std::path::Path, run_id: &str) {
     }
 }
 
+/// The regular history limit excludes records retained for Undo.
+fn trim_history(history: &mut VecDeque<RunStatus>) -> Vec<RunStatus> {
+    let mut visible = 0;
+    let mut evicted = Vec::new();
+    history.retain(|run| {
+        if run.history_deletion.is_some() {
+            return true;
+        }
+        visible += 1;
+        if visible <= HISTORY_LIMIT {
+            true
+        } else {
+            evicted.push(run.clone());
+            false
+        }
+    });
+    evicted
+}
+
 /// 删除不在历史中的孤儿日志文件（如崩溃残留）；只认 `<run_id>.log`，不递归
 fn prune_orphan_logs(logs_dir: &std::path::Path, history: &VecDeque<RunStatus>) {
     let Ok(entries) = std::fs::read_dir(logs_dir) else {
@@ -354,10 +390,8 @@ impl RunManager {
             .and_then(|s| serde_json::from_str::<VecDeque<RunStatus>>(&s).ok())
             .unwrap_or_default();
         // 超出上限的条目连同输出日志一起淘汰
-        if history.len() > HISTORY_LIMIT {
-            for old in history.drain(HISTORY_LIMIT..) {
-                remove_log(&logs_dir, &old.run_id);
-            }
+        for old in trim_history(&mut history) {
+            remove_log(&logs_dir, &old.run_id);
         }
         prune_orphan_logs(&logs_dir, &history);
         Self {
@@ -385,7 +419,11 @@ impl RunManager {
     pub fn snapshot(&self) -> Vec<RunStatus> {
         let handles = self.handles.lock();
         let history = self.history.lock();
-        let mut statuses: Vec<_> = history.iter().cloned().collect();
+        let mut statuses: Vec<_> = history
+            .iter()
+            .filter(|run| run.history_deletion.is_none())
+            .cloned()
+            .collect();
         for handle in handles.values() {
             statuses.retain(|s| s.run_id != handle.status.run_id);
             statuses.push(handle.status.clone());
@@ -446,7 +484,7 @@ impl RunManager {
                 self.history
                     .lock()
                     .iter()
-                    .find(|h| h.run_id == run_id)
+                    .find(|h| h.run_id == run_id && h.history_deletion.is_none())
                     .cloned()
             })
     }
@@ -461,7 +499,143 @@ impl RunManager {
     }
 
     pub fn history(&self) -> Vec<RunStatus> {
-        self.history.lock().iter().cloned().collect()
+        self.history
+            .lock()
+            .iter()
+            .filter(|run| run.history_deletion.is_none())
+            .cloned()
+            .collect()
+    }
+
+    fn write_history(&self, history: &VecDeque<RunStatus>) -> Result<()> {
+        use std::io::Write;
+        let data = serde_json::to_vec_pretty(history)
+            .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
+        let parent = self.history_path.parent().unwrap();
+        std::fs::create_dir_all(parent)?;
+        let temp = parent.join(format!(".history-{}.tmp", uuid::Uuid::new_v4()));
+        let result = (|| -> Result<()> {
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(&temp)?;
+            file.write_all(&data)?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(&temp, &self.history_path)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(temp);
+        }
+        result
+    }
+
+    pub fn deleted_history(&self) -> Vec<DeletedRunHistory> {
+        let history = self.history.lock();
+        let mut batches: HashMap<String, DeletedRunHistory> = HashMap::new();
+        for run in history.iter() {
+            if let Some(deletion) = &run.history_deletion {
+                batches
+                    .entry(deletion.id.clone())
+                    .or_insert_with(|| DeletedRunHistory {
+                        id: deletion.id.clone(),
+                        deleted_at: deletion.deleted_at.clone(),
+                        run_ids: Vec::new(),
+                    })
+                    .run_ids
+                    .push(run.run_id.clone());
+            }
+        }
+        let mut batches: Vec<_> = batches.into_values().collect();
+        batches.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+        batches
+    }
+
+    /// Resolve IDs against backend history; the client cannot supply restore data.
+    pub fn archive_history(&self, run_ids: &[String]) -> Result<Option<DeletedRunHistory>> {
+        if run_ids.len() > HISTORY_LIMIT * 2 || run_ids.iter().any(|id| !valid_run_id(id)) {
+            return Err(RunnerError::InvalidInput(
+                "Invalid history selection".into(),
+            ));
+        }
+        let handles = self.handles.lock();
+        if run_ids.iter().any(|id| handles.contains_key(id)) {
+            return Err(RunnerError::InvalidInput(
+                "Cannot delete an active run".into(),
+            ));
+        }
+        let ids: std::collections::HashSet<_> = run_ids.iter().collect();
+        let mut history = self.history.lock();
+        let mut next = history.clone();
+        let deletion = HistoryDeletion {
+            id: uuid::Uuid::new_v4().to_string(),
+            deleted_at: Local::now().to_rfc3339(),
+        };
+        let mut batch = DeletedRunHistory {
+            id: deletion.id.clone(),
+            deleted_at: deletion.deleted_at.clone(),
+            run_ids: Vec::new(),
+        };
+        for run in next.iter_mut() {
+            if run.history_deletion.is_none() && ids.contains(&run.run_id) {
+                if run.state.is_active() {
+                    return Err(RunnerError::InvalidInput(
+                        "Cannot delete an active run".into(),
+                    ));
+                }
+                run.history_deletion = Some(deletion.clone());
+                batch.run_ids.push(run.run_id.clone());
+            }
+        }
+        if batch.run_ids.is_empty() {
+            return Ok(None);
+        }
+        self.write_history(&next)?;
+        *history = next;
+        for id in &batch.run_ids {
+            self.workspace_contexts.lock().remove(id);
+            self.launches.lock().remove(id);
+            self.workspace_warnings.lock().remove(id);
+        }
+        Ok(Some(batch))
+    }
+
+    pub fn restore_history(&self, batch_id: &str) -> Result<Vec<RunStatus>> {
+        let mut history = self.history.lock();
+        let mut next = history.clone();
+        let mut restored = std::collections::HashSet::new();
+        for run in next.iter_mut() {
+            if run
+                .history_deletion
+                .as_ref()
+                .is_some_and(|d| d.id == batch_id)
+            {
+                run.history_deletion = None;
+                restored.insert(run.run_id.clone());
+            }
+        }
+        if restored.is_empty() {
+            return Err(RunnerError::InvalidInput(
+                "Deleted history not found".into(),
+            ));
+        }
+        if next.iter().filter(|r| r.history_deletion.is_none()).count() > HISTORY_LIMIT {
+            return Err(RunnerError::InvalidInput(format!(
+                "History is limited to {HISTORY_LIMIT} records; clear some history before undoing"
+            )));
+        }
+        self.write_history(&next)?;
+        *history = next;
+        Ok(history
+            .iter()
+            .filter(|r| restored.contains(&r.run_id))
+            .cloned()
+            .collect())
     }
 
     pub fn delete_history(&self, run_id: &str) -> Result<()> {
@@ -474,10 +648,7 @@ impl RunManager {
         let mut history = self.history.lock();
         let mut next = history.clone();
         next.retain(|s| s.run_id != run_id);
-        let data = serde_json::to_vec_pretty(&next)
-            .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
-        std::fs::create_dir_all(self.history_path.parent().unwrap())?;
-        std::fs::write(&self.history_path, data)?;
+        self.write_history(&next)?;
         *history = next;
         remove_log(&self.logs_dir, run_id);
         self.workspace_contexts.lock().remove(run_id);
@@ -842,17 +1013,10 @@ impl RunManager {
             let mut hist = self.history.lock();
             hist.push_front(status.clone());
             // 淘汰最旧的条目，连同其输出日志一起删除
-            while hist.len() > HISTORY_LIMIT {
-                if let Some(old) = hist.pop_back() {
-                    remove_log(&self.logs_dir, &old.run_id);
-                }
+            for old in trim_history(&mut hist) {
+                remove_log(&self.logs_dir, &old.run_id);
             }
-            if let Ok(data) = serde_json::to_string_pretty(&*hist) {
-                if let Some(parent) = self.history_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(&self.history_path, data);
-            }
+            let _ = self.write_history(&hist);
         }
         // 终态后移除句柄
         self.handles.lock().remove(run_id);
@@ -2552,6 +2716,205 @@ mod tests {
         assert!(!root.join("run_logs/saved.log").exists());
         let (tx, _) = crate::events::channel();
         assert!(RunManager::new(&root, tx).history().is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn archived_history_and_raw_logs_survive_restart_and_restore_in_original_order() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        let raw = [0xff, 0, 0xfe, b'\n'];
+        for id in ["first", "second"] {
+            let mut handle = test_handle(id);
+            handle.status.replay = Some(Box::new(RunReplay {
+                request: request(),
+                workspace_request: None,
+                device_revision: "revision".into(),
+                device_target: "user@device:22".into(),
+                source_revision: None,
+                launch: None,
+            }));
+            manager.handles.lock().insert(id.into(), handle);
+            manager.emit_output(id, OutputStream::Stdout, &raw);
+            manager.finish(id, RunState::Exited, Some(0), None);
+        }
+        let batch = manager
+            .archive_history(&["first".into(), "second".into()])
+            .unwrap()
+            .unwrap();
+        assert_eq!(batch.run_ids, ["second", "first"]);
+        assert!(manager.history().is_empty());
+        assert!(manager.snapshot().is_empty());
+        assert!(manager.status("first").is_none());
+        assert!(manager.read_history_output("first").is_err());
+        assert!(root.join("run_logs/first.log").is_file());
+        assert!(manager
+            .archive_history(&["first".into()])
+            .unwrap()
+            .is_none());
+        drop(manager);
+
+        let (tx, _) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        assert!(manager.history().is_empty());
+        assert_eq!(manager.deleted_history()[0].id, batch.id);
+        assert_eq!(manager.deleted_history()[0].deleted_at, batch.deleted_at);
+        assert_eq!(manager.deleted_history()[0].run_ids, batch.run_ids);
+        manager
+            .handles
+            .lock()
+            .insert("new".into(), test_handle("new"));
+        manager.finish("new", RunState::Exited, Some(0), None);
+        let restored = manager.restore_history(&batch.id).unwrap();
+        assert_eq!(
+            restored
+                .iter()
+                .map(|r| r.run_id.as_str())
+                .collect::<Vec<_>>(),
+            ["second", "first"]
+        );
+        assert_eq!(
+            manager
+                .history()
+                .iter()
+                .map(|r| r.run_id.as_str())
+                .collect::<Vec<_>>(),
+            ["new", "second", "first"]
+        );
+        assert_eq!(
+            restored[0]
+                .replay
+                .as_ref()
+                .unwrap()
+                .request
+                .command
+                .as_deref(),
+            Some("true")
+        );
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(manager.read_history_output("first").unwrap())
+                .unwrap(),
+            raw
+        );
+        assert!(manager.deleted_history().is_empty());
+        assert!(manager.restore_history(&batch.id).is_err());
+        drop(manager);
+        let (tx, _) = crate::events::channel();
+        assert_eq!(RunManager::new(&root, tx).history().len(), 3);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bulk_archive_validates_ids_and_rejects_live_selection_without_partial_deletion() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        for id in ["saved", "live"] {
+            manager.handles.lock().insert(id.into(), test_handle(id));
+        }
+        manager.finish("saved", RunState::Exited, Some(0), None);
+        for ids in [
+            vec!["saved".into(), "live".into()],
+            vec!["../history".into()],
+            vec![String::new()],
+            vec!["saved".into(); HISTORY_LIMIT * 2 + 1],
+        ] {
+            assert!(manager.archive_history(&ids).is_err());
+            assert_eq!(manager.history().len(), 1);
+            assert!(manager.deleted_history().is_empty());
+        }
+        assert!(manager.archive_history(&[]).unwrap().is_none());
+        assert!(manager
+            .archive_history(&["missing".into()])
+            .unwrap()
+            .is_none());
+        let batch = manager
+            .archive_history(&["saved".into(), "saved".into()])
+            .unwrap()
+            .unwrap();
+        assert_eq!(batch.run_ids, ["saved"]);
+        assert_eq!(manager.list_running().len(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn archive_and_restore_write_failures_preserve_memory_and_original_files_for_retry() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        manager
+            .handles
+            .lock()
+            .insert("saved".into(), test_handle("saved"));
+        manager.emit_output("saved", OutputStream::Stdout, b"saved output");
+        manager.finish("saved", RunState::Exited, Some(0), None);
+        let path = root.join("history.json");
+        let backup = root.join("history-backup.json");
+        std::fs::rename(&path, &backup).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let original = std::fs::read(&backup).unwrap();
+        assert!(manager.archive_history(&["saved".into()]).is_err());
+        assert_eq!(manager.history().len(), 1);
+        assert!(manager.deleted_history().is_empty());
+        assert_eq!(std::fs::read(&backup).unwrap(), original);
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::rename(&backup, &path).unwrap();
+
+        let batch = manager.archive_history(&["saved".into()]).unwrap().unwrap();
+        std::fs::rename(&path, &backup).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let original = std::fs::read(&backup).unwrap();
+        assert!(manager.restore_history(&batch.id).is_err());
+        assert!(manager.history().is_empty());
+        assert_eq!(manager.deleted_history()[0].id, batch.id);
+        assert_eq!(std::fs::read(&backup).unwrap(), original);
+        assert!(root.join("run_logs/saved.log").is_file());
+        assert!(!std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().ends_with(".tmp")));
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::rename(&backup, &path).unwrap();
+        manager.restore_history(&batch.id).unwrap();
+        assert_eq!(manager.history().len(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn archived_logs_are_not_pruned_and_capacity_errors_keep_undo_available() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        manager
+            .handles
+            .lock()
+            .insert("archived".into(), test_handle("archived"));
+        manager.emit_output("archived", OutputStream::Stdout, b"preserve");
+        manager.finish("archived", RunState::Exited, Some(0), None);
+        let batch = manager
+            .archive_history(&["archived".into()])
+            .unwrap()
+            .unwrap();
+        for i in 0..HISTORY_LIMIT + 1 {
+            let id = format!("new{i}");
+            manager.handles.lock().insert(id.clone(), test_handle(&id));
+            manager.finish(&id, RunState::Exited, Some(0), None);
+        }
+        assert_eq!(manager.history().len(), HISTORY_LIMIT);
+        assert!(root.join("run_logs/archived.log").is_file());
+        assert!(manager.restore_history(&batch.id).is_err());
+        assert_eq!(manager.deleted_history()[0].id, batch.id);
+        drop(manager);
+        let (tx, _) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        assert!(root.join("run_logs/archived.log").is_file());
+        manager.archive_history(&["new1".into()]).unwrap();
+        manager.restore_history(&batch.id).unwrap();
+        assert_eq!(manager.history().len(), HISTORY_LIMIT);
+        assert!(manager.status("archived").is_some());
+        assert!(!manager.read_history_output("archived").unwrap().is_empty());
         std::fs::remove_dir_all(root).unwrap();
     }
 

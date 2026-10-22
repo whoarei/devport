@@ -28,6 +28,7 @@ import { endConsoleTabCycle, handleConsoleTabKeyDown, handleConsoleTabKeyUp } fr
 import { applyUiZoom, changeUiZoom, loadUiZoom, saveUiZoom, uiZoomShortcut, type UiZoomAction } from "./uiZoom";
 import { restoreWorkEnvironment } from "./workEnvironment";
 import { loadDeletedDeviceEvents } from "./deviceActions";
+import { loadDeletedRunHistoryEvents } from "./runHistoryStore";
 
 export default function App() {
   const { t } = useTranslation();
@@ -63,6 +64,7 @@ export default function App() {
     const report = (error: unknown) => useAppStore.setState({ editorError: errorMessage(error) });
     const devicesReady = loadDevices().catch(report);
     void loadDeletedDeviceEvents();
+    void loadDeletedRunHistoryEvents();
     restoreWorkEnvironment(devicesReady);
     void loadRuns().catch(report);
     return onRunEvents((events) => { handleRunEvents(events); useWorkspaceRunStore.getState().events(events); }, report);

@@ -1,12 +1,14 @@
 // Manual fixture: npm run dev -> /tests/run-history-browser.html. No real devices/processes.
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { api, localWorkspace, type DeviceProfile, type RunReplay, type RunStatus, type WorkspaceRunRequest } from "../src/api";
+import { api, localWorkspace, type DeletedRunHistory, type DeviceProfile, type RunReplay, type RunStatus, type WorkspaceRunRequest } from "../src/api";
 import { useAppStore } from "../src/store";
 import { useWorkspaceRunStore } from "../src/workspaceRunStore";
 import { RunHistoryPanel } from "../src/components/RunHistoryPanel";
 import { RunHistoryDialogs } from "../src/components/RunHistoryDialogs";
 import { RunToolbar } from "../src/components/RunToolbar";
+import { EventCenter } from "../src/components/EventCenter";
+import { isActiveRun } from "../src/runState";
 import { initializeTheme, useThemeStore } from "../src/theme";
 import i18n from "../src/i18n";
 import "../src/styles.css";
@@ -41,10 +43,21 @@ api.runWorkspace = async request => {
 };
 api.stopRun = async id => { const status = useAppStore.getState().runs[id]; if (status) useAppStore.getState().handleRunEvent({ type: "status", status: { ...status, state: "canceled", ended_at: new Date().toISOString() } }); };
 api.deleteRunHistory = async () => {};
+const archived = new Map<string, { batch: DeletedRunHistory; runs: RunStatus[] }>();
+api.archiveRunHistory = async ids => {
+  const runs = ids.map(id => useAppStore.getState().runs[id]).filter(run => run && !isActiveRun(run));
+  if (!runs.length) return null;
+  const batch = { id: crypto.randomUUID(), deleted_at: new Date().toISOString(), run_ids: runs.map(r => r.run_id) };
+  archived.set(batch.id, { batch, runs }); return batch;
+};
+api.listDeletedRunHistory = async () => [...archived.values()].map(a => a.batch);
+api.restoreRunHistory = async id => { const saved = archived.get(id); if (!saved) throw new Error("Missing history"); archived.delete(id); return saved.runs; };
+api.getRunHistory = async () => Object.values(useAppStore.getState().runs).filter(r => !isActiveRun(r));
+api.listRunningRuns = async () => Object.values(useAppStore.getState().runs).filter(isActiveRun);
 function Fixture() {
   const [width, setWidth] = useState(280), [collapsed, setCollapsed] = useState(false);
   const active = useAppStore(s => s.activeRunId ? s.runs[s.activeRunId] : null);
-  return <div className="app"><RunHistoryDialogs /><div style={{ padding: 10, display: "flex", gap: 12 }}><span>历史命令交互验收</span><button onClick={() => void i18n.changeLanguage(i18n.language === "zh" ? "en" : "zh")}>中文 / English</button><button onClick={() => useThemeStore.getState().setPreference(useThemeStore.getState().theme === "light" ? "dark" : "light")}>主题</button><label>侧栏宽度 <input aria-label="侧栏宽度" type="range" min={200} max={480} value={width} onChange={e => setWidth(Number(e.target.value))} /></label></div>
+  return <div className="app"><RunHistoryDialogs /><div style={{ padding: 10, display: "flex", gap: 12 }}><span>历史命令交互验收</span><button onClick={() => void i18n.changeLanguage(i18n.language === "zh" ? "en" : "zh")}>中文 / English</button><button onClick={() => useThemeStore.getState().setPreference(useThemeStore.getState().theme === "light" ? "dark" : "light")}>主题</button><label>侧栏宽度 <input aria-label="侧栏宽度" type="range" min={200} max={480} value={width} onChange={e => setWidth(Number(e.target.value))} /></label><EventCenter /></div>
     <main style={{ display: "flex", flex: 1, minHeight: 0 }}><aside style={{ display: "flex", flexDirection: "column", flexShrink: 0, width, borderRight: "1px solid var(--border)" }}><div className="panel-title" style={{ flex: 1, alignItems: "flex-start" }}>工作区 · product</div><div className="panel-title">▸ 预置命令</div><div style={{ height: 340, display: "flex", flexDirection: "column" }}><RunHistoryPanel visible collapsed={collapsed} onToggleCollapse={() => setCollapsed(!collapsed)} /></div></aside>
     <section style={{ flex: 1, minWidth: 0 }}><div className="panel-title">运行控制台</div><RunToolbar /><pre style={{ padding: 16, whiteSpace: "pre-wrap" }}>最后一次任务输出：{active?.label} @ {active?.device_name}{"\n"}{JSON.stringify(active?.replay?.workspace_request?.command.args)}</pre></section></main></div>;
 }

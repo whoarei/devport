@@ -51,6 +51,8 @@ interface AppState {
   consoleSeq: number;
 
   history: RunStatus[];
+  /** Prevent in-flight snapshots and terminal status events from reviving deleted history. */
+  deletedRunIds: ReadonlySet<string>;
   runDraft: RunDraft;
   setRunDraft: (patch: Partial<RunDraft>) => void;
 
@@ -206,6 +208,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   consoleSeq: 0,
 
   history: [],
+  deletedRunIds: new Set(),
   runDraft: { ...DEFAULT_RUN_DRAFT },
   setRunDraft: (patch) => set((s) => ({ runDraft: { ...s.runDraft, ...patch } })),
 
@@ -629,6 +632,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       let outputBuffers = { ...s.outputBuffers };
       let runProgress = s.runProgress;
       for (const ev of events) {
+        if (("run_id" in ev && s.deletedRunIds.has(ev.run_id)) || (ev.type === "status" && s.deletedRunIds.has(ev.status.run_id))) continue;
         if (ev.type === "output") {
           const bytes = Uint8Array.from(atob(ev.data), (c) => c.charCodeAt(0));
           outputBuffers[ev.run_id] = appendOutput(outputBuffers[ev.run_id], bytes);
@@ -636,8 +640,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           // 字节级进度可丢弃，只保留每个 run 的最新一条消息
           runProgress = { ...runProgress, [ev.run_id]: ev.message };
         } else if (ev.type === "resync") {
-          runs = Object.fromEntries(ev.statuses.map((r) => [r.run_id, r]));
-          history = ev.statuses.filter((r) => !isActiveRun(r)).slice(0, 200);
+          const statuses = ev.statuses.filter(r => !s.deletedRunIds.has(r.run_id));
+          runs = Object.fromEntries(statuses.map((r) => [r.run_id, r]));
+          history = statuses.filter((r) => !isActiveRun(r)).slice(0, 200);
           runProgress = {};
           // Do not concatenate bytes across a missing interval (including UTF-8/ANSI).
           for (const id of new Set([...Object.keys(outputBuffers), ...Object.keys(runs)])) {
@@ -671,11 +676,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     const before = get().runs;
     const [live, saved] = await Promise.all([api.listRunningRuns(), api.getRunHistory()]);
     set((s) => {
-      const runs = { ...Object.fromEntries([...saved, ...live].map((r) => [r.run_id, r])) };
+      const runs = { ...Object.fromEntries([...saved, ...live].filter(r => !s.deletedRunIds.has(r.run_id)).map((r) => [r.run_id, r])) };
       // Preserve events delivered while this snapshot was being fetched.
-      for (const [id, run] of Object.entries(s.runs)) if (run !== before[id]) runs[id] = newestStatus(runs[id], run);
+      for (const [id, run] of Object.entries(s.runs)) if (!s.deletedRunIds.has(id) && run !== before[id]) runs[id] = newestStatus(runs[id], run);
       const history = Object.values(runs).filter((r) => !isActiveRun(r)).sort((a, b) => (b.ended_at ?? "").localeCompare(a.ended_at ?? "")).slice(0, 200);
-      const activeRunId = s.activeRunId ?? latestExecution(runs)?.run_id ?? null;
+      const activeRunId = s.activeRunId && runs[s.activeRunId] ? s.activeRunId : latestExecution(runs)?.run_id ?? null;
       return { ...pruneRuns({ ...s, runs, history, activeRunId }), history, activeRunId };
     });
   },

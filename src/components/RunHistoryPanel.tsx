@@ -9,14 +9,13 @@ import { useRunHistoryStore } from "../runHistoryStore";
 import { PanelTitle } from "./PanelTitle";
 import { RunReplayButton } from "./RunReplayButton";
 import { RunHistoryPreview } from "./RunHistoryPreview";
-import { ContextMenu, type MenuState } from "./ContextMenu";
-import { ConfirmDialog } from "./ConfirmDialog";
+import { ContextMenu, type MenuEntry, type MenuState } from "./ContextMenu";
 
 export function RunHistoryPanel({ visible, collapsed, onToggleCollapse }: { visible: boolean; collapsed: boolean; onToggleCollapse: () => void }) {
   const { t } = useTranslation();
   const { runs, workspace } = useAppStore(useShallow(s => ({ runs: s.runs, workspace: s.workspace })));
   const state = useRunHistoryStore();
-  const [all, setAll] = useState(false), [menu, setMenu] = useState<MenuState | null>(null), [deleting, setDeleting] = useState<RunStatus | null>(null);
+  const [all, setAll] = useState(false), [menu, setMenu] = useState<MenuState | null>(null);
   const [preview, setPreview] = useState<{ id: string; anchor: DOMRect } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(), hide = useRef<ReturnType<typeof setTimeout>>();
   const tooltipId = useId();
@@ -24,13 +23,20 @@ export function RunHistoryPanel({ visible, collapsed, onToggleCollapse }: { visi
   const close = useCallback(() => { clear(); setPreview(null); }, [clear]);
   const keep = useCallback(() => clearTimeout(hide.current), []);
   const leave = useCallback(() => { clearTimeout(timer.current); hide.current = setTimeout(() => setPreview(null), 100); }, []);
-  useEffect(() => { close(); return clear; }, [visible, collapsed, workspace, close, clear]);
+  useEffect(() => { close(); setMenu(null); return clear; }, [visible, collapsed, workspace, all, close, clear]);
   const entries = historyEntries(runs, workspace, all);
+  const completed = entries.filter(run => !isActiveRun(run));
+  const clearEntry: MenuEntry = {
+    label: t(all ? "runHistory.clearAll" : "runHistory.clearWorkspace"), danger: true,
+    disabled: state.historyBusy || !completed.length, onSelect: () => void state.clear(completed),
+  };
   const hover = (run: RunStatus, anchor: HTMLElement) => {
     clear(); setPreview(null); const rect = (anchor.closest(".run-history-row") ?? anchor).getBoundingClientRect();
     timer.current = setTimeout(() => setPreview({ id: run.run_id, anchor: rect }), 400);
   };
-  return <div className="run-history-panel">
+  return <div className="run-history-panel" onContextMenu={e => {
+    e.preventDefault(); close(); setMenu({ x: e.clientX, y: e.clientY, entries: [clearEntry] });
+  }}>
     <PanelTitle title={t("runHistory.title")} collapsed={collapsed} onToggle={onToggleCollapse} />
     {!collapsed && <>
       <select className="history-scope" aria-label={t("runHistory.title")} value={all ? "all" : "workspace"} onChange={e => { close(); setAll(e.target.value === "all"); }}>
@@ -38,7 +44,10 @@ export function RunHistoryPanel({ visible, collapsed, onToggleCollapse }: { visi
       </select>
       <ul className="run-history-list" onScroll={close}>
         {entries.map(run => <li key={run.run_id} className={`run-history-row${state.detailId === run.run_id ? " selected" : ""}`}
-          onContextMenu={e => { e.preventDefault(); close(); setMenu({ x: e.clientX, y: e.clientY, entries: [{ label: t("runHistory.delete"), danger: true, disabled: isActiveRun(run), onSelect: () => setDeleting(run) }] }); }}>
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); close(); setMenu({ x: e.clientX, y: e.clientY, entries: [
+            { label: t("runHistory.delete"), danger: true, disabled: state.historyBusy || isActiveRun(run), onSelect: () => void state.remove(run) },
+            "separator", clearEntry,
+          ] }); }}>
           <button type="button" className="history-record" aria-label={t("runHistory.showDetails", { name: run.label })} aria-describedby={preview?.id === run.run_id ? tooltipId : undefined}
             onMouseEnter={e => hover(run, e.currentTarget)} onMouseLeave={leave} onFocus={e => hover(run, e.currentTarget)} onBlur={close} onClick={() => { close(); state.view(run.run_id); }}>
             <span className="history-command">{run.replay ? historyCommand(run.replay) : run.label}{run.replay && historyArgs(run.replay).length > 0 && <span className="history-args"> {historyArgs(run.replay).map(a => JSON.stringify(a)).join(" ")}</span>}</span>
@@ -54,7 +63,5 @@ export function RunHistoryPanel({ visible, collapsed, onToggleCollapse }: { visi
     {state.error && <div className="history-error" role="alert">{state.error}</div>}
     {visible && !collapsed && !menu && preview && runs[preview.id] && <RunHistoryPreview run={runs[preview.id]} anchor={preview.anchor} id={tooltipId} close={close} keep={keep} leave={leave} />}
     {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
-    <ConfirmDialog request={deleting ? { title: t("runHistory.deleteTitle"), message: t("runHistory.deleteMessage", { name: deleting.label }), confirmLabel: t("runHistory.delete"), danger: true,
-      onCancel: () => setDeleting(null), onConfirm: () => { const run = deleting; setDeleting(null); void state.remove(run); } } : null} />
   </div>;
 }

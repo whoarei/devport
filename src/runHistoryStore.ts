@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, errorMessage, workspaceRefEquals, type RunStatus } from "./api";
+import { api, errorMessage, workspaceRefEquals, type DeletedRunHistory, type RunStatus } from "./api";
 import { anyDirty } from "./editorDocument";
 import { getWorkspaceGeneration, useAppStore } from "./store";
 import { useWorkspaceRunStore } from "./workspaceRunStore";
@@ -8,6 +8,7 @@ import { revealConsolePanel } from "./consoleTabs";
 import { historyDraft, historySettings, historyWorkspace, type HistoryRunDraft } from "./runHistory";
 import { isActiveRun, latestExecution } from "./runState";
 import { workspaceSourceRevision } from "./workspaceRun";
+import { useEventStore } from "./eventStore";
 import i18n from "./i18n";
 
 interface State {
@@ -15,11 +16,102 @@ interface State {
   draft: HistoryRunDraft | null;
   error: string | null;
   busy: boolean;
+  historyBusy: boolean;
   view: (id: string | null) => void;
   edit: (run: RunStatus, notice?: string) => void;
   rerun: (run: RunStatus, target: "original" | "current") => Promise<void>;
   submit: (draft: HistoryRunDraft) => Promise<void>;
   remove: (run: RunStatus) => Promise<void>;
+  clear: (runs: RunStatus[]) => Promise<void>;
+}
+
+let historyOperations: Promise<unknown> = Promise.resolve();
+const deletedEventId = (id: string) => `history-deleted:${id}`;
+
+function serializeHistory<T>(action: () => Promise<T>): Promise<T> {
+  const result = historyOperations.then(async () => {
+    useRunHistoryStore.setState({ historyBusy: true });
+    try { return await action(); }
+    finally { useRunHistoryStore.setState({ historyBusy: false }); }
+  });
+  historyOperations = result.catch(() => {});
+  return result;
+}
+
+function hideHistory(ids: string[]) {
+  const deleted = new Set(ids);
+  useAppStore.setState(s => {
+    const runs = Object.fromEntries(Object.entries(s.runs).filter(([id]) => !deleted.has(id)));
+    return {
+      runs,
+      deletedRunIds: new Set([...s.deletedRunIds, ...ids]),
+      outputBuffers: Object.fromEntries(Object.entries(s.outputBuffers).filter(([id]) => !deleted.has(id))),
+      runProgress: Object.fromEntries(Object.entries(s.runProgress).filter(([id]) => !deleted.has(id))),
+      history: s.history.filter(r => !deleted.has(r.run_id)),
+      activeRunId: s.activeRunId && deleted.has(s.activeRunId) ? latestExecution(runs)?.run_id ?? null : s.activeRunId,
+      consoleSeq: s.consoleSeq + 1,
+    };
+  });
+  useRunHistoryStore.setState(s => ({ detailId: s.detailId && deleted.has(s.detailId) ? null : s.detailId }));
+}
+
+function addDeletedHistoryEvent(batch: DeletedRunHistory) {
+  useEventStore.getState().add({
+    id: deletedEventId(batch.id), timestamp: Date.parse(batch.deleted_at), dismissible: false,
+    title: () => i18n.t("runHistory.deleted", { count: batch.run_ids.length }),
+    message: () => i18n.t("runHistory.deletedHint"),
+    action: { label: () => i18n.t("runHistory.undoDelete"), run: () => serializeHistory(async () => {
+      const restored = await api.restoreRunHistory(batch.id);
+      useRunHistoryStore.setState({ error: null });
+      const ids = new Set(batch.run_ids);
+      useAppStore.setState(s => {
+        const runs = { ...Object.fromEntries(restored.map(r => [r.run_id, r])), ...s.runs };
+        return {
+          runs, deletedRunIds: new Set([...s.deletedRunIds].filter(id => !ids.has(id))),
+          history: Object.values(runs).filter(r => !isActiveRun(r)).sort((a, b) => (b.ended_at ?? "").localeCompare(a.ended_at ?? "")).slice(0, 200),
+          activeRunId: s.activeRunId ?? latestExecution(runs)?.run_id ?? null,
+          consoleSeq: s.consoleSeq + 1,
+        };
+      });
+      // The restore has committed; a refresh failure must not leave a stale Undo action.
+      try { await useAppStore.getState().loadRuns(); }
+      catch (error) { reportHistoryError("refreshFailed", error); }
+    }) },
+  });
+}
+
+function reportHistoryError(key: "deleteFailed" | "refreshFailed" | "loadDeletedFailed", error: unknown) {
+  const message = errorMessage(error);
+  useRunHistoryStore.setState({ error: message });
+  useEventStore.getState().add({ id: `history-error:${key}`, timestamp: Date.now(), title: () => i18n.t(`runHistory.${key}`), message, level: "error" });
+}
+
+export function loadDeletedRunHistoryEvents(): Promise<void> {
+  return serializeHistory(async () => {
+    try {
+      const batches = await api.listDeletedRunHistory();
+      const ids = new Set(batches.map(b => deletedEventId(b.id)));
+      for (const event of useEventStore.getState().events) {
+        if (event.id.startsWith("history-deleted:") && !ids.has(event.id)) useEventStore.getState().dismiss(event.id);
+      }
+      hideHistory(batches.flatMap(b => b.run_ids));
+      batches.forEach(addDeletedHistoryEvent);
+    } catch (error) { reportHistoryError("loadDeletedFailed", error); }
+  });
+}
+
+function archiveHistory(records: RunStatus[]): Promise<void> {
+  const ids = records.filter(r => !isActiveRun(useAppStore.getState().runs[r.run_id] ?? r)).map(r => r.run_id);
+  if (!ids.length) return Promise.resolve();
+  return serializeHistory(async () => {
+    try {
+      const batch = await api.archiveRunHistory(ids);
+      if (!batch) return;
+      addDeletedHistoryEvent(batch);
+      hideHistory(batch.run_ids);
+      useRunHistoryStore.setState({ error: null });
+    } catch (error) { reportHistoryError("deleteFailed", error); }
+  });
 }
 
 /** Replays bypass mutable toolbar preferences; all inputs are validated again by Rust. */
@@ -68,7 +160,7 @@ export async function submitHistoryRun(draft: HistoryRunDraft): Promise<string |
 }
 
 export const useRunHistoryStore = create<State>((set, get) => ({
-  detailId: null, draft: null, error: null, busy: false,
+  detailId: null, draft: null, error: null, busy: false, historyBusy: false,
   view: detailId => set({ detailId, error: null }),
   edit: (run, notice) => {
     const draft = historyDraft(run, useAppStore.getState().devices);
@@ -98,17 +190,6 @@ export const useRunHistoryStore = create<State>((set, get) => ({
     catch (e) { set({ draft: { ...draft, notice: errorMessage(e) }, error: errorMessage(e) }); }
     finally { set({ busy: false }); }
   },
-  remove: async run => {
-    if (isActiveRun(useAppStore.getState().runs[run.run_id] ?? run)) return;
-    try {
-      await api.deleteRunHistory(run.run_id);
-      useAppStore.setState(s => {
-        const runs = { ...s.runs }, outputBuffers = { ...s.outputBuffers };
-        delete runs[run.run_id]; delete outputBuffers[run.run_id];
-        return { runs, outputBuffers, history: s.history.filter(r => r.run_id !== run.run_id),
-          activeRunId: s.activeRunId === run.run_id ? latestExecution(runs)?.run_id ?? null : s.activeRunId, consoleSeq: s.consoleSeq + 1 };
-      });
-      set(s => ({ detailId: s.detailId === run.run_id ? null : s.detailId, error: null }));
-    } catch (e) { set({ error: errorMessage(e) }); }
-  },
+  remove: run => archiveHistory([run]),
+  clear: archiveHistory,
 }));

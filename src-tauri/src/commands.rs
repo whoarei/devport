@@ -660,6 +660,29 @@ pub fn delete_run_history(state: tauri::State<'_, AppState>, run_id: String) -> 
 }
 
 #[tauri::command]
+pub fn archive_run_history(
+    state: tauri::State<'_, AppState>,
+    run_ids: Vec<String>,
+) -> Result<Option<crate::runner::DeletedRunHistory>> {
+    state.run_manager.archive_history(&run_ids)
+}
+
+#[tauri::command]
+pub fn list_deleted_run_history(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<crate::runner::DeletedRunHistory>> {
+    Ok(state.run_manager.deleted_history())
+}
+
+#[tauri::command]
+pub fn restore_run_history(
+    state: tauri::State<'_, AppState>,
+    batch_id: String,
+) -> Result<Vec<RunStatus>> {
+    state.run_manager.restore_history(&batch_id)
+}
+
+#[tauri::command]
 pub fn read_run_history_output(
     state: tauri::State<'_, AppState>,
     run_id: String,

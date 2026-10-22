@@ -6,13 +6,14 @@ import { api, deviceWorkspace, localWorkspace, type DeviceProfile, type RunRepla
 import { useAppStore } from "../src/store";
 import { useWorkspaceRunStore } from "../src/workspaceRunStore";
 import { useTerminalStore } from "../src/terminalStore";
-import { submitHistoryRun, useRunHistoryStore } from "../src/runHistoryStore";
+import { loadDeletedRunHistoryEvents, submitHistoryRun, useRunHistoryStore } from "../src/runHistoryStore";
 import { decodeHistoryOutput, historyDraft, historyEntries } from "../src/runHistory";
 import { latestExecution } from "../src/runState";
 import { RunToolbar } from "../src/components/RunToolbar";
 import { RunHistoryPanel } from "../src/components/RunHistoryPanel";
 import { RunHistorySummary } from "../src/components/RunHistoryPreview";
 import i18n from "../src/i18n";
+import { eventText, useEventStore } from "../src/eventStore";
 
 const workspace = localWorkspace("/project");
 const device = (id: string): DeviceProfile => ({ id, revision: `rev-${id}`, name: id, transport: "ssh", host: id, port: 22, username: "user", auth: { type: "key", key_path: null }, workspace_root: "/runs", is_default: false });
@@ -22,10 +23,11 @@ function record(id = "old"): RunStatus {
   return { run_id: id, label: "run.py", device_name: "a", state: "exited", exit_code: 0, error: null, started_at: "2026-10-22T12:00:00+08:00", ended_at: "2026-10-22T12:00:01+08:00", replay };
 }
 function setup(t: test.TestContext) {
-  const app = useAppStore.getState(), feature = useWorkspaceRunStore.getState(), history = useRunHistoryStore.getState(), terminal = useTerminalStore.getState();
-  t.after(() => { useAppStore.setState(app, true); useWorkspaceRunStore.setState(feature, true); useRunHistoryStore.setState(history, true); useTerminalStore.setState(terminal, true); });
-  useAppStore.setState({ workspace, devices: [device("a"), device("b")], selectedDeviceId: "b", openTabs: [], loading: false, saving: false, starting: false, guarding: false, updating: false, workspaceMutating: false, runs: { old: record() }, history: [record()], outputBuffers: {}, activeRunId: "old", saveAllDirty: async () => true, consoleSize: { cols: 80, rows: 24 } });
-  useRunHistoryStore.setState({ detailId: null, draft: null, error: null, busy: false });
+  const app = useAppStore.getState(), feature = useWorkspaceRunStore.getState(), history = useRunHistoryStore.getState(), terminal = useTerminalStore.getState(), events = useEventStore.getState();
+  t.after(() => { useAppStore.setState(app, true); useWorkspaceRunStore.setState(feature, true); useRunHistoryStore.setState(history, true); useTerminalStore.setState(terminal, true); useEventStore.setState(events, true); });
+  useAppStore.setState({ workspace, devices: [device("a"), device("b")], selectedDeviceId: "b", openTabs: [], loading: false, saving: false, starting: false, guarding: false, updating: false, workspaceMutating: false, runs: { old: record() }, history: [record()], deletedRunIds: new Set(), outputBuffers: {}, activeRunId: "old", saveAllDirty: async () => true, consoleSize: { cols: 80, rows: 24 } });
+  useRunHistoryStore.setState({ detailId: null, draft: null, error: null, busy: false, historyBusy: false });
+  useEventStore.setState({ events: [], running: [] });
   useWorkspaceRunStore.setState({ sessions: {}, warnings: {}, preferences: { python: { b: "device_default" }, bash: {}, console_mode: "pty", timeout_secs: 99, env: { X: "current" } } });
   t.mock.method(console, "warn", () => {});
   t.mock.method(React, "useSyncExternalStore", (_subscribe, getSnapshot) => getSnapshot());
@@ -106,7 +108,7 @@ test("preset command replay retains the original target and raw shell command", 
 test("viewing historical output never replaces the latest console task; delete only updates after backend succeeds", async t => {
   setup(t); useRunHistoryStore.getState().view("older");
   assert.equal(useAppStore.getState().activeRunId, "old");
-  t.mock.method(api, "deleteRunHistory", async () => { throw new Error("disk write failed"); });
+  t.mock.method(api, "archiveRunHistory", async () => { throw new Error("disk write failed"); });
   await useRunHistoryStore.getState().remove(record());
   assert.ok(useAppStore.getState().runs.old); assert.match(useRunHistoryStore.getState().error!, /disk/);
 });
@@ -136,4 +138,139 @@ test("old records never guess missing run settings", async t => {
   setup(t); const old = record(); delete old.replay;
   await useRunHistoryStore.getState().rerun(old, "original");
   assert.equal(useRunHistoryStore.getState().draft, null); assert.ok(useRunHistoryStore.getState().error);
+});
+
+test("clear follows the visible workspace scope, preserves active runs, and its event restores the original records", async t => {
+  setup(t);
+  const old = record(), other = record("other"), live = { ...record("live"), state: "running", ended_at: null };
+  other.replay!.workspace_request!.workspace = localWorkspace("/other");
+  live.replay!.workspace_request!.workspace = localWorkspace("/elsewhere");
+  useAppStore.setState({ runs: { old, other, live }, history: [old, other], activeRunId: "live" });
+  useRunHistoryStore.getState().view("old");
+  t.mock.method(api, "archiveRunHistory", async ids => {
+    assert.deepEqual(ids, ["old"]);
+    assert.ok(useAppStore.getState().runs.old);
+    return { id: "clear", deleted_at: "2026-10-22T06:00:00Z", run_ids: ids };
+  });
+  t.mock.method(api, "restoreRunHistory", async id => { assert.equal(id, "clear"); return [old]; });
+  t.mock.method(api, "getRunHistory", async () => [old, other]);
+  t.mock.method(api, "listRunningRuns", async () => [live]);
+  await useRunHistoryStore.getState().clear(historyEntries(useAppStore.getState().runs, workspace));
+  assert.deepEqual(Object.keys(useAppStore.getState().runs), ["other", "live"]);
+  assert.equal(useRunHistoryStore.getState().detailId, null);
+  assert.equal(useAppStore.getState().activeRunId, "live");
+  const event = useEventStore.getState().events[0];
+  assert.equal(event.timestamp, Date.parse("2026-10-22T06:00:00Z"));
+  assert.equal(event.dismissible, false);
+  assert.equal(eventText(event.title), "已移除 1 条历史命令");
+  await useEventStore.getState().runAction(event.id);
+  assert.deepEqual(useAppStore.getState().runs.old, old);
+  assert.deepEqual(useAppStore.getState().runs.old.replay, old.replay);
+  assert.equal(useAppStore.getState().activeRunId, "live");
+  assert.equal(useEventStore.getState().events.length, 0);
+});
+
+test("clear all skips active and preparation tasks; clear with only active tasks is a no-op", async t => {
+  setup(t);
+  const live = { ...record("live"), state: "running", ended_at: null }, prep = record("prep"), other = record("other");
+  other.replay!.workspace_request!.workspace = localWorkspace("/other");
+  prep.replay!.workspace_request!.operation = "prepare";
+  useAppStore.setState({ runs: { old: record(), other, live, prep }, history: [record(), other, prep] });
+  const archive = t.mock.method(api, "archiveRunHistory", async ids => ({ id: "all", deleted_at: new Date().toISOString(), run_ids: ids }));
+  await useRunHistoryStore.getState().clear(historyEntries(useAppStore.getState().runs, workspace, true));
+  assert.deepEqual(new Set(archive.mock.calls[0].arguments[0]), new Set(["old", "other"]));
+  assert.deepEqual(Object.keys(useAppStore.getState().runs), ["live", "prep"]);
+  await useRunHistoryStore.getState().clear([live]);
+  assert.equal(archive.mock.callCount(), 1);
+});
+
+test("failed clear preserves history, output, selection and details and reports an application event", async t => {
+  setup(t);
+  const output = { chunks: [new Uint8Array([65])], bytes: 1, start: 0 };
+  useAppStore.setState({ outputBuffers: { old: output } });
+  useRunHistoryStore.getState().view("old");
+  t.mock.method(api, "archiveRunHistory", async () => { throw new Error("disk full"); });
+  await useRunHistoryStore.getState().clear([record()]);
+  assert.ok(useAppStore.getState().runs.old);
+  assert.equal(useAppStore.getState().activeRunId, "old");
+  assert.equal(useAppStore.getState().outputBuffers.old, output);
+  assert.equal(useRunHistoryStore.getState().detailId, "old");
+  assert.equal(useRunHistoryStore.getState().historyBusy, false);
+  assert.equal(useEventStore.getState().events[0].level, "error");
+  assert.equal(useEventStore.getState().events[0].message, "disk full");
+  assert.equal(useEventStore.getState().events[0].action, undefined);
+});
+
+test("late status, resync and in-flight snapshots cannot revive cleared history", async t => {
+  setup(t);
+  let snapshot!: (runs: RunStatus[]) => void;
+  t.mock.method(api, "getRunHistory", () => new Promise<RunStatus[]>(resolve => { snapshot = resolve; }));
+  t.mock.method(api, "listRunningRuns", async () => []);
+  const loading = useAppStore.getState().loadRuns();
+  t.mock.method(api, "archiveRunHistory", async ids => ({ id: "clear", deleted_at: new Date().toISOString(), run_ids: ids }));
+  await useRunHistoryStore.getState().clear([record()]);
+  useAppStore.getState().handleRunEvents([
+    { type: "status", status: record() },
+    { type: "output", run_id: "old", stream: "stdout", data: btoa("late") },
+    { type: "resync", statuses: [record()] },
+  ]);
+  snapshot([record()]); await loading;
+  assert.deepEqual(useAppStore.getState().runs, {});
+  assert.deepEqual(useAppStore.getState().history, []);
+  assert.deepEqual(useAppStore.getState().outputBuffers, {});
+  assert.equal(useAppStore.getState().activeRunId, null);
+});
+
+test("new runs arriving while clear is pending survive; a failed restore remains retryable", async t => {
+  setup(t);
+  let finish!: () => void;
+  const original = record(), fresh = { ...record("fresh"), started_at: "2026-10-23T12:00:00Z" };
+  t.mock.method(api, "archiveRunHistory", ids => new Promise(resolve => { finish = () => resolve({ id: "batch", deleted_at: new Date().toISOString(), run_ids: ids }); }));
+  const clearing = useRunHistoryStore.getState().clear([original]);
+  await Promise.resolve();
+  assert.equal(useRunHistoryStore.getState().historyBusy, true);
+  useAppStore.getState().handleRunEvent({ type: "status", status: fresh });
+  useAppStore.getState().setActiveRun("fresh");
+  finish(); await clearing;
+  assert.deepEqual(Object.keys(useAppStore.getState().runs), ["fresh"]);
+  const restoration = t.mock.method(api, "restoreRunHistory", async () => { throw new Error("read-only disk"); });
+  const event = useEventStore.getState().events[0];
+  await useEventStore.getState().runAction(event.id);
+  assert.equal(useEventStore.getState().events[0].actionError, "read-only disk");
+  assert.equal(useRunHistoryStore.getState().historyBusy, false);
+  restoration.mock.mockImplementation(async () => [original]);
+  t.mock.method(api, "getRunHistory", async () => [fresh, original]);
+  t.mock.method(api, "listRunningRuns", async () => []);
+  await useEventStore.getState().runAction(event.id);
+  assert.ok(useAppStore.getState().runs.old);
+  assert.equal(useAppStore.getState().activeRunId, "fresh");
+  assert.equal(useEventStore.getState().events.length, 0);
+});
+
+test("successful restore survives a refresh failure without leaving a stale Undo action", async t => {
+  setup(t);
+  t.mock.method(api, "archiveRunHistory", async ids => ({ id: "one", deleted_at: new Date().toISOString(), run_ids: ids }));
+  await useRunHistoryStore.getState().remove(record());
+  t.mock.method(api, "restoreRunHistory", async () => [record()]);
+  t.mock.method(api, "listRunningRuns", async () => []);
+  t.mock.method(api, "getRunHistory", async () => { throw new Error("refresh failed"); });
+  await useEventStore.getState().runAction("history-deleted:one");
+  assert.ok(useAppStore.getState().runs.old);
+  assert.equal(useAppStore.getState().deletedRunIds.has("old"), false);
+  assert.ok(!useEventStore.getState().events.some(e => e.id === "history-deleted:one"));
+  assert.ok(useEventStore.getState().events.some(e => e.level === "error"));
+});
+
+test("persistent deleted-history events rebuild without duplicates and follow language changes", async t => {
+  setup(t);
+  t.after(() => { void i18n.changeLanguage("zh"); });
+  t.mock.method(api, "listDeletedRunHistory", async () => [{ id: "saved", deleted_at: "2026-10-22T06:00:00Z", run_ids: ["old", "another"] }]);
+  await loadDeletedRunHistoryEvents(); await loadDeletedRunHistoryEvents();
+  assert.equal(useEventStore.getState().events.length, 1);
+  const event = useEventStore.getState().events[0];
+  assert.equal(eventText(event.action!.label), "撤销");
+  await i18n.changeLanguage("en");
+  assert.equal(eventText(event.title), "Removed 2 history records");
+  assert.equal(eventText(event.action!.label), "Undo");
+  assert.ok(!useAppStore.getState().runs.old);
 });
