@@ -46,7 +46,9 @@ export const zh = {
   menu: {
     ariaLabel: "应用菜单",
     file: "文件",
-    openWorkspace: "打开工作区…",
+    devices: "设备",
+    settings: "设置",
+    openWorkspace: "打开本机工作区…",
     openRemoteWorkspace: "打开设备工作区…",
     recentWorkspaces: "最近的工作区",
     noRecent: "（无最近记录）",
@@ -61,6 +63,7 @@ export const zh = {
     autostartFailed: "开机自启动设置失败：{{message}}",
     quit: "退出",
     view: "视图",
+    panels: "面板",
     sidebar: "侧栏",
     workspacePanel: "工作区面板",
     runtimePanel: "Runtime 面板",

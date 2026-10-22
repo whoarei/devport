@@ -98,11 +98,11 @@ test("workspace panel renders the tree with expansion state and an empty hint", 
 test("empty workspace context menu offers open and recent workspaces", () => {
   const withRecent = workspacePickerMenuEntries((key) => i18n.t(key), [localWorkspace("/a"), localWorkspace("/b")]);
   assert.deepEqual(withRecent.map((entry) => entry === "separator" ? "|" : entry.label),
-    ["打开工作区…", "打开设备工作区…", "|", "/a", "/b"]);
+    ["打开本机工作区…", "打开设备工作区…", "|", "/a", "/b"]);
 
   const empty = workspacePickerMenuEntries((key) => i18n.t(key), []);
   assert.deepEqual(empty.map((entry) => entry === "separator" ? "|" : entry.label),
-    ["打开工作区…", "打开设备工作区…", "|", "（无最近记录）"]);
+    ["打开本机工作区…", "打开设备工作区…", "|", "（无最近记录）"]);
   const placeholder = empty[3];
   assert.ok(placeholder !== "separator" && placeholder.disabled);
 });
@@ -116,17 +116,17 @@ test("recent device workspaces are labelled with their host device", () => {
   const entries = workspacePickerMenuEntries(
     (key) => i18n.t(key), [deviceWorkspace("d1", "/srv/app"), localWorkspace("/local")], [device]);
   assert.deepEqual(entries.map((entry) => entry === "separator" ? "|" : entry.label),
-    ["打开工作区…", "打开设备工作区…", "|", "board:/srv/app", "/local"]);
+    ["打开本机工作区…", "打开设备工作区…", "|", "board:/srv/app", "/local"]);
 });
 
 test("open workspace blank-area menu adds close, open and recent entries for switching", () => {
   const entries = workspaceSwitchMenuEntries((key) => i18n.t(key), [localWorkspace("/a"), localWorkspace("/b")]);
   assert.deepEqual(entries.map((entry) => entry === "separator" ? "|" : entry.label),
-    ["打开工作区…", "打开设备工作区…", "关闭工作区", "|", "/a", "/b"]);
+    ["打开本机工作区…", "打开设备工作区…", "关闭工作区", "|", "/a", "/b"]);
 
   const empty = workspaceSwitchMenuEntries((key) => i18n.t(key), []);
   assert.deepEqual(empty.map((entry) => entry === "separator" ? "|" : entry.label),
-    ["打开工作区…", "打开设备工作区…", "关闭工作区", "|", "（无最近记录）"]);
+    ["打开本机工作区…", "打开设备工作区…", "关闭工作区", "|", "（无最近记录）"]);
 });
 
 test("workspace terminal submenu lists only local devices with fallbacks for full or none", () => {

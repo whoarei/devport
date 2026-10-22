@@ -45,7 +45,9 @@ export const en: Messages = {
   menu: {
     ariaLabel: "Application menu",
     file: "File",
-    openWorkspace: "Open Workspace…",
+    devices: "Devices",
+    settings: "Settings",
+    openWorkspace: "Open Local Workspace…",
     openRemoteWorkspace: "Open Device Workspace…",
     recentWorkspaces: "Recent Workspaces",
     noRecent: "(No recent workspaces)",
@@ -60,6 +62,7 @@ export const en: Messages = {
     autostartFailed: "Failed to configure launch at login: {{message}}",
     quit: "Quit",
     view: "View",
+    panels: "Panels",
     sidebar: "Sidebar",
     workspacePanel: "Workspace Panel",
     runtimePanel: "Runtime panel",

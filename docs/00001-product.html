@@ -186,7 +186,7 @@ pre{background:#eee;color:#111}
 <section id="workbench">
 <h2><small>03 / WORKBENCH</small>工作台：按需出现，保留上下文</h2>
 <figure class="workbench">
-<div class="wb-top">文件　视图　帮助　　　　　　　　　设备与桌面入口</div>
+<div class="wb-top">文件　设备　视图　设置　帮助</div>
 <div class="wb-body">
 <div class="wb-side"><strong>工作区</strong>按需展开的目录树<br>脚本右键运行<br><br><strong>预置命令</strong>常用 Shell 操作<br><br><strong>Runtime</strong>按需显示</div>
 <div class="wb-center">
@@ -197,6 +197,7 @@ pre{background:#eee;color:#111}
 </div>
 </figure>
 <p class="subtle">信息布局示意，不是交互原型。编辑器随文件打开出现；Runtime、文件传输默认隐藏。</p>
+<p>应用菜单按操作对象分组：文件管理工作区与编辑文件；设备提供配置管理、文件传输和 USB 共享；视图管理面板、侧栏与缩放；设置集中语言、主题、标签切换顺序和自启动；帮助提供更新与关于。面板开关统一放在“视图 → 面板”子菜单，详细归属见 <a href="00007-state-and-recovery.md">客户端状态与恢复</a>。</p>
 <h3>工作区与文件</h3>
 <p>从文件菜单打开本机目录或设备目录，可从最近工作区返回。目录按展开加载，支持新建文件/目录、重命名和删除。本机工作区空白区及文件夹右键菜单可在系统文件管理器中打开对应目录。设备离线或访问失败时展示原因，不能把空列表冒充成功。</p>
 <h3>编辑与保存</h3>
@@ -283,7 +284,7 @@ pre{background:#eee;color:#111}
 <p>在双栏浏览器选择源条目和目标目录，预检后以保留两份、跳过或覆盖策略开始。支持二进制、多选与递归目录，单文件 2 GiB、单批 10 GiB、10,000 条目；不套用运行上传的小文件限制。</p>
 <p>队列显示进度、速度、部分成功和逐项结果，提供取消、失败项重试及残留清理。已提交文件在取消后保留；提交结果未知时显示“待核对”，须检查后重选。关闭面板继续传输，重启只恢复中断状态，不自动续传。没有暂停续传、设备间直接复制或自动下载运行产物。</p>
 <h3>Windows USB → WSL2 / 远程 Linux</h3>
-<p>通过“文件 → USB 共享…”检查依赖、选择目标并连接开发 USB，支持断开、取消共享和节点访问验证。Windows 需要默认位置安装的 usbipd-win 5.x；远程 Linux 还需 Python 3.8+、usbip、vhci_hcd 和 root/具体命令的免密 sudo。</p>
+<p>通过“设备 → USB 共享…”检查依赖、选择目标并连接开发 USB，支持断开、取消共享和节点访问验证。Windows 需要默认位置安装的 usbipd-win 5.x；远程 Linux 还需 Python 3.8+、usbip、vhci_hcd 和 root/具体命令的免密 sudo。</p>
 <p>共享与取消共享按需触发 UAC。连接后 Windows 无法同时使用该设备，WSL2 连接对虚拟机生效；任务结束或关闭应用不会自动断开。远程 USB 数据由 Linux 访问 Windows IPv4 TCP 3240，不经过 SSH，适用于可信网络/VPN。没有自动安装驱动、防火墙修改或自动重连。详见 <a href="00006-transfer-and-usb.md">文件传输与 USB</a>。</p>
 </section>
 

@@ -42,7 +42,7 @@ function MenuItem({ entry, close }: { entry: MenuEntry; close: () => void }) {
     return (
       <div
         className="menu-submenu"
-        onMouseEnter={() => setSubOpen(true)}
+        onMouseEnter={() => { if (!entry.disabled) setSubOpen(true); }}
         onMouseLeave={() => setSubOpen(false)}
       >
         <button
@@ -52,12 +52,13 @@ function MenuItem({ entry, close }: { entry: MenuEntry; close: () => void }) {
           aria-expanded={subOpen}
           className="menu-item"
           disabled={entry.disabled}
+          onClick={() => setSubOpen(true)}
         >
           <span className="menu-check" />
           <span className="menu-label">{entry.label}</span>
           <span className="menu-arrow" aria-hidden="true">▸</span>
         </button>
-        {subOpen && (
+        {subOpen && !entry.disabled && (
           <div className="menu-dropdown menu-subdropdown" role="menu">
             {entry.children.map((child, index) => <MenuItem key={index} entry={child} close={close} />)}
           </div>
@@ -108,6 +109,7 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
   const recentWorkspaces = useAppStore((state) => state.recentWorkspaces);
   const workspace = useAppStore((state) => state.workspace);
   const devices = useAppStore((state) => state.devices);
+  const fileDevices = devices.filter((device) => device.transport === "ssh" || device.transport === "wsl");
   const dirty = useAppStore((state) => {
     const tab = state.openTabs.find((t) => t.name === state.activeFile);
     return tab ? dirtyTab(tab) : false;
@@ -153,12 +155,6 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
       label: t("menu.file"),
       entries: [
         { label: t("menu.openWorkspace"), onSelect: () => void openWorkspace() },
-        { type: "checkbox", label: t("transfer.title"), checked: layout.panelVisible.transfer, onSelect: () => {
-          const state = useAppStore.getState();
-          if (state.layout.panelVisible.transfer) state.setLayout(panelVisibilityPatch(state.layout, "transfer", false));
-          else useTransferStore.getState().seed();
-        } },
-        { label: t("transfer.browseDevice"), children: devices.filter((d) => ["ssh", "wsl"].includes(d.transport)).map((device) => ({ label: deviceLabel(device), onSelect: () => { revealTransferPanel(); void useTransferStore.getState().openDevice(device.id); useTransferStore.getState().restore(); } })) },
         { label: t("menu.openRemoteWorkspace"), onSelect: () => useAppStore.getState().openRemoteWorkspaceDialog() },
         {
           label: t("menu.recentWorkspaces"),
@@ -177,12 +173,20 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
           onSelect: () => void useAppStore.getState().setWorkspace(null),
         },
         { type: "separator" },
+        { label: t("menu.saveFile"), disabled: !dirty, onSelect: () => void useAppStore.getState().saveFile() },
+        { label: t("menu.closeFile"), disabled: !openFile || fileBusy, onSelect: () => void useAppStore.getState().closeFile() },
+        { type: "separator" },
+        {
+          label: t("menu.quit"),
+          disabled: !isTauri(),
+          onSelect: () => void requestQuit(),
+        },
+      ],
+    },
+    {
+      label: t("menu.devices"),
+      entries: [
         { label: t("menu.addDevice"), onSelect: () => useAppStore.getState().openDeviceDialog({ ...emptyDevice(), is_default: devices.length === 0 }) },
-        { label: t("usb.title"), disabled: !isTauri() || !/Win/i.test(navigator.platform), onSelect: () => {
-          const selected = devices.find((d) => d.id === useAppStore.getState().selectedDeviceId);
-          if (selected?.transport === "ssh") useUsbStore.getState().showRemote(selected.id);
-          else useUsbStore.getState().show(selected?.transport === "wsl" ? selected.wsl ?? undefined : undefined);
-        } },
         {
           label: t("menu.editDevice"),
           disabled: devices.length === 0,
@@ -204,36 +208,43 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
             : [{ label: t("menu.noDevices"), disabled: true }],
         },
         { type: "separator" },
-        { label: t("menu.saveFile"), disabled: !dirty, onSelect: () => void useAppStore.getState().saveFile() },
-        { label: t("menu.closeFile"), disabled: !openFile || fileBusy, onSelect: () => void useAppStore.getState().closeFile() },
+        { type: "checkbox", label: t("transfer.title"), checked: layout.panelVisible.transfer, onSelect: () => {
+          const state = useAppStore.getState();
+          if (state.layout.panelVisible.transfer) state.setLayout(panelVisibilityPatch(state.layout, "transfer", false));
+          else useTransferStore.getState().seed();
+        } },
+        { label: t("transfer.browseDevice"), disabled: fileDevices.length === 0, children: fileDevices.map((device) => ({ label: deviceLabel(device), onSelect: () => { revealTransferPanel(); void useTransferStore.getState().openDevice(device.id); useTransferStore.getState().restore(); } })) },
         { type: "separator" },
-        { type: "checkbox", label: t("menu.autostart"), disabled: !isTauri(), checked: autostart, onSelect: toggleAutostart },
-        { type: "separator" },
-        {
-          label: t("menu.quit"),
-          disabled: !isTauri(),
-          onSelect: () => void requestQuit(),
-        },
+        { label: t("usb.title"), disabled: !isTauri() || !/Win/i.test(navigator.platform), onSelect: () => {
+          const selected = devices.find((d) => d.id === useAppStore.getState().selectedDeviceId);
+          if (selected?.transport === "ssh") useUsbStore.getState().showRemote(selected.id);
+          else useUsbStore.getState().show(selected?.transport === "wsl" ? selected.wsl ?? undefined : undefined);
+        } },
       ],
     },
     {
       label: t("menu.view"),
       entries: [
+        {
+          label: t("menu.panels"),
+          children: [
+            // 面板勾选项由注册表生成：侧栏面板勾选时顺带保证侧栏 dock 可见
+            ...panelsInDock("sidebar").filter((panel) => panel.manualVisibility !== false).map((panel): MenuEntry => ({
+              type: "checkbox",
+              label: t(panel.titleKey),
+              checked: layout.panelVisible[panel.id],
+              onSelect: () => setLayout({ ...panelVisibilityPatch(layout, panel.id, !layout.panelVisible[panel.id]), sidebarVisible: true }),
+            })),
+            { type: "separator" },
+            ...panelsInDock("center").filter((panel) => panel.manualVisibility !== false).map((panel): MenuEntry => ({
+              type: "checkbox",
+              label: t(panel.titleKey),
+              checked: layout.panelVisible[panel.id],
+              onSelect: () => setLayout(panelVisibilityPatch(layout, panel.id, !layout.panelVisible[panel.id])),
+            })),
+          ],
+        },
         { type: "checkbox", label: t("menu.sidebar"), checked: layout.sidebarVisible, onSelect: () => setLayout({ sidebarVisible: !layout.sidebarVisible }) },
-        // 面板勾选项由注册表生成：侧栏面板勾选时顺带保证侧栏 dock 可见
-        ...panelsInDock("sidebar").filter((panel) => panel.manualVisibility !== false).map((panel): MenuEntry => ({
-          type: "checkbox",
-          label: t(panel.titleKey),
-          checked: layout.panelVisible[panel.id],
-          onSelect: () => setLayout({ ...panelVisibilityPatch(layout, panel.id, !layout.panelVisible[panel.id]), sidebarVisible: true }),
-        })),
-        ...panelsInDock("center").filter((panel) => panel.manualVisibility !== false).map((panel): MenuEntry => ({
-          type: "checkbox",
-          label: t(panel.titleKey),
-          checked: layout.panelVisible[panel.id],
-          onSelect: () => setLayout(panelVisibilityPatch(layout, panel.id, !layout.panelVisible[panel.id])),
-        })),
-        { type: "separator" },
         {
           label: t("menu.sidebarPosition"),
           children: [
@@ -242,14 +253,16 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
           ],
         },
         { type: "separator" },
-        {
-          label: t("menu.tabCycleOrder"),
-          children: [
-            { type: "checkbox", label: t("menu.tabCycleSequential"), checked: tabCycleOrder === "sequential", onSelect: () => setTabCycleOrder("sequential") },
-            { type: "checkbox", label: t("menu.tabCycleMru"), checked: tabCycleOrder === "mru", onSelect: () => setTabCycleOrder("mru") },
-          ],
-        },
+        { label: t("menu.zoomIn"), shortcut: `${shortcutModifier}++`, disabled: uiZoom >= UI_ZOOM_LEVELS[UI_ZOOM_LEVELS.length - 1], onSelect: () => onUiZoom("in") },
+        { label: t("menu.zoomOut"), shortcut: `${shortcutModifier}+-`, disabled: uiZoom <= UI_ZOOM_LEVELS[0], onSelect: () => onUiZoom("out") },
+        { label: t("menu.resetZoom", { percent: uiZoom }), shortcut: `${shortcutModifier}+0`, disabled: uiZoom === 100, onSelect: () => onUiZoom("reset") },
         { type: "separator" },
+        { label: t("menu.resetLayout"), onSelect: () => resetLayout() },
+      ],
+    },
+    {
+      label: t("menu.settings"),
+      entries: [
         {
           label: t("menu.language"),
           children: [
@@ -267,11 +280,15 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
           ],
         },
         { type: "separator" },
-        { label: t("menu.zoomIn"), shortcut: `${shortcutModifier}++`, disabled: uiZoom >= UI_ZOOM_LEVELS[UI_ZOOM_LEVELS.length - 1], onSelect: () => onUiZoom("in") },
-        { label: t("menu.zoomOut"), shortcut: `${shortcutModifier}+-`, disabled: uiZoom <= UI_ZOOM_LEVELS[0], onSelect: () => onUiZoom("out") },
-        { label: t("menu.resetZoom", { percent: uiZoom }), shortcut: `${shortcutModifier}+0`, disabled: uiZoom === 100, onSelect: () => onUiZoom("reset") },
+        {
+          label: t("menu.tabCycleOrder"),
+          children: [
+            { type: "checkbox", label: t("menu.tabCycleSequential"), checked: tabCycleOrder === "sequential", onSelect: () => setTabCycleOrder("sequential") },
+            { type: "checkbox", label: t("menu.tabCycleMru"), checked: tabCycleOrder === "mru", onSelect: () => setTabCycleOrder("mru") },
+          ],
+        },
         { type: "separator" },
-        { label: t("menu.resetLayout"), onSelect: () => resetLayout() },
+        { type: "checkbox", label: t("menu.autostart"), disabled: !isTauri(), checked: autostart, onSelect: toggleAutostart },
       ],
     },
     {
