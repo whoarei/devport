@@ -6,7 +6,7 @@ export const MAX_PRESET_NAME = 60;
 export const MAX_PRESET_COMMAND = 2000;
 const MAX_TIMEOUT_SECS = 86400;
 
-/** 预置命令：名称 + 命令文本 + 运行参数（console 模式 / 超时），双击即对当前选中设备执行。 */
+/** 预置命令：可选名称 + 命令文本 + 运行参数（console 模式 / 超时），双击即对当前选中设备执行。 */
 export interface PresetCommand {
   id: string;
   name: string;
@@ -33,7 +33,7 @@ function normalizePreset(value: unknown): PresetCommand | null {
   const source = value as Record<string, unknown>;
   const name = typeof source.name === "string" ? source.name.trim() : "";
   const command = typeof source.command === "string" ? source.command.trim() : "";
-  if (!name || !command) return null;
+  if (!command) return null;
   return {
     id: typeof source.id === "string" && source.id ? source.id : newPresetId(),
     name: name.slice(0, MAX_PRESET_NAME),
@@ -43,7 +43,7 @@ function normalizePreset(value: unknown): PresetCommand | null {
   };
 }
 
-/** 任意输入逐条校验：丢弃缺名称/命令的条目，去重 id，限制总数。 */
+/** 任意输入逐条校验：丢弃缺命令的条目，名称允许为空，去重 id，限制总数。 */
 export function normalizePresets(value: unknown): PresetCommand[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();

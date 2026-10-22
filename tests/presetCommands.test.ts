@@ -34,17 +34,23 @@ test("normalizePresets returns empty for non-array input", () => {
   assert.deepEqual(normalizePresets({}), []);
 });
 
-test("normalizePresets drops entries without name or command and fills defaults", () => {
+test("normalizePresets drops entries without a command, allows empty names, and fills defaults", () => {
   const presets = normalizePresets([
     { id: "a", name: " cpu ", command: " cat /proc/cpuinfo " },
     { id: "b", name: "", command: "x" },
     { id: "c", name: "no command" },
+    { id: "blank", name: "   ", command: "   " },
     "garbage",
     { id: "d", name: "mem", command: "free -h", consoleMode: "pipe", timeoutSecs: 30 },
+    { id: "whitespace", name: "   ", command: " echo hello " },
+    { id: "missing", command: "pwd" },
   ]);
-  assert.equal(presets.length, 2);
+  assert.equal(presets.length, 5);
   assert.deepEqual(presets[0], { id: "a", name: "cpu", command: "cat /proc/cpuinfo", consoleMode: "pty", timeoutSecs: 0 });
-  assert.deepEqual(presets[1], { id: "d", name: "mem", command: "free -h", consoleMode: "pipe", timeoutSecs: 30 });
+  assert.deepEqual(presets[1], { id: "b", name: "", command: "x", consoleMode: "pty", timeoutSecs: 0 });
+  assert.deepEqual(presets[2], { id: "d", name: "mem", command: "free -h", consoleMode: "pipe", timeoutSecs: 30 });
+  assert.deepEqual(presets[3], { id: "whitespace", name: "", command: "echo hello", consoleMode: "pty", timeoutSecs: 0 });
+  assert.deepEqual(presets[4], { id: "missing", name: "", command: "pwd", consoleMode: "pty", timeoutSecs: 0 });
 });
 
 test("normalizePresets deduplicates ids, clamps values, and generates missing ids", () => {
@@ -78,6 +84,7 @@ test("loadPresets/savePresets round-trip and survive corrupted storage", (t) => 
   const presets = [
     { id: "a", name: "cpu", command: "cat /proc/cpuinfo", consoleMode: "pty" as const, timeoutSecs: 0 },
     { id: "b", name: "logs", command: "dmesg | tail", consoleMode: "pipe" as const, timeoutSecs: 10 },
+    { id: "c", name: "", command: "echo hello\npwd", consoleMode: "pty" as const, timeoutSecs: 0 },
   ];
   savePresets(presets);
   assert.deepEqual(loadPresets(), presets);

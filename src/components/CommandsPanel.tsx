@@ -28,8 +28,8 @@ function PresetEditDialog({ draft, onChange, onSave, onCancel }: {
 }) {
   const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
-  const nameInput = useRef<HTMLInputElement>(null);
-  // draft 每次击键都会换成新对象，不能作为 effect 依赖，否则焦点会一直被抢回名称框；
+  const commandInput = useRef<HTMLTextAreaElement>(null);
+  // draft 每次击键都会换成新对象，不能作为 effect 依赖，否则焦点会一直被抢回命令框；
   // 只在打开 / 关闭（null 与非 null 切换）时处理 showModal / 初始聚焦。
   const open = draft != null;
   useEffect(() => {
@@ -37,12 +37,12 @@ function PresetEditDialog({ draft, onChange, onSave, onCancel }: {
     if (!element) return;
     if (open) {
       if (!element.open) element.showModal();
-      nameInput.current?.focus();
+      commandInput.current?.focus();
     } else if (element.open) {
       element.close();
     }
   }, [open]);
-  const valid = draft != null && draft.name.trim() !== "" && draft.command.trim() !== "";
+  const valid = draft != null && draft.command.trim() !== "";
   return (
     <dialog
       className="preset-dialog"
@@ -57,7 +57,6 @@ function PresetEditDialog({ draft, onChange, onSave, onCancel }: {
       <label>
         {t("commands.nameLabel")}
         <input
-          ref={nameInput}
           placeholder={t("commands.namePlaceholder")}
           value={draft?.name ?? ""}
           onChange={(event) => draft && onChange({ ...draft, name: event.target.value })}
@@ -66,6 +65,7 @@ function PresetEditDialog({ draft, onChange, onSave, onCancel }: {
       <label>
         {t("commands.commandLabel")}
         <textarea
+          ref={commandInput}
           rows={5}
           placeholder={t("commands.commandPlaceholder")}
           value={draft?.command ?? ""}
@@ -164,7 +164,7 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
     if (!draft) return;
     const name = draft.name.trim();
     const command = draft.command.trim();
-    if (!name || !command) return;
+    if (!command) return;
     if (draft.id) {
       update(presets.map((preset) => preset.id === draft.id
         ? { ...preset, name, command, consoleMode: draft.consoleMode, timeoutSecs: draft.timeoutSecs }
@@ -177,7 +177,7 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
 
   const confirmRequest: ConfirmRequest | null = useMemo(() => confirmDelete ? {
     title: t("commands.deleteTitle"),
-    message: t("commands.deleteMessage", { name: confirmDelete.name }),
+    message: t("commands.deleteMessage", { name: confirmDelete.name || confirmDelete.command }),
     confirmLabel: t("commands.deleteConfirm"),
     danger: true,
     onCancel: () => setConfirmDelete(null),
@@ -200,9 +200,9 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
             <li key={preset.id} title={`${preset.command}\n${t("commands.runHint")}`}
               onDoubleClick={() => void runPreset(preset)}
               onContextMenu={(event) => openEntryMenu(event, preset)}>
-              <span className="commands-label">{preset.name}</span>
+              <span className="commands-label">{preset.name || preset.command}</span>
               <span className="commands-meta">
-                {preset.command} · {preset.consoleMode}{preset.timeoutSecs > 0 ? ` · ${preset.timeoutSecs}s` : ""}
+                {preset.name && `${preset.command} · `}{preset.consoleMode}{preset.timeoutSecs > 0 ? ` · ${preset.timeoutSecs}s` : ""}
               </span>
             </li>
           ))}
