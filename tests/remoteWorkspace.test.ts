@@ -16,6 +16,7 @@ import {
   RemoteWorkspaceDialog, isDevicePath, joinDevicePath, parentDevicePath, resolveDeviceWorkspacePath,
 } from "../src/components/RemoteWorkspaceDialog";
 import { transferApi } from "../src/transferApi";
+import { DirectoryListingCache, directoryCompletionQuery, directorySuggestions } from "../src/directoryCompletion";
 
 const sshDevice = (id: string, extra: Partial<DeviceProfile> = {}): DeviceProfile => ({
   id, name: id, is_default: false, transport: "ssh",
@@ -131,13 +132,15 @@ test("remote workspace dialog renders the host picker and the no-device hint", (
   assert.match(empty, /没有可作为工作区宿主的设备/);
   assert.doesNotMatch(empty, /宿主设备/);
 
-  // 有宿主设备：设备下拉 + 路径输入；路径为空时不能打开
+  // 精简目录选择器保留设备、路径和操作，删去重复导航及说明。
   useAppStore.setState({ remoteWorkspaceDialogOpen: true, devices: [sshDevice("d1", { name: "board" })] });
   const html = render();
   assert.match(html, /宿主设备/);
   assert.match(html, /设备上的目录/);
-  assert.match(html, /board · ssh/);
-  assert.match(html, /disabled=""[^>]*>打开</);
+  assert.match(html, /board · SSH/);
+  assert.match(html, /role="combobox"/);
+  assert.match(html, /打开工作区/);
+  assert.doesNotMatch(html, /在设备上就地打开|已选择的目录|支持路径补全/);
 });
 
 /** 取出样式表中某个选择器的规则体（第一个匹配的规则块） */
@@ -152,18 +155,69 @@ test("the directory browser in the dialog is actually scrollable", () => {
   // 否则会被对话框裁掉且无法选择（这类问题只能在浏览器里看出来，
   // 所以这里用样式断言兜底）。
   // 测试以仓库根目录为工作目录运行（esbuild 打包后没有 import.meta.url）
-  const stylesheet = readFileSync("src/styles.css", "utf8");
-  const list = cssRule(stylesheet, ".remote-browser-list");
+  const stylesheet = readFileSync("src/components/RemoteWorkspaceDialog.css", "utf8");
+  const list = cssRule(stylesheet, ".remote-directory-list");
   assert.match(list, /max-height:\s*\d/, "list needs a bounded height");
   assert.match(list, /overflow(-y)?:\s*(auto|scroll)/, "list needs its own scrollbar");
 
   // 内容仍然高于视口时，对话框自身也要能滚动
-  const modal = cssRule(stylesheet, ".modal");
+  const modal = cssRule(stylesheet, ".remote-workspace-dialog");
   assert.match(modal, /max-height:/, "modal needs a height cap");
   assert.match(modal, /overflow:\s*(auto|scroll)/, "modal must scroll instead of clipping");
 
   // 长目录名不撑破布局
-  const item = cssRule(stylesheet, ".remote-browser-list button");
+  const item = cssRule(stylesheet, ".remote-directory-name > span");
   assert.match(item, /text-overflow:\s*ellipsis/);
   assert.match(item, /overflow:\s*hidden/);
+});
+
+test("directory completion splits POSIX, device HOME, Windows and UNC paths at their last component", () => {
+  const remote = deviceWorkspace("d1", "/srv");
+  assert.deepEqual(directoryCompletionQuery(remote, "/srv/pro"), { endpoint: deviceWorkspace("d1", "/srv"), prefix: "pro", windows: false });
+  assert.deepEqual(directoryCompletionQuery(remote, "/srv/"), { endpoint: deviceWorkspace("d1", "/srv"), prefix: "", windows: false });
+  assert.deepEqual(directoryCompletionQuery(remote, "/"), { endpoint: deviceWorkspace("d1", "/"), prefix: "", windows: false });
+  assert.deepEqual(directoryCompletionQuery(remote, "~/pro"), { endpoint: deviceWorkspace("d1", "~/"), prefix: "pro", windows: false });
+  assert.deepEqual(directoryCompletionQuery(localWorkspace("C:\\work"), "C:\\Program Fi"), { endpoint: localWorkspace("C:\\"), prefix: "Program Fi", windows: true });
+  assert.deepEqual(directoryCompletionQuery(localWorkspace("C:/work"), "C:/work/pro"), { endpoint: localWorkspace("C:/work"), prefix: "pro", windows: true });
+  assert.deepEqual(directoryCompletionQuery(localWorkspace("\\\\host\\share"), "\\\\host\\share\\pro"), { endpoint: localWorkspace("\\\\host\\share"), prefix: "pro", windows: true });
+  assert.equal(directoryCompletionQuery(localWorkspace("C:\\"), "\\\\host\\sh"), null);
+  for (const bad of ["", "relative", "/a/../b", "/a/./b", "/a\nb", "C:\\folder"]) assert.equal(directoryCompletionQuery(remote, bad), null, bad);
+});
+
+test("directory suggestions use resolved paths, preserve spaces and skip links and files", () => {
+  const entries = ["project 2", "project 10", "Projects"].map((name) => ({ name, kind: "dir", size: 0, modified: "", mode: null, identity: "" }));
+  const directory = { endpoint: deviceWorkspace("d1", "/real home"), overwrite: true, entries: [...entries,
+    { ...entries[0], name: "project-link", kind: "link" }, { ...entries[0], name: "project.py", kind: "file" }] };
+  assert.deepEqual(directorySuggestions(directory, "pro"), ["/real home/project 2", "/real home/project 10"]);
+  assert.deepEqual(directorySuggestions({ ...directory, endpoint: localWorkspace("C:\\work") }, "PRO", true), ["C:\\work\\project 2", "C:\\work\\project 10", "C:\\work\\Projects"]);
+});
+
+test("completion listings coalesce parent reads, isolate hosts, refresh and retry failures", async (t) => {
+  const calls: unknown[] = [];
+  let fail = false;
+  t.mock.method(transferApi, "list", async (endpoint) => {
+    calls.push(endpoint);
+    if (fail) throw new Error("offline");
+    return { endpoint, entries: [], overwrite: true };
+  });
+  const cache = new DirectoryListingCache();
+  const first = deviceWorkspace("d1", "/srv");
+  const pending = cache.list(first);
+  assert.equal(cache.list(first), pending);
+  await pending;
+  await cache.list(first);
+  assert.equal(calls.length, 1);
+  await cache.list(deviceWorkspace("d2", "/srv"));
+  await cache.list(localWorkspace("/srv"));
+  assert.equal(calls.length, 3);
+  await cache.list(first, true);
+  assert.equal(calls.length, 4);
+  cache.seed({ endpoint: first, entries: [], overwrite: true });
+  await cache.list(first);
+  assert.equal(calls.length, 4);
+  cache.clear(); fail = true;
+  await assert.rejects(cache.list(first), /offline/);
+  fail = false;
+  await cache.list(first);
+  assert.equal(calls.length, 6);
 });

@@ -12,6 +12,7 @@ import { PanelTitle } from "./PanelTitle";
 import { TransferQueue } from "./TransferQueue";
 import { ContextMenu, contextMenuPosition, type MenuEntry, type MenuState } from "./ContextMenu";
 import { TransferFileDialog, type TransferFileRequest } from "./TransferFileDialog";
+import { DirectoryPathInput } from "./DirectoryPathInput";
 import "../fileTransfer.css";
 
 function parentEndpoint(endpoint: WorkspaceRef): WorkspaceRef {
@@ -53,9 +54,9 @@ function Browser({ side, hidden, exclude }: { side: "local" | "device"; hidden: 
     if (!useTransferStore.getState().deviceMutating) setFileRequest(null);
   }, [browser.generation, sourceRevision]);
   const browse = (endpoint: WorkspaceRef) => void useTransferStore.getState().browse(side, endpoint);
-  const submit = () => {
-    if (browser.loading || !path.trim() || (side === "device" && !deviceId)) return;
-    browse(side === "local" ? { type: "local", dir: path } : { type: "device", device_id: deviceId, path });
+  const submit = (value = path) => {
+    if (browser.loading || !value.trim() || (side === "device" && !deviceId)) return;
+    browse(side === "local" ? { type: "local", dir: value } : { type: "device", device_id: deviceId, path: value });
   };
   const chooseFolder = async () => {
     try {
@@ -111,7 +112,10 @@ function Browser({ side, hidden, exclude }: { side: "local" | "device"; hidden: 
     </div>
     <form className="transfer-path" onSubmit={(event) => { event.preventDefault(); if (!deviceMutating) submit(); }}>
       <button type="button" aria-label={t("transfer.up")} title={t("transfer.up")} disabled={!browser.directory || browser.loading || deviceMutating} onClick={() => browser.endpoint && browse(parentEndpoint(browser.endpoint))}>↑</button>
-      <div className="transfer-address"><input aria-label={t("transfer.path")} placeholder={side === "local" ? t("transfer.localPath") : "/home"} value={path} onChange={(event) => setPath(event.target.value)} />
+      <div className="transfer-address"><DirectoryPathInput label={t("transfer.path")} placeholder={side === "local" ? t("transfer.localPath") : "/home"}
+        value={path} onChange={setPath} onNavigate={(value) => { if (!deviceMutating) submit(value); }}
+        endpoint={side === "local" ? { type: "local", dir: path } : deviceId ? { type: "device", device_id: deviceId, path } : null}
+        contextKey={JSON.stringify([side, deviceId, sourceRevision])} directory={browser.directory} disabled={browser.loading || deviceMutating} />
         {side === "local" && <button type="button" aria-label={t("transfer.chooseFolder")} title={t("transfer.chooseFolder")} disabled={browser.loading} onClick={() => void chooseFolder()}>
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 4a1 1 0 0 1 1-1h3l2 2h5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4Z" stroke="currentColor" /></svg>
         </button>}

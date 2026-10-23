@@ -1,188 +1,163 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  deviceWorkspace, errorMessage, isRemoteWorkspaceHost, type WorkspaceEntry,
-  api,
-} from "../api";
+import { deviceWorkspace, errorMessage, isRemoteWorkspaceHost, workspaceRefEquals, type DeviceProfile } from "../api";
+import { canBrowseDevicePath, isDevicePath, joinDevicePath, parentDevicePath } from "../directoryCompletion";
 import { useAppStore } from "../store";
-import { transferApi } from "../transferApi";
+import { transferApi, type TransferDirectory } from "../transferApi";
+import { DirectoryPathInput } from "./DirectoryPathInput";
+import "./RemoteWorkspaceDialog.css";
 
-/** 设备路径的父目录（根目录的上级仍是根目录） */
-export function parentDevicePath(path: string): string {
-  const trimmed = path.replace(/\/+$/, "");
-  const cut = trimmed.lastIndexOf("/");
-  return cut <= 0 ? "/" : trimmed.slice(0, cut);
-}
+export { isDevicePath, joinDevicePath, parentDevicePath } from "../directoryCompletion";
 
-/** 拼接设备上的子目录（posix 语义，根目录不产生双斜杠） */
-export function joinDevicePath(path: string, name: string): string {
-  return `${path.replace(/\/+$/, "")}/${name}`;
-}
-
-/** 与后端 validate_device_path 同规则：绝对路径、无 . / .. 组件、无换行 */
-export function isDevicePath(path: string): boolean {
-  return path.startsWith("/") && !/[\0\r\n]/.test(path) && !path.split("/").some((part) => part === "." || part === "..");
-}
-
-/** Resolve device-setting shorthand before creating an absolute WorkspaceRef. */
+/** Device HOME is resolved by the file service, never inferred from the login name. */
 export async function resolveDeviceWorkspacePath(id: string, path: string): Promise<string> {
   if (!path.startsWith("~/")) return path;
   const directory = await transferApi.list(deviceWorkspace(id, path));
   return directory.endpoint.type === "device" ? directory.endpoint.path : path;
 }
 
-/**
- * 「打开设备工作区」对话框：选宿主设备 + 输入/浏览设备上的目录。
- * 目录浏览用 list_workspace_dir 单层懒加载（后端会建立编辑会话，成功即视为校验通过）。
- */
+function DirectoryIcon({ name = "folder" }: { name?: "folder" | "up" | "go" | "refresh" | "close" | "device" | "next" | "check" }) {
+  const paths = {
+    folder: <path d="M3 7V5h6l3 3h9v12H3V7Z" />,
+    up: <path d="M12 20V4m-6 6 6-6 6 6" />,
+    go: <path d="M4 12h16m-6-6 6 6-6 6" />,
+    refresh: <><path d="M20 6v6h-6" /><path d="M20 12a8 8 0 1 0-2 5" /></>,
+    close: <path d="m6 6 12 12M18 6 6 18" />,
+    device: <><rect x="3" y="3" width="18" height="13" rx="2" /><path d="M8 21h8m-4-5v5" /></>,
+    next: <path d="m9 5 7 7-7 7" />,
+    check: <path d="m5 12 4 4L19 6" />,
+  };
+  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
+}
+
 export function RemoteWorkspaceDialog() {
-  const { t } = useTranslation();
   const open = useAppStore((s) => s.remoteWorkspaceDialogOpen);
   const devices = useAppStore((s) => s.devices);
   const close = useAppStore((s) => s.closeRemoteWorkspaceDialog);
   const hosts = useMemo(() => devices.filter(isRemoteWorkspaceHost), [devices]);
+  return open ? <RemoteWorkspacePicker hosts={hosts} close={close} /> : null;
+}
 
-  const [deviceId, setDeviceId] = useState("");
-  const [path, setPath] = useState("");
-  const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
+function RemoteWorkspacePicker({ hosts, close }: { hosts: DeviceProfile[]; close: () => void }) {
+  const { t } = useTranslation();
+  const initial = hosts.find((device) => device.id === useAppStore.getState().selectedDeviceId) ?? hosts[0];
+  const [deviceId, setDeviceId] = useState(initial?.id ?? "");
+  const [path, setPath] = useState(initial?.workspace_root ?? "/");
+  const [directory, setDirectory] = useState<TransferDirectory | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [opening, setOpening] = useState(false);
-  const wasOpen = useRef(false);
+  const dialog = useRef<HTMLDialogElement>(null);
   const sequence = useRef(0);
+  const edits = useRef(0);
+  const submitting = useRef(false);
+  const mounted = useRef(true);
+  const host = hosts.find((device) => device.id === deviceId);
+  const contextKey = JSON.stringify([deviceId, host]);
+  const currentPath = directory?.endpoint.type === "device" ? directory.endpoint.path : null;
+  const entries = (directory?.entries ?? []).filter((entry) => entry.kind === "dir")
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 
-  // 打开时用宿主设备的默认工作区根作为起点
-  useEffect(() => {
-    if (open && !wasOpen.current) {
-      const first = hosts[0];
-      setDeviceId(first?.id ?? "");
-      setPath(first?.workspace_root ?? "/");
-      setEntries([]);
-      setError(null);
-      setOpening(false);
-    }
-    wasOpen.current = open;
-  }, [open, hosts]);
-
-  const valid = isDevicePath(path);
-  const canBrowse = valid || (path.startsWith("~/") && isDevicePath(path.slice(1)));
-
-  const refresh = useCallback(async (id: string, dir: string) => {
-    const current = ++sequence.current;
+  const navigate = useCallback(async (target: string) => {
+    if (!deviceId || submitting.current) return;
+    const request = ++sequence.current;
+    const edit = ++edits.current;
+    setPath(target); setSelected(null); setDirectory(null); setError(null);
+    if (!canBrowseDevicePath(target)) { setError(t("workspace.remoteNeedAbsolute")); setLoading(false); return; }
     setLoading(true);
-    setError(null);
     try {
-      const resolved = await resolveDeviceWorkspacePath(id, dir);
-      if (current !== sequence.current) return;
-      if (resolved !== dir) {
-        setPath(resolved);
-        return;
-      }
-      const list = await api.listWorkspaceDir(deviceWorkspace(id, resolved), "");
-      if (current !== sequence.current) return;
-      setEntries(list.filter((entry) => entry.is_dir));
+      const result = await transferApi.list(deviceWorkspace(deviceId, target));
+      if (request !== sequence.current) return;
+      if (result.endpoint.type !== "device" || result.endpoint.device_id !== deviceId || !isDevicePath(result.endpoint.path)) throw new Error(t("transfer.directoryChanged"));
+      setDirectory(result);
+      if (edit === edits.current) setPath(result.endpoint.path);
     } catch (e) {
-      // 输入过程中路径可能暂时不存在：保留上一次成功的列表，只提示错误
-      if (current === sequence.current) setError(errorMessage(e));
+      if (request === sequence.current) setError(errorMessage(e));
     } finally {
-      if (current === sequence.current) setLoading(false);
+      if (request === sequence.current) setLoading(false);
     }
-  }, []);
+  }, [deviceId, t]);
 
-  // 路径或设备变化后短暂防抖再列目录，避免逐字符建连
   useEffect(() => {
-    ++sequence.current;
-    if (!open || !deviceId || !canBrowse) {
-      setEntries([]);
-      return;
-    }
-    const timer = setTimeout(() => void refresh(deviceId, path), 400);
-    return () => { clearTimeout(timer); ++sequence.current; };
-  }, [open, deviceId, path, canBrowse, refresh]);
+    mounted.current = true;
+    dialog.current?.showModal();
+    return () => { mounted.current = false; ++sequence.current; };
+  }, []);
+  useEffect(() => {
+    if (host) void navigate(host.workspace_root);
+    else { ++sequence.current; setDirectory(null); setLoading(false); }
+    return () => { ++sequence.current; };
+  }, [contextKey, navigate]);
 
-  if (!open) return null;
-
-  const selectDevice = (id: string) => {
-    const device = hosts.find((item) => item.id === id);
-    setDeviceId(id);
-    setPath(device?.workspace_root ?? "/");
-    setEntries([]);
-    setError(null);
-  };
-
+  const dismiss = () => { if (!submitting.current) close(); };
   const submit = async () => {
-    setOpening(true);
-    setError(null);
+    if (submitting.current || loading || !host || !canBrowseDevicePath(path)) return;
+    submitting.current = true; setOpening(true); setError(null);
     try {
-      await useAppStore.getState().setWorkspace(deviceWorkspace(deviceId, path));
-      close();
+      const chosen = selected && currentPath === path ? joinDevicePath(currentPath, selected) : path;
+      const resolved = await resolveDeviceWorkspacePath(deviceId, chosen);
+      const workspace = deviceWorkspace(deviceId, resolved);
+      await useAppStore.getState().setWorkspace(workspace);
+      // Canceling the unsaved-file guard leaves the picker open.
+      if (mounted.current && workspaceRefEquals(useAppStore.getState().workspace, workspace)) close();
     } catch (e) {
-      setError(errorMessage(e));
+      if (mounted.current) setError(errorMessage(e));
     } finally {
-      setOpening(false);
+      submitting.current = false;
+      if (mounted.current) setOpening(false);
     }
   };
 
-  return (
-    <div className="modal-mask" onClick={close}>
-      <div className="modal" onClick={(event) => event.stopPropagation()}>
-        <h3>{t("workspace.remoteTitle")}</h3>
-        {hosts.length === 0 ? (
-          <p className="field-hint">{t("workspace.remoteNoDevices")}</p>
-        ) : <>
-          <label>
-            {t("workspace.remoteDevice")}
-            <select value={deviceId} onChange={(event) => selectDevice(event.target.value)}>
-              {hosts.map((device) => (
-                <option key={device.id} value={device.id}>{device.name} · {device.transport}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            {t("workspace.remotePath")}
-            <input
-              value={path}
-              placeholder="/home/user/project"
-              onChange={(event) => setPath(event.target.value)}
-            />
-          </label>
-          <div className="remote-browser">
-            <div className="remote-browser-bar">
-              <span className="remote-browser-title">{t("workspace.remoteBrowse")}</span>
-              <button type="button" disabled={!valid || path === "/"} onClick={() => setPath(parentDevicePath(path))}>
-                {t("workspace.remoteUp")}
-              </button>
-              <button type="button" disabled={!canBrowse || loading} onClick={() => void refresh(deviceId, path)}>
-                {t("workspace.remoteRefresh")}
-              </button>
-            </div>
-            {loading && <p className="field-hint">{t("workspace.remoteLoading")}</p>}
-            {!loading && valid && entries.length === 0 && <p className="field-hint">{t("workspace.remoteEmpty")}</p>}
-            <ul className="remote-browser-list">
-              {entries.map((entry) => (
-                <li key={entry.name}>
-                  <button type="button" onClick={() => setPath(joinDevicePath(path, entry.name))}>
-                    📁 {entry.name}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <p className="field-hint">{t("workspace.remoteHint")}</p>
-        </>}
-        <div className="modal-actions">
-          <button type="button" onClick={close}>{t("workspace.remoteCancel")}</button>
-          <button
-            type="button"
-            className="primary"
-            disabled={opening || !deviceId || !valid || !path.trim()}
-            onClick={() => void submit()}
-          >
-            {t("workspace.remoteOpen")}
-          </button>
+  return <dialog ref={dialog} className="remote-workspace-dialog" aria-labelledby="remote-workspace-title"
+    onCancel={(event) => { event.preventDefault(); dismiss(); }}>
+    <header className="remote-workspace-header">
+      <span className="remote-workspace-icon"><DirectoryIcon /></span>
+      <h2 id="remote-workspace-title">{t("workspace.remoteTitle")}</h2>
+      <button type="button" className="remote-icon-button" aria-label={t("workspace.close")} disabled={opening} onClick={dismiss}><DirectoryIcon name="close" /></button>
+    </header>
+    <div className="remote-workspace-body">
+      {!hosts.length ? <p className="remote-directory-status">{t("workspace.remoteNoDevices")}</p> : <>
+        <label htmlFor="remote-workspace-device">{t("workspace.remoteDevice")}</label>
+        <div className="remote-device-control"><DirectoryIcon name="device" />
+          <select id="remote-workspace-device" value={deviceId} disabled={opening} onChange={(event) => {
+            ++sequence.current; ++edits.current; setDirectory(null); setSelected(null); setError(null); setDeviceId(event.target.value);
+          }}>{hosts.map((device) => <option key={device.id} value={device.id}>{device.name} · {device.transport.toUpperCase()}</option>)}</select>
         </div>
-        {error && <pre className="test-result">{error}</pre>}
-      </div>
+        <label htmlFor="remote-workspace-path">{t("workspace.remotePath")}</label>
+        <div className="remote-path-bar">
+          <button type="button" className="remote-icon-button" aria-label={t("workspace.remoteUp")} title={t("workspace.remoteUp")}
+            disabled={opening || loading || !canBrowseDevicePath(path) || path === "/"} onClick={() => void navigate(parentDevicePath(path))}><DirectoryIcon name="up" /></button>
+          <div className="remote-path-control"><DirectoryIcon />
+            <DirectoryPathInput id="remote-workspace-path" label={t("workspace.remotePath")} value={path}
+              endpoint={deviceId ? deviceWorkspace(deviceId, path) : null} contextKey={contextKey} directory={directory}
+              disabled={opening} placeholder={t("workspace.remotePathPlaceholder")}
+              onChange={(value) => { ++edits.current; setPath(value); setSelected(null); setError(null); }} onNavigate={(value) => void navigate(value)} />
+            <button type="button" className="remote-icon-button" aria-label={t("transfer.go")} title={t("transfer.go")} disabled={opening || loading || !canBrowseDevicePath(path)} onClick={() => void navigate(path)}><DirectoryIcon name="go" /></button>
+          </div>
+          <button type="button" className="remote-icon-button" aria-label={t("workspace.remoteRefresh")} title={t("workspace.remoteRefresh")} disabled={opening || loading || !canBrowseDevicePath(path)} onClick={() => void navigate(path)}><DirectoryIcon name="refresh" /></button>
+        </div>
+        <div className="remote-directory-list" aria-busy={loading}>
+          {loading ? <p role="status" className="remote-directory-status">{t("workspace.remoteLoading")}</p>
+            : error ? <p role="alert" className="remote-directory-status remote-directory-error">{error}</p>
+            : directory && !entries.length ? <p className="remote-directory-status">{t("workspace.remoteEmpty")}</p>
+            : <ul aria-label={t("workspace.remoteBrowse")}>
+              {entries.map((entry) => <li key={entry.name} className={selected === entry.name ? "selected" : undefined}>
+                <button type="button" className="remote-directory-name" aria-pressed={selected === entry.name} disabled={opening}
+                  title={entry.name} onClick={() => { setSelected(entry.name); if (currentPath) setPath(currentPath); }}
+                  onDoubleClick={() => currentPath && void navigate(joinDevicePath(currentPath, entry.name))}>
+                  <DirectoryIcon /><span>{entry.name}</span>
+                </button>
+                {selected === entry.name && <DirectoryIcon name="check" />}
+                <button type="button" className="remote-icon-button" aria-label={t("workspace.remoteEnter", { name: entry.name })} disabled={opening} onClick={() => currentPath && void navigate(joinDevicePath(currentPath, entry.name))}><DirectoryIcon name="next" /></button>
+              </li>)}
+            </ul>}
+        </div>
+      </>}
     </div>
-  );
+    <footer className="remote-workspace-footer">
+      <button type="button" disabled={opening} onClick={dismiss}>{t("workspace.remoteCancel")}</button>
+      <button type="button" className="primary" disabled={opening || loading || !host || !canBrowseDevicePath(path)} onClick={() => void submit()}>{t("workspace.remoteOpen")}</button>
+    </footer>
+  </dialog>;
 }
