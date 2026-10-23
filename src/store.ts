@@ -77,8 +77,9 @@ interface AppState {
   renameWorkspaceEntry: (path: WorkspacePath, newName: string) => Promise<boolean>;
   deleteWorkspaceEntry: (path: WorkspacePath, canProceed?: () => boolean) => Promise<boolean>;
   dismissWorkspaceError: () => void;
-  openWorkspaceFile: (name: string, reveal?: boolean) => Promise<void>;
+  openWorkspaceFile: (name: string, options?: { reveal?: boolean; preview?: boolean }) => Promise<void>;
   activateFile: (name: string) => void;
+  pinFile: (name: string) => void;
   editContent: (name: string, content: string) => void;
   setLanguage: (language: EditorLanguage) => void;
   saveFile: (name?: string) => Promise<boolean>;
@@ -443,12 +444,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   dismissWorkspaceError: () => set({ workspaceError: null }),
 
-  openWorkspaceFile: async (name, reveal = true) => {
+  openWorkspaceFile: async (name, { reveal = true, preview = false } = {}) => {
     const workspace = get().workspace;
     if (!workspace || get().saving || get().starting || get().guarding) return;
     // 已打开的文件只激活标签，不重新读盘
     const existing = get().openTabs.find((tab) => tab.name === name);
     if (existing && existing.loaded !== false) {
+      if (!preview) get().pinFile(name);
       get().activateFile(name);
       return;
     }
@@ -457,14 +459,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const doc = await api.readWorkspaceFile(workspace, name);
       if (sequence === loadSequence && workspaceRefEquals(get().workspace, workspace)) {
+        if (existing && !get().openTabs.some((tab) => tab.name === name && tab.generation === existing.generation)) return;
         const draft = existing?.recovery;
         const conflict = !!draft && draft.revision !== doc.revision && draft.content !== doc.content;
         const tab: EditorTab = { name, fileContent: draft?.content ?? doc.content, savedContent: doc.content,
           revision: conflict ? draft!.revision : doc.revision, eol: draft?.eol ?? doc.eol, bom: draft?.bom ?? doc.bom,
           language: existing?.language ?? inferLanguage(name), view: existing?.view, loaded: true,
+          preview: existing ? !!existing.preview && preview : preview,
           conflict, generation: (existing?.generation ?? 0) + 1 };
-        set((s) => ({ openTabs: existing ? s.openTabs.map((old) => old.name === name ? tab : old) : [...s.openTabs, tab],
-          activeFile: name, editorError: conflict ? i18n.t("environment.draftConflict") : null }));
+        set((s) => {
+          // Never replace a draft, even if another caller left its preview flag set.
+          const openTabs = s.openTabs.map((old) => old.preview && dirtyTab(old) ? { ...old, preview: false } : old);
+          if (existing) openTabs.splice(openTabs.findIndex((old) => old.name === name), 1, tab);
+          else {
+            const index = openTabs.findIndex((old) => old.preview);
+            if (index < 0) openTabs.push(tab);
+            else openTabs.splice(index, 1, tab);
+          }
+          return { openTabs, activeFile: name, editorError: conflict ? i18n.t("environment.draftConflict") : null };
+        });
         if (reveal) revealEditor(get);
       }
     } catch (e) {
@@ -479,16 +492,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   activateFile: (name) => {
     if (get().guarding) return;
     if (get().openTabs.some((tab) => tab.name === name)) {
-      if (get().activeFile !== name) { ++loadSequence; set({ loading: false }); }
+      if (get().activeFile !== name || get().loading) { ++loadSequence; set({ loading: false }); }
       set({ activeFile: name, editorError: null });
       revealEditor(get);
       if (get().openTabs.find((tab) => tab.name === name)?.loaded === false) void get().openWorkspaceFile(name);
     }
   },
 
+  pinFile: (name) => {
+    if (get().guarding) return;
+    set((s) => ({ openTabs: withTab(s.openTabs, name, (tab) => tab.preview ? { ...tab, preview: false } : tab) }));
+  },
+
   editContent: (name, content) => {
     if (get().loading || get().starting || get().guarding) return;
-    set((s) => ({ openTabs: withTab(s.openTabs, name, (tab) => ({ ...tab, fileContent: content, discardRecovery: false,
+    set((s) => ({ openTabs: withTab(s.openTabs, name, (tab) => tab.fileContent === content ? tab : ({ ...tab, fileContent: content, preview: false, discardRecovery: false,
       recovery: tab.loaded === false ? tab.recovery : undefined })) }));
   },
   setLanguage: (language) => {
@@ -637,7 +655,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ guarding: false, changePrompt: null });
     }
     const active = get().openTabs.find((tab) => tab.name === get().activeFile);
-    if (active?.loaded === false && active.name !== state.activeFile) await get().openWorkspaceFile(active.name, false);
+    if (active?.loaded === false && active.name !== state.activeFile) await get().openWorkspaceFile(active.name, { reveal: false });
   },
 
   startRun: async (request) => {

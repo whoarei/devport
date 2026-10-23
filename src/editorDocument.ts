@@ -12,6 +12,8 @@ export interface EditorTab {
   language: EditorLanguage;
   conflict: boolean;
   generation: number;
+  /** A clean preview can be replaced by the next file opened from the tree. */
+  preview?: boolean;
   /** Restored descriptors read content only when activated. */
   loaded?: boolean;
   recovery?: import("./environmentState").FileDraft;

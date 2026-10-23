@@ -222,8 +222,9 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
         {state.tabs.map((tab) => (
           <div key={tab.name} role="tab" aria-selected={tab.name === state.activeFile}
             onContextMenu={(event) => openTabMenu(event, tab)}
-            className={`editor-tab${tab.name === state.activeFile ? " active" : ""}`}>
+            className={`editor-tab${tab.name === state.activeFile ? " active" : ""}${tab.preview ? " preview" : ""}`}>
             <button className="editor-tab-label" title={tab.name}
+              onDoubleClick={() => useAppStore.getState().pinFile(tab.name)}
               onClick={() => useAppStore.getState().activateFile(tab.name)}>
               {nameOf(tab.name)}{dirtyTab(tab) ? " ●" : ""}
             </button>

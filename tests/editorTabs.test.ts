@@ -26,6 +26,138 @@ function choose(choice: "save" | "discard" | "cancel", name: string) {
   prompt!.resolve(choice);
 }
 
+function mockFileReads(t: test.TestContext) {
+  t.mock.method(console, "warn", () => {});
+  return t.mock.method(api, "readWorkspaceFile", async (_workspace, name) => ({
+    content: name, revision: "v1", eol: "lf" as const, bom: false,
+  }));
+}
+
+test("tree previews replace one slot while pinned tabs retain their order and identity", async (t) => {
+  const left = tab("left"), right = tab("right");
+  const state = reset(t, [left, { ...tab("preview"), preview: true }, right]);
+  const read = mockFileReads(t);
+  await state.openWorkspaceFile("next", { preview: true });
+  assert.deepEqual(names(), ["left", "next", "right"]);
+  assert.equal(useAppStore.getState().openTabs[1].preview, true);
+  assert.equal(useAppStore.getState().activeFile, "next");
+  await state.openWorkspaceFile("right", { preview: true });
+  assert.equal(useAppStore.getState().openTabs[2], right);
+  assert.equal(useAppStore.getState().openTabs[2].preview, undefined);
+  assert.deepEqual(names(), ["left", "next", "right"]);
+  assert.equal(read.mock.callCount(), 1);
+  await state.openWorkspaceFile("last", { preview: true });
+  assert.deepEqual(names(), ["left", "last", "right"]);
+  assert.equal(useAppStore.getState().openTabs[0], left);
+});
+
+test("double-click opening and pinning preserve content and keep future previews separate", async (t) => {
+  const preview = { ...tab("preview"), preview: true };
+  const state = reset(t, [preview]);
+  const read = mockFileReads(t);
+  await state.openWorkspaceFile("preview");
+  assert.equal(read.mock.callCount(), 0);
+  assert.equal(useAppStore.getState().openTabs[0].preview, false);
+  assert.equal(useAppStore.getState().openTabs[0].generation, preview.generation);
+  await state.openWorkspaceFile("next", { preview: true });
+  state.pinFile("next");
+  await state.openWorkspaceFile("last", { preview: true });
+  assert.deepEqual(names(), ["preview", "next", "last"]);
+  assert.deepEqual(useAppStore.getState().openTabs.map((tab) => tab.preview), [false, false, true]);
+});
+
+test("the first content change pins a preview permanently even after undoing or saving", async (t) => {
+  const state = reset(t, [{ ...tab("preview"), preview: true }]);
+  mockFileReads(t);
+  t.mock.method(api, "writeWorkspaceFile", async () => ({ revision: "v2" }));
+  state.editContent("preview", "preview");
+  assert.equal(useAppStore.getState().openTabs[0].preview, true, "no content change keeps the preview");
+  state.editContent("preview", "edited");
+  assert.equal(useAppStore.getState().openTabs[0].preview, false);
+  state.editContent("preview", "preview");
+  assert.equal(dirtyTab(useAppStore.getState().openTabs[0]), false);
+  assert.equal(useAppStore.getState().openTabs[0].preview, false);
+  state.editContent("preview", "edited again");
+  assert.equal(await state.saveFile("preview"), true);
+  state.editContent("preview", "preview");
+  assert.equal(useAppStore.getState().openTabs[0].preview, false);
+  await state.openWorkspaceFile("next", { preview: true });
+  assert.deepEqual(names(), ["preview", "next"]);
+  assert.equal(useAppStore.getState().openTabs[0].fileContent, "preview");
+});
+
+test("a dirty tab cannot be discarded by preview replacement even if its flag was left set", async (t) => {
+  const state = reset(t, [{ ...tab("draft", true), preview: true }]);
+  mockFileReads(t);
+  await state.openWorkspaceFile("next", { preview: true });
+  assert.deepEqual(names(), ["draft", "next"]);
+  assert.equal(useAppStore.getState().openTabs[0].fileContent, "draft edited");
+  assert.equal(useAppStore.getState().openTabs[0].preview, false);
+});
+
+test("failed preview reads keep the previous preview and content", async (t) => {
+  const preview = { ...tab("preview"), preview: true };
+  const state = reset(t, [preview]);
+  t.mock.method(api, "readWorkspaceFile", async () => { throw new Error("read failed"); });
+  await state.openWorkspaceFile("missing", { preview: true });
+  assert.deepEqual(useAppStore.getState().openTabs, [preview]);
+  assert.equal(useAppStore.getState().activeFile, "preview");
+  assert.equal(useAppStore.getState().loading, false);
+  assert.equal(useAppStore.getState().editorError, "read failed");
+});
+
+test("double-click before the preview finishes loading wins over late preview responses", async (t) => {
+  const state = reset(t, [{ ...tab("previous"), preview: true }]);
+  const reads: (() => void)[] = [];
+  t.mock.method(console, "warn", () => {});
+  t.mock.method(api, "readWorkspaceFile", (_workspace, name) => new Promise((resolve) => {
+    reads.push(() => resolve({ content: name, revision: "v1", eol: "lf" as const, bom: false }));
+  }));
+  const firstClick = state.openWorkspaceFile("slow", { preview: true });
+  const secondClick = state.openWorkspaceFile("slow", { preview: true });
+  const doubleClick = state.openWorkspaceFile("slow");
+  reads[2]();
+  await doubleClick;
+  reads[0](); reads[1]();
+  await Promise.all([firstClick, secondClick]);
+  assert.deepEqual(names(), ["slow"]);
+  assert.equal(useAppStore.getState().openTabs[0].preview, false);
+  assert.equal(useAppStore.getState().loading, false);
+});
+
+test("returning to the active preview cancels a different file still being read", async (t) => {
+  const state = reset(t, [{ ...tab("preview"), preview: true }]);
+  let finish!: () => void;
+  t.mock.method(console, "warn", () => {});
+  t.mock.method(api, "readWorkspaceFile", () => new Promise((resolve) => {
+    finish = () => resolve({ content: "late", revision: "v1", eol: "lf" as const, bom: false });
+  }));
+  const pending = state.openWorkspaceFile("slow", { preview: true });
+  await state.openWorkspaceFile("preview", { preview: true });
+  finish();
+  await pending;
+  assert.deepEqual(names(), ["preview"]);
+  assert.equal(useAppStore.getState().activeFile, "preview");
+  assert.equal(useAppStore.getState().loading, false);
+  assert.equal(useAppStore.getState().openTabs[0].preview, true);
+});
+
+test("a restored tab removed during its read cannot replace a different open tab", async (t) => {
+  const kept = tab("keep");
+  const state = reset(t, [restoredTab({ name: "restored", language: "text" }), kept]);
+  let finish!: () => void;
+  t.mock.method(api, "readWorkspaceFile", () => new Promise((resolve) => {
+    finish = () => resolve({ content: "late", revision: "v1", eol: "lf" as const, bom: false });
+  }));
+  const pending = state.openWorkspaceFile("restored", { reveal: false });
+  useAppStore.setState({ openTabs: [kept], activeFile: "keep" });
+  finish();
+  await pending;
+  assert.deepEqual(useAppStore.getState().openTabs, [kept]);
+  assert.equal(useAppStore.getState().activeFile, "keep");
+  assert.equal(useAppStore.getState().loading, false);
+});
+
 test("all six close scopes use the context tab and visual order, including restored drafts", () => {
   const tabs = [tab("a"), tab("b", true), restoredTab({ name: "c", language: "text" }),
     restoredTab({ name: "d", language: "text", draft: { content: "draft", saved_content: "base", revision: "v1", eol: "lf", bom: false } })];

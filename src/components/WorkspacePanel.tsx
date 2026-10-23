@@ -129,7 +129,7 @@ interface TreeProps {
   /** 打开文件与增删改期间禁用条目点击；目录展开始终可用 */
   disabled: boolean;
   editing: Editing | null;
-  onOpen: (path: WorkspacePath) => void;
+  onOpen: (path: WorkspacePath, preview: boolean) => void;
   onToggle: (path: WorkspacePath) => void;
   onMenu: (event: MouseEvent, dir: WorkspacePath, entry: WorkspaceEntry | null) => void;
   onEditing: (editing: Editing | null) => void;
@@ -218,7 +218,8 @@ function TreeLevel(props: TreeProps) {
                 data-workspace-file={entry.is_dir ? undefined : path}
                 disabled={disabled && !entry.is_dir}
                 aria-expanded={entry.is_dir ? !!child?.expanded : undefined}
-                onClick={() => (entry.is_dir ? onToggle(path) : onOpen(path))}
+                onClick={() => (entry.is_dir ? onToggle(path) : onOpen(path, true))}
+                onDoubleClick={entry.is_dir ? undefined : () => onOpen(path, false)}
                 onContextMenu={(event) => onMenu(event, dir, entry)}
               >
                 <span className="tree-chevron" aria-hidden="true">
@@ -376,7 +377,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
                 openFile={openFile}
                 disabled={disabled}
                 editing={editing}
-                onOpen={(path) => void useAppStore.getState().openWorkspaceFile(path)}
+                onOpen={(path, preview) => void useAppStore.getState().openWorkspaceFile(path, { preview })}
                 onToggle={(path) => void useAppStore.getState().toggleWorkspaceDir(path)}
                 onMenu={openMenu}
                 onEditing={setEditing}

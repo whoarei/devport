@@ -50,7 +50,7 @@ export function createEnvironmentController(storage = { read: api.readWorkEnviro
     schedule();
     // Content reads have priority over restoring the expanded tree. Other tabs
     // keep their descriptors/drafts and read only after explicit activation.
-    if (active) await useAppStore.getState().openWorkspaceFile(active, false);
+    if (active) await useAppStore.getState().openWorkspaceFile(active, { reveal: false });
     const current = () => !stopped && getWorkspaceGeneration() === expectedGeneration && workspaceRefEquals(useAppStore.getState().workspace, saved.workspace);
     if (!current()) return;
     if (!useAppStore.getState().workspaceTree[""]?.loaded) await useAppStore.getState().loadWorkspaceDir("");
