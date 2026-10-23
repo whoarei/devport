@@ -120,6 +120,8 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
   const [autostart, setAutostart] = useState(false);
   const tabCycleOrder = useTerminalStore((state) => state.tabCycleOrder);
   const setTabCycleOrder = useTerminalStore((state) => state.setTabCycleOrder);
+  const copyOnSelect = useTerminalStore((state) => state.copyOnSelect);
+  const setCopyOnSelect = useTerminalStore((state) => state.setCopyOnSelect);
   const terminalState = useTerminalStore(useShallow(state => ({ count: state.tabs.length, shuttingDown: state.shuttingDown, activeTab: state.activeTab })));
   useRunHistoryStore(state => state.busy);
   // Re-evaluate shared command guards when file or run state changes.
@@ -298,6 +300,7 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
             { type: "checkbox", label: t("menu.tabCycleMru"), checked: tabCycleOrder === "mru", onSelect: () => setTabCycleOrder("mru") },
           ],
         },
+        { type: "checkbox", label: t("menu.copyOnSelect"), title: t("menu.copyOnSelectHint"), checked: copyOnSelect, onSelect: () => setCopyOnSelect(!copyOnSelect) },
         { type: "separator" },
         { type: "checkbox", label: t("menu.autostart"), disabled: !isTauri(), checked: autostart, onSelect: toggleAutostart },
       ],

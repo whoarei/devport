@@ -61,6 +61,8 @@ export const en: Messages = {
     file: "File",
     devices: "Devices",
     settings: "Settings",
+    copyOnSelect: "Copy Terminal Selection Automatically",
+    copyOnSelectHint: "Copy to the clipboard after selecting text with the mouse in terminals and the run console",
     openWorkspace: "Open Local Workspace…",
     openRemoteWorkspace: "Open Device Workspace…",
     recentWorkspaces: "Recent Workspaces",
@@ -267,6 +269,7 @@ export const en: Messages = {
     saveBlocked: "A task is preparing, syncing, or stopping; save later",
   },
   terminal: {
+    copyFailed: "Automatic copy failed. Retry with the keyboard shortcut or context menu: {{message}}",
     connecting: "Connecting…",
     connected: "Connected",
     closing: "Closing…",

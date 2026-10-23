@@ -7,6 +7,7 @@ import { useAppStore } from "../src/store";
 import { useTerminalStore } from "../src/terminalStore";
 import { TerminalPage } from "../src/components/TerminalPage";
 import { RunConsole } from "../src/components/RunConsole";
+import { MenuBar } from "../src/components/MenuBar";
 import i18n from "../src/i18n";
 import "../src/styles.css";
 
@@ -15,6 +16,7 @@ const useInputLog = create<{ entries: { target: string; text: string }[] }>(() =
 const record = (target: string, text: string) => useInputLog.setState(state => ({ entries: [...state.entries, { target, text }] }));
 const status = (id: string): TerminalStatus => ({ session_id: id, device_name: "模拟终端", state: "connected", exit_code: null, error: null });
 const output = new Map<string, string>();
+output.set("session-1", "alpha path /tmp/test.py\r\n中文错误：连接失败\r\nlast line\r\n");
 const base64 = (text: string) => btoa(String.fromCharCode(...new TextEncoder().encode(text)));
 api.resizeTerminal = async () => {};
 api.readTerminal = async id => {
@@ -38,6 +40,7 @@ function replaceRun(id: string) {
   useAppStore.getState().setActiveRun(id);
 }
 replaceRun("run-1");
+useAppStore.getState().handleRunEvent({ type: "output", run_id: "run-1", stream: "stdout", data: base64("alpha path /tmp/test.py\r\n中文错误：连接失败\r\nlast line\r\n") });
 
 // Add read latency without changing native paste events, to check focus and stale-session races.
 let clipboardDelay = false;
@@ -54,7 +57,8 @@ function Fixture() {
   const tab = useTerminalStore(state => state.tabs[0]);
   const entries = useInputLog(state => state.entries);
   return <main style={{ height: "100vh", display: "flex", flexDirection: "column", padding: 16, gap: 12 }}>
-    <header>终端粘贴交互验收（模拟接口）</header>
+    <header className="titlebar"><MenuBar uiZoom={100} onUiZoom={() => {}} onAbout={() => {}} onCheckUpdate={() => {}} /></header>
+    <header>终端选择与粘贴交互验收（模拟接口）</header>
     <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
       <input aria-label="粘贴样本文本" defaultValue="paste-check" />
       <button onClick={() => void navigator.clipboard.writeText("paste-check")}>复制测试文本</button>

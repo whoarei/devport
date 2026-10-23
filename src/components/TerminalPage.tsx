@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { api } from "../api";
+import { api, errorMessage } from "../api";
 import i18n from "../i18n";
 import { useAppStore } from "../store";
 import { useTerminalStore, terminalActive, type TerminalTab } from "../terminalStore";
@@ -14,6 +14,7 @@ import { createTerminalReconnectKey } from "../terminalReconnect";
 import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
 import { terminalTheme, useThemeStore } from "../theme";
 import { useCommandUiStore } from "../commandUiStore";
+import { attachTerminalCopyOnSelect } from "../terminalCopyOnSelect";
 
 interface Session {
   id: string;
@@ -32,6 +33,7 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
   const { t } = useTranslation();
   const theme = useThemeStore((state) => state.theme);
   const focus = useCommandUiStore((state) => state.focus);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const container = useRef<HTMLDivElement>(null);
   const view = useRef<View>();
   const fit = useRef<() => void>();
@@ -72,6 +74,12 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
       }).catch(error => { if (instance.session === session) report(error); });
     } };
     view.current = instance;
+    const copyOnSelect = attachTerminalCopyOnSelect(term, {
+      enabled: () => useTerminalStore.getState().copyOnSelect && current.current.visible && view.current === instance,
+      context: () => instance.session?.id,
+      copy: (text) => navigator.clipboard.writeText(text),
+      onResult: (error) => setCopyError(error === null ? null : errorMessage(error)),
+    });
     fit.current = () => {
       if (!current.current.visible || !container.current?.clientWidth || !container.current.clientHeight) return;
       addon.fit();
@@ -103,6 +111,7 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
       return false;
     });
     return () => {
+      copyOnSelect.dispose();
       display.dispose(); subscription.dispose(); titleSubscription.dispose(); observer.disconnect(); term.dispose();
       view.current = undefined; fit.current = undefined;
     };
@@ -191,6 +200,7 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
   const error = tab.error || (!tab.busy ? tab.status?.error : null);
 
   return <section className="terminal-page" role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} hidden={!visible}>
+    {copyError && <div className="terminal-error" role="status">{t("terminal.copyFailed", { message: copyError })}</div>}
     {error && <div className="terminal-error" role="alert">{error}</div>}
     <div className="console-body" ref={container} onContextMenu={openMenu}
       onPasteCapture={() => { if (visible) view.current?.term.focus(); }} />

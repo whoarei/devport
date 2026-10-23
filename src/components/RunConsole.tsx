@@ -14,6 +14,8 @@ import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./Contex
 import { handleRunConsoleKey } from "../runConsoleInput";
 import { terminalTheme, useThemeStore } from "../theme";
 import { useCommandUiStore } from "../commandUiStore";
+import { useTerminalStore } from "../terminalStore";
+import { attachTerminalCopyOnSelect } from "../terminalCopyOnSelect";
 
 /**
  * Run Console：绑定的是“远程进程”的 stdin/stdout/stderr，不是 SSH shell。
@@ -27,6 +29,9 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const replayRef = useRef<ReturnType<typeof createConsoleReplay> | null>(null);
+  const current = useRef({ collapsed });
+  current.current = { collapsed };
+  const [copyError, setCopyError] = useState<string | null>(null);
   const [inputError, setInputError] = useState<{ runId: string; message: string } | null>(null);
 
   const { activeRunId, buffer, activeRun } = useAppStore(useShallow((s) => ({
@@ -64,6 +69,12 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
       (text) => { void navigator.clipboard.writeText(text).catch(() => {}); }));
 
     termRef.current = term;
+    const copyOnSelect = attachTerminalCopyOnSelect(term, {
+      enabled: () => useTerminalStore.getState().copyOnSelect && !current.current.collapsed && termRef.current === term,
+      context: () => useAppStore.getState().activeRunId,
+      copy: (text) => navigator.clipboard.writeText(text),
+      onResult: (error) => setCopyError(error === null ? null : errorMessage(error)),
+    });
     fitRef.current = fit;
     const replay = createConsoleReplay(term, () => {
       const s = useAppStore.getState();
@@ -84,6 +95,7 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
     });
     observer.observe(containerRef.current);
     return () => {
+      copyOnSelect.dispose();
       observer.disconnect();
       input.dispose();
       replay.dispose();
@@ -177,6 +189,7 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
         <code>{activeRun.workspace_sync.destination}</code>
       </div>}
       {inputError?.runId === activeRunId && <div className="terminal-error" role="alert">{t("console.inputFailed", { error: inputError.message })}</div>}
+      {copyError && <div className="terminal-error" role="status">{t("terminal.copyFailed", { message: copyError })}</div>}
       <div ref={containerRef} className={`console-body${collapsed ? " collapsed" : ""}`} onContextMenu={openMenu}
         onPasteCapture={() => { if (!collapsed) termRef.current?.focus(); }} />
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />

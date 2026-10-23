@@ -3,6 +3,7 @@ import { api, errorMessage, type TerminalStatus, type WorkspaceRef } from "./api
 import i18n from "./i18n";
 import { useAppStore } from "./store";
 import { loadTabCycleOrder, saveTabCycleOrder, type TabCycleOrder } from "./tabCycle";
+import { loadCopyOnSelect, saveCopyOnSelect } from "./terminalCopyOnSelect";
 
 /** 最近使用栈：把 id 移到栈顶 */
 const touchMru = (mru: string[], id: string) => [id, ...mru.filter((x) => x !== id)];
@@ -39,6 +40,8 @@ interface TerminalStore {
   /** Ctrl+Tab 切换顺序偏好，持久化于 localStorage */
   tabCycleOrder: TabCycleOrder;
   setTabCycleOrder: (order: TabCycleOrder) => void;
+  copyOnSelect: boolean;
+  setCopyOnSelect: (enabled: boolean) => void;
   select: (id: string) => void;
   /** MRU 会话中的预览选择：只切换活动标签，松开 Ctrl 后再由 select 提交。 */
   previewSelect: (id: string) => void;
@@ -63,6 +66,8 @@ export const useTerminalStore = create<TerminalStore>((set, get) => {
   return {
     tabs: [], activeTab: "run", shuttingDown: false, mru: ["run"], tabCycleOrder: loadTabCycleOrder(),
     setTabCycleOrder: (order) => { saveTabCycleOrder(order); set({ tabCycleOrder: order }); },
+    copyOnSelect: loadCopyOnSelect(),
+    setCopyOnSelect: (enabled) => { saveCopyOnSelect(enabled); set({ copyOnSelect: enabled }); },
     select: (id) => {
       if (id === "run" || get().tabs.some((t) => t.id === id)) set((s) => ({ activeTab: id, mru: touchMru(s.mru, id) }));
     },

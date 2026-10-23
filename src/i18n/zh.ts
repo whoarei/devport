@@ -62,6 +62,8 @@ export const zh = {
     file: "文件",
     devices: "设备",
     settings: "设置",
+    copyOnSelect: "终端选中即复制",
+    copyOnSelectHint: "独立终端和运行控制台完成鼠标选择后自动复制到剪贴板",
     openWorkspace: "打开本机工作区…",
     openRemoteWorkspace: "打开设备工作区…",
     recentWorkspaces: "最近的工作区",
@@ -268,6 +270,7 @@ export const zh = {
     saveBlocked: "任务正在准备、同步或停止，请稍后保存",
   },
   terminal: {
+    copyFailed: "自动复制失败，可使用快捷键或右键菜单重试：{{message}}",
     connecting: "连接中…",
     connected: "已连接",
     closing: "关闭中…",
