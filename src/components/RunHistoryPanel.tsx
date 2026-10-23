@@ -15,9 +15,9 @@ import { shortcutTitle } from "../shortcuts";
 
 export function RunHistoryPanel({ visible, collapsed, onToggleCollapse }: { visible: boolean; collapsed: boolean; onToggleCollapse: () => void }) {
   const { t } = useTranslation();
-  const { runs, workspace } = useAppStore(useShallow(s => ({ runs: s.runs, workspace: s.workspace, updating: s.updating })));
+  const { runs } = useAppStore(useShallow(s => ({ runs: s.runs, updating: s.updating })));
   const state = useRunHistoryStore();
-  const [all, setAll] = useState(false), [menu, setMenu] = useState<MenuState | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const [preview, setPreview] = useState<{ id: string; anchor: DOMRect } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(), hide = useRef<ReturnType<typeof setTimeout>>();
   const tooltipId = useId();
@@ -25,25 +25,24 @@ export function RunHistoryPanel({ visible, collapsed, onToggleCollapse }: { visi
   const close = useCallback(() => { clear(); setPreview(null); }, [clear]);
   const keep = useCallback(() => clearTimeout(hide.current), []);
   const leave = useCallback(() => { clearTimeout(timer.current); hide.current = setTimeout(() => setPreview(null), 100); }, []);
-  useEffect(() => { close(); setMenu(null); return clear; }, [visible, collapsed, workspace, all, close, clear]);
-  const entries = historyEntries(runs, workspace, all);
+  const entries = historyEntries(runs);
+  const empty = entries.length === 0;
+  useEffect(() => { close(); setMenu(null); return clear; }, [visible, collapsed, empty, close, clear]);
   const completed = entries.filter(run => !isActiveRun(run));
   const clearEntry: MenuEntry = {
-    label: t(all ? "runHistory.clearAll" : "runHistory.clearWorkspace"), danger: true,
+    label: t("runHistory.clearAll"), danger: true,
     disabled: state.historyBusy || !completed.length, onSelect: () => void state.clear(completed),
   };
   const hover = (run: RunStatus, anchor: HTMLElement) => {
     clear(); setPreview(null); const rect = (anchor.closest(".run-history-row") ?? anchor).getBoundingClientRect();
     timer.current = setTimeout(() => setPreview({ id: run.run_id, anchor: rect }), 400);
   };
+  if (empty) return null;
   return <div className="run-history-panel" onContextMenu={e => {
     e.preventDefault(); close(); setMenu({ x: e.clientX, y: e.clientY, entries: [clearEntry] });
   }}>
     <PanelTitle title={t("runHistory.title")} collapsed={collapsed} onToggle={onToggleCollapse} />
     {!collapsed && <>
-      <select className="history-scope" aria-label={t("runHistory.title")} value={all ? "all" : "workspace"} onChange={e => { close(); setAll(e.target.value === "all"); }}>
-        <option value="workspace">{t("runHistory.currentWorkspace")}</option><option value="all">{t("runHistory.allWorkspaces")}</option>
-      </select>
       <ul className="run-history-list" onScroll={close}>
         {entries.map(run => <li key={run.run_id} data-shortcut-run-id={run.run_id} className={`run-history-row${state.detailId === run.run_id ? " selected" : ""}`}
           onContextMenu={e => { e.preventDefault(); e.stopPropagation(); close(); setMenu({ x: e.clientX, y: e.clientY, entries: [
@@ -61,7 +60,6 @@ export function RunHistoryPanel({ visible, collapsed, onToggleCollapse }: { visi
               onClick={() => void executeAppCommand("stop", { area: "history", runId: run.run_id })}>■</button> : <RunReplayButton run={run} compact />}
           </div>
         </li>)}
-        {!entries.length && <li className="empty">{t("runHistory.empty")}</li>}
       </ul>
     </>}
     {state.error && <div className="history-error" role="alert">{state.error}</div>}

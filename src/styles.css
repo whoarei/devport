@@ -869,7 +869,6 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .run-replay-button > button:disabled { opacity: .45; cursor: default; }
 .run-replay-button.compact > button { padding: 3px 6px; font-size: 11px; min-height: 26px; }
 .run-history-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; border-top: 1px solid var(--border, #34363f); overflow: hidden; }
-.history-scope { flex-shrink: 0; margin: 2px 8px 5px; max-width: calc(100% - 16px); min-height: 25px; padding: 2px 5px; border: 1px solid var(--border, #34363f); border-radius: 4px; background: var(--surface-control, #23242b); color: var(--text-secondary, #999); font: inherit; font-size: 11px; }
 .run-history-list { list-style: none; margin: 0; padding: 2px 4px 6px; flex: 1; overflow: auto; min-height: 0; }
 .run-history-row { display: flex; align-items: center; gap: 4px; padding: 0 4px; border-radius: 3px; }
 .run-history-row:hover, .run-history-row:focus-within { background: var(--surface-hover, #33353e); }

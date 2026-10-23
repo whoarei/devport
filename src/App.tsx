@@ -31,6 +31,7 @@ import { loadDeletedDeviceEvents } from "./deviceActions";
 import { loadDeletedRunHistoryEvents } from "./runHistoryStore";
 import { handleAppKeyDown } from "./appShortcuts";
 import { ShortcutsDialog } from "./components/ShortcutsDialog";
+import { isExecutionRun } from "./runState";
 
 export default function App() {
   const { t } = useTranslation();
@@ -128,11 +129,12 @@ export default function App() {
   }, []);
 
   const layout = useAppStore((state) => state.layout);
+  const hasRunHistory = useAppStore((state) => Object.values(state.runs).some(isExecutionRun));
   const environmentError = useAppStore((state) => state.environmentError);
   const setLayout = useAppStore((state) => state.setLayout);
   const centerRef = useRef<HTMLDivElement>(null);
 
-  const visible = (id: PanelId) => layout.panelVisible[id];
+  const visible = (id: PanelId) => layout.panelVisible[id] && (id !== "history" || hasRunHistory);
   const collapsed = (id: PanelId) => layout.panelCollapsed[id];
   const toggleCollapse = (id: PanelId) => () => setLayout(panelCollapsePatch(layout, id, !layout.panelCollapsed[id]));
   const setCenterSplit = (ratio: number) =>

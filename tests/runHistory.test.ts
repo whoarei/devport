@@ -113,13 +113,12 @@ test("viewing historical output never replaces the latest console task; delete o
   assert.ok(useAppStore.getState().runs.old); assert.match(useRunHistoryStore.getState().error!, /disk/);
 });
 
-test("history pins all running tasks, filters completed workspaces, and excludes preparation tasks", () => {
+test("history includes every workspace, pins running tasks, and excludes preparation tasks", () => {
   const current = record(), other = record("other"), active = record("active"), prep = record("prep");
   other.replay!.workspace_request!.workspace = localWorkspace("/other"); active.replay!.workspace_request!.workspace = localWorkspace("/other");
   active.state = "running"; prep.replay!.workspace_request!.operation = "prepare"; prep.started_at = "2027";
   const runs = { current, other, active, prep };
-  assert.deepEqual(historyEntries(runs, workspace).map(r => r.run_id), ["active", "old"]);
-  assert.equal(historyEntries(runs, workspace, true).length, 3);
+  assert.deepEqual(historyEntries(runs).map(r => r.run_id), ["active", "old", "other"]);
   assert.notEqual(latestExecution(runs)?.run_id, "prep");
 });
 
@@ -129,9 +128,21 @@ test("toolbar has no task picker; history shows compact actions and hover summar
   assert.doesNotMatch(toolbar, /run-task-select|选择运行中的任务/); assert.match(toolbar, /最后一次任务/); assert.match(toolbar, /重新启动/);
   const panel = renderToStaticMarkup(createElement(RunHistoryPanel, { visible: true, collapsed: false, onToggleCollapse() {} }));
   assert.match(panel, /原设备重跑/); assert.doesNotMatch(panel, /private-value/);
+  assert.doesNotMatch(panel, /<select|当前工作区|全部工作区/);
   const summary = renderToStaticMarkup(createElement(RunHistorySummary, { run: record() }));
   assert.match(summary, /a b/); assert.doesNotMatch(summary, /private-value/);
   assert.equal(decodeHistoryOutput(btoa("\x1b[31mOK\x1b[0m\r\n")), "OK\n");
+  useAppStore.setState({ runs: {} });
+  const renderHistory = () => renderToStaticMarkup(createElement(RunHistoryPanel, { visible: true, collapsed: false, onToggleCollapse() {} }));
+  assert.equal(renderHistory(), "", "empty history has no title, placeholder or list");
+  const prep = record("prep"); prep.replay!.workspace_request!.operation = "prepare";
+  useAppStore.setState({ runs: { prep } });
+  assert.equal(renderHistory(), "", "preparation tasks alone do not show command history");
+  const other = record("other");
+  other.replay!.workspace_request!.workspace = localWorkspace("/other");
+  other.replay!.workspace_request!.command.entry = { type: "python_script", path: "other.py" };
+  useAppStore.setState({ runs: { other } });
+  assert.match(renderHistory(), /other\.py/, "history reappears for a record from any workspace");
 });
 
 test("old records never guess missing run settings", async t => {
@@ -140,7 +151,7 @@ test("old records never guess missing run settings", async t => {
   assert.equal(useRunHistoryStore.getState().draft, null); assert.ok(useRunHistoryStore.getState().error);
 });
 
-test("clear follows the visible workspace scope, preserves active runs, and its event restores the original records", async t => {
+test("clear includes all workspaces, preserves active runs, and its event restores the original records", async t => {
   setup(t);
   const old = record(), other = record("other"), live = { ...record("live"), state: "running", ended_at: null };
   other.replay!.workspace_request!.workspace = localWorkspace("/other");
@@ -148,25 +159,26 @@ test("clear follows the visible workspace scope, preserves active runs, and its 
   useAppStore.setState({ runs: { old, other, live }, history: [old, other], activeRunId: "live" });
   useRunHistoryStore.getState().view("old");
   t.mock.method(api, "archiveRunHistory", async ids => {
-    assert.deepEqual(ids, ["old"]);
+    assert.deepEqual(ids, ["old", "other"]);
     assert.ok(useAppStore.getState().runs.old);
     return { id: "clear", deleted_at: "2026-10-22T06:00:00Z", run_ids: ids };
   });
-  t.mock.method(api, "restoreRunHistory", async id => { assert.equal(id, "clear"); return [old]; });
+  t.mock.method(api, "restoreRunHistory", async id => { assert.equal(id, "clear"); return [old, other]; });
   t.mock.method(api, "getRunHistory", async () => [old, other]);
   t.mock.method(api, "listRunningRuns", async () => [live]);
-  await useRunHistoryStore.getState().clear(historyEntries(useAppStore.getState().runs, workspace));
-  assert.deepEqual(Object.keys(useAppStore.getState().runs), ["other", "live"]);
+  await useRunHistoryStore.getState().clear(historyEntries(useAppStore.getState().runs));
+  assert.deepEqual(Object.keys(useAppStore.getState().runs), ["live"]);
   assert.equal(useRunHistoryStore.getState().detailId, null);
   assert.equal(useAppStore.getState().activeRunId, "live");
   const event = useEventStore.getState().events[0];
   assert.equal(event.timestamp, Date.parse("2026-10-22T06:00:00Z"));
   assert.equal(event.dismissible, false);
-  assert.equal(eventText(event.title), "已移除 1 条历史命令");
+  assert.equal(eventText(event.title), "已移除 2 条历史命令");
   assert.equal(event.message, undefined);
   await useEventStore.getState().runAction(event.id);
   assert.deepEqual(useAppStore.getState().runs.old, old);
   assert.deepEqual(useAppStore.getState().runs.old.replay, old.replay);
+  assert.deepEqual(useAppStore.getState().runs.other, other);
   assert.equal(useAppStore.getState().activeRunId, "live");
   assert.equal(useEventStore.getState().events.length, 0);
 });
@@ -178,7 +190,7 @@ test("clear all skips active and preparation tasks; clear with only active tasks
   prep.replay!.workspace_request!.operation = "prepare";
   useAppStore.setState({ runs: { old: record(), other, live, prep }, history: [record(), other, prep] });
   const archive = t.mock.method(api, "archiveRunHistory", async ids => ({ id: "all", deleted_at: new Date().toISOString(), run_ids: ids }));
-  await useRunHistoryStore.getState().clear(historyEntries(useAppStore.getState().runs, workspace, true));
+  await useRunHistoryStore.getState().clear(historyEntries(useAppStore.getState().runs));
   assert.deepEqual(new Set(archive.mock.calls[0].arguments[0]), new Set(["old", "other"]));
   assert.deepEqual(Object.keys(useAppStore.getState().runs), ["live", "prep"]);
   await useRunHistoryStore.getState().clear([live]);

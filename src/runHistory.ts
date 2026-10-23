@@ -1,5 +1,4 @@
 import type { DeviceProfile, RunReplay, RunStatus, WorkspaceRef } from "./api";
-import { workspaceRefEquals } from "./api";
 import { isActiveRun, isExecutionRun } from "./runState";
 
 export const historyWorkspace = (replay: RunReplay): WorkspaceRef | null => replay.workspace_request?.workspace ?? replay.request.workspace ?? null;
@@ -17,9 +16,8 @@ export const historyPython = (replay: RunReplay) => replay.workspace_request?.py
 export const historyIsPython = (replay: RunReplay) => replay.workspace_request ? replay.workspace_request.command.entry.type !== "bash_script" : replay.request.kind === "python";
 export const historyWorkspacePath = (workspace: WorkspaceRef | null) => !workspace ? "—" : workspace.type === "local" ? workspace.dir : workspace.path;
 
-export function historyEntries(runs: Record<string, RunStatus>, workspace: WorkspaceRef | null, all = false): RunStatus[] {
+export function historyEntries(runs: Record<string, RunStatus>): RunStatus[] {
   return Object.values(runs).filter(isExecutionRun)
-    .filter(run => all || isActiveRun(run) || !run.replay || workspaceRefEquals(historyWorkspace(run.replay), workspace))
     .sort((a, b) => Number(isActiveRun(b)) - Number(isActiveRun(a)) || b.started_at.localeCompare(a.started_at));
 }
 
