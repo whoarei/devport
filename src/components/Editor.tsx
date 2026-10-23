@@ -19,7 +19,7 @@ import { ContextMenu, contextMenuPosition, type MenuEntry, type MenuState } from
 import { nameOf } from "../workspaceTree";
 import { useThemeStore, type Theme } from "../theme";
 import { useCommandUiStore } from "../commandUiStore";
-import { appCommandEnabled, executeAppCommand } from "../appCommands";
+import { executeAppCommand } from "../appCommands";
 import { shortcutLabel, shortcutTitle } from "../shortcuts";
 import { EDITOR_LANGUAGES, isEditorLanguage } from "../editorLanguages";
 import { completeDocumentWords, configureEditorLanguage, editorLanguageIndent } from "../editorLanguageSupport";
@@ -282,10 +282,6 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
               {state.uploadBusy ? t("editor.uploadBusyHint") : ""}
             </span>
             <span className="editor-status-right">
-              <button disabled={!appCommandEnabled("runFile", { area: "editor" })}
-                title={shortcutTitle(t("run.run"), "runFile")} onClick={() => void executeAppCommand("runFile", { area: "editor" })}>{t("run.run")}</button>
-              <button disabled={!appCommandEnabled("runWithArgs", { area: "editor" })}
-                title={shortcutTitle(t("workspaceRun.withArgs"), "runWithArgs")} onClick={() => void executeAppCommand("runWithArgs", { area: "editor" })}>{t("workspaceRun.withArgs")}</button>
               <select ref={languageSelect} aria-label={t("editor.languageAria")} value={active.language} disabled={locked}
                 onChange={(event) => { if (isEditorLanguage(event.target.value)) useAppStore.getState().setLanguage(event.target.value); }}>
                 {EDITOR_LANGUAGES.map(({ id }) => <option key={id} value={id}>{id === "text" ? t("editor.plainText") : t(`editor.languages.${id}`)}</option>)}
