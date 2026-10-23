@@ -75,6 +75,22 @@ test("restart restores descriptors, drafts, editor positions, tree and transfer 
   assert.deepEqual(reads, ["src/main.py", "other.sh"]);
 });
 
+test("new language choices survive session restore, lazy reads and subsequent saves", async (t) => {
+  const env = reset(t), initial = snapshot();
+  // Manual choices intentionally differ from the filename's inferred mode.
+  initial.workspaces[0].files[0].language = "typescript";
+  initial.workspaces[0].files[1].language = "powershell";
+  const c = env.controller(initial);
+  await c.start();
+  assert.deepEqual(useAppStore.getState().openTabs.map((tab) => tab.language), ["typescript", "powershell"]);
+  await useAppStore.getState().openWorkspaceFile("other.sh", { reveal: false });
+  assert.equal(useAppStore.getState().openTabs[1].language, "powershell");
+  useAppStore.getState().setLanguage("yaml");
+  await c.flush();
+  assert.deepEqual(env.saved().workspaces[0].files.map((tab) => tab.language), ["typescript", "yaml"]);
+  assert.equal(env.saved().workspaces[0].files[0].draft?.content, "edited");
+});
+
 test("restored terminal reconnects to its original starting directory with a new session", async (t) => {
   const env = reset(t), c = env.controller(snapshot());
   await c.start();

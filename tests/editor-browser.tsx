@@ -13,7 +13,12 @@ import { rootTree, WORKSPACE_ROOT } from "../src/workspaceTree";
 import { endAppTabCycle, handleAppKeyDown, handleAppKeyUp } from "../src/appShortcuts";
 import { trackEditorTabUsage } from "../src/editorTabCycle";
 import { restoredTab } from "../src/environmentState";
+import i18n from "../src/i18n";
+import { initializeTheme, useThemeStore } from "../src/theme";
 import "../src/styles.css";
+import "../src/theme.css";
+
+initializeTheme();
 
 const files: Record<string, { content: string; revision: string }> = {
   "main.py": { content: '# 温度采集示例\nimport time\n\ndef read_temperature():\n    value = 23.5\n    print(f"温度: {value} °C")\n    return value\n\nif __name__ == "__main__":\n    read_temperature()\n', revision: "1" },
@@ -21,6 +26,13 @@ const files: Record<string, { content: string; revision: string }> = {
   "large.py": { content: '# Long line\ntext = "' + "a".repeat(900_000) + '"\nprint(text)\n', revision: "1" },
   "notes.txt": { content: "普通 UTF-8 文本。\n", revision: "1" },
   "sub/nested.py": { content: "print('子目录脚本')\n", revision: "1" },
+  "App.tsx": { content: 'interface Props {\n  name: string;\n}\n\nexport function Greeting({ name }: Props) {\n  return <div className="greeting">Hello {name}</div>;\n}\n', revision: "1" },
+  "settings.yaml": { content: "server:\n  host: localhost\n  port: 8080\nfeatures:\n  - editor\n  - terminal\n", revision: "1" },
+  "pyproject.toml": { content: '[project]\nname = "editor-fixture"\nversion = "1.0.0"\n', revision: "1" },
+  "Dockerfile": { content: 'FROM python:3.12\nWORKDIR /app\nCOPY . .\nCMD ["python", "main.py"]\n', revision: "1" },
+  "CMakeLists.txt": { content: 'cmake_minimum_required(VERSION 3.20)\nproject(Hello)\nif(ENABLED)\n  message(STATUS "Hello")\nendif()\n', revision: "1" },
+  "profile.ps1": { content: "function Get-Hello {\n    param([string]$Name)\n    Write-Output \"Hello $Name\"\n}\n", revision: "1" },
+  "README.md": { content: '# Example\n\n```python\ndef greet(name):\n    return name\n```\n\n```tsx\nconst view = <div>Hello</div>;\n```\n', revision: "1" },
 };
 const dirs = new Set<string>(["sub"]);
 
@@ -120,6 +132,8 @@ function Fixture() {
   return <div className="app">
     <UnsavedDialog />
     <header style={{ padding: 8, flexShrink: 0 }}>编辑器与文件管理交互验收（模拟文件接口，不连接设备）
+      <button onClick={() => void i18n.changeLanguage(i18n.language === "zh" ? "en" : "zh")}>中文 / English</button>
+      <button onClick={() => useThemeStore.getState().setPreference(useThemeStore.getState().theme === "dark" ? "light" : "dark")}>主题</button>
       <button onClick={() => { const name = useAppStore.getState().activeFile!; files[name] = { content: "# 外部修改\n", revision: String(Number(files[name].revision) + 1) }; }}>模拟外部修改</button>
       <button onClick={() => { for (let i = 0; i < 200; i++) useAppStore.getState().handleRunEvent({ type: "output", run_id: "fixture-run", stream: "stdout", data: btoa("output line\r\n".repeat(50)) }); }}>模拟大量终端输出</button>
       <button onClick={() => { useAppStore.getState().handleRunEvent({ type: "status", status: { run_id: "fixture-run", device_name: "模拟设备", label: "同步中", state: "syncing", exit_code: null, error: null, started_at: "", ended_at: null } }); }}>模拟同步中（禁止改动工作区）</button>

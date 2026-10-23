@@ -12,6 +12,39 @@ use std::{
 
 const LIMIT: u64 = 32 * 1024 * 1024;
 const FILE_LIMIT: usize = 1024 * 1024;
+// Keep aligned with src/editorLanguages.ts (covered by the frontend contract test).
+const EDITOR_LANGUAGES: &[&str] = &[
+    "python",
+    "shell",
+    "powershell",
+    "javascript",
+    "jsx",
+    "typescript",
+    "tsx",
+    "html",
+    "css",
+    "json",
+    "yaml",
+    "toml",
+    "ini",
+    "xml",
+    "markdown",
+    "c",
+    "cpp",
+    "csharp",
+    "java",
+    "go",
+    "rust",
+    "lua",
+    "ruby",
+    "php",
+    "sql",
+    "dockerfile",
+    "cmake",
+    "nginx",
+    "diff",
+    "text",
+];
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Environment {
@@ -149,8 +182,7 @@ impl Environment {
             let mut files = std::collections::HashSet::new();
             for file in &state.files {
                 relative(&file.name, false)?;
-                if !files.insert(&file.name)
-                    || !["python", "shell", "text"].contains(&file.language.as_str())
+                if !files.insert(&file.name) || !EDITOR_LANGUAGES.contains(&file.language.as_str())
                 {
                     return Err(invalid("invalid file record"));
                 }
@@ -298,6 +330,35 @@ mod tests {
             "terminals":[{"id":"tab-1","device_id":"device-1","workspace":{"workspace":{"type":"local","dir":root},"subdir":"src"}}],
             "active_terminal":"tab-1","transfer":{"device_id":"device-1","hidden":true,"exclude":true},
             "window":{"x":-1920,"y":0,"width":1280,"height":800,"maximized":true}})).unwrap()
+    }
+    #[test]
+    fn all_editor_languages_round_trip_with_drafts_and_unknown_modes_are_rejected() {
+        let root = std::env::temp_dir().join(format!("rr-environment-{}", uuid::Uuid::new_v4()));
+        let mut state = sample(&root);
+        for language in EDITOR_LANGUAGES {
+            state.workspaces[0].files[0].language = (*language).into();
+            write(&root, &state).unwrap();
+            let loaded = read(&root).unwrap().unwrap();
+            assert_eq!(loaded.workspaces[0].files[0].language, *language);
+            assert_eq!(
+                loaded.workspaces[0].files[0]
+                    .draft
+                    .as_ref()
+                    .unwrap()
+                    .content,
+                "print('草稿')\n"
+            );
+        }
+        let original = std::fs::read(root.join("work-environment.json")).unwrap();
+        for language in ["", "unknown", "TypeScript", "../python"] {
+            state.workspaces[0].files[0].language = language.into();
+            assert!(write(&root, &state).is_err(), "{language:?}");
+        }
+        assert_eq!(
+            std::fs::read(root.join("work-environment.json")).unwrap(),
+            original
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn snapshots_round_trip_replace_atomically_and_keep_drafts_out_of_the_workspace() {

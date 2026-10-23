@@ -4,12 +4,10 @@ import { useShallow } from "zustand/react/shallow";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers, drawSelection } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { bracketMatching, defaultHighlightStyle, indentOnInput, indentUnit, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
+import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting } from "@codemirror/language";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
-import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
 import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { python } from "@codemirror/lang-python";
-import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 import { getWorkspaceGeneration, useAppStore } from "../store";
@@ -23,26 +21,36 @@ import { useThemeStore, type Theme } from "../theme";
 import { useCommandUiStore } from "../commandUiStore";
 import { appCommandEnabled, executeAppCommand } from "../appCommands";
 import { shortcutLabel, shortcutTitle } from "../shortcuts";
+import { EDITOR_LANGUAGES, isEditorLanguage } from "../editorLanguages";
+import { completeDocumentWords, configureEditorLanguage, editorLanguageIndent } from "../editorLanguageSupport";
 
 function editorTheme(theme: Theme) {
   return [syntaxHighlighting(theme === "dark" ? oneDarkHighlightStyle : defaultHighlightStyle),
     EditorView.theme({}, { dark: theme === "dark" })];
 }
 
-function languageExtension(language: EditorLanguage) {
-  return [language === "python" ? python() : language === "shell" ? StreamLanguage.define(shell) : [],
-    indentUnit.of(language === "shell" ? "  " : "    ")];
+function editorPhrases() {
+  return EditorState.phrases.of({
+    "Fold line": i18n.t("editor.foldLine"), "Unfold line": i18n.t("editor.unfoldLine"),
+    "folded code": i18n.t("editor.foldedCode"), "unfold": i18n.t("editor.unfoldLine"),
+    "Folded lines": i18n.t("editor.foldedLines"), "Unfolded lines": i18n.t("editor.unfoldedLines"), "to": i18n.t("editor.lineRangeTo"),
+    "Completions": i18n.t("editor.completions"),
+  });
 }
 
 function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
   tab: string; language: EditorLanguage; locked: boolean; active: boolean;
   onCursor: (position: string) => void; focusToolbar: () => void;
 }) {
+  const { t } = useTranslation();
   const parent = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const languageConfig = useRef(new Compartment());
   const readOnlyConfig = useRef(new Compartment());
   const themeConfig = useRef(new Compartment());
+  const phraseConfig = useRef(new Compartment());
+  const [languageError, setLanguageError] = useState<EditorLanguage | null>(null);
+  const [languageAttempt, setLanguageAttempt] = useState(0);
   const theme = useThemeStore((state) => state.theme);
   const focus = useCommandUiStore((state) => state.focus);
   const restoreLocation = useRef<(() => void) | null>(null);
@@ -78,11 +86,14 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
         doc: content,
         selection: initial?.view ? { anchor: Math.min(initial.view.anchor, content.length), head: Math.min(initial.view.head, content.length) } : undefined,
         extensions: [
-          lineNumbers(), highlightActiveLine(), highlightActiveLineGutter(), drawSelection(),
+          lineNumbers(), foldGutter(), highlightActiveLine(), highlightActiveLineGutter(), drawSelection(),
           history(), indentOnInput(), bracketMatching(), closeBrackets(),
+          autocompletion({ defaultKeymap: false }),
+          EditorState.languageData.of(() => [{ autocomplete: completeDocumentWords }]),
           search({ top: true }), highlightSelectionMatches(),
           themeConfig.current.of(editorTheme(useThemeStore.getState().theme)),
-          languageConfig.current.of(languageExtension(language)),
+          languageConfig.current.of(editorLanguageIndent(language)),
+          phraseConfig.current.of(editorPhrases()),
           readOnlyConfig.current.of(EditorState.readOnly.of(locked)),
           EditorState.changeFilter.of(() => {
             const state = useAppStore.getState();
@@ -90,7 +101,7 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
           }),
           EditorView.contentAttributes.of({ "aria-label": i18n.t("editor.contentAria", { name: tab }), spellcheck: "false" }),
           keymap.of([
-            ...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...searchKeymap,
+            ...completionKeymap, ...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...searchKeymap, ...foldKeymap,
             { key: "Escape", run: () => { handlers.current.focusToolbar(); return true; } }, indentWithTab,
           ]),
           EditorView.updateListener.of((update) => {
@@ -107,6 +118,9 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
             ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--hover-overlay, #ffffff09)" },
             "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--selection, #324869)" },
             ".cm-panels": { backgroundColor: "var(--surface-raised, #23252d)", color: "var(--text-primary, #ddd)" },
+            ".cm-tooltip": { backgroundColor: "var(--surface-raised, #23252d)", color: "var(--text-primary, #ddd)", borderColor: "var(--border, #2a2b30)" },
+            ".cm-tooltip-autocomplete > ul > li[aria-selected]": { backgroundColor: "var(--selection, #324869)", color: "var(--text-primary, #ddd)" },
+            ".cm-foldPlaceholder": { backgroundColor: "var(--surface-raised, #23252d)", color: "var(--text-secondary, #9ba4b4)", borderColor: "var(--border, #2a2b30)" },
           }),
         ],
       }),
@@ -153,10 +167,21 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
     }
   }, [focus, active]);
 
-  useEffect(() => { view.current?.dispatch({ effects: languageConfig.current.reconfigure(languageExtension(language)) }); }, [language]);
+  useLayoutEffect(() => {
+    setLanguageError(null);
+    if (!view.current) return;
+    return configureEditorLanguage(view.current, languageConfig.current, language, () => setLanguageError(language));
+  }, [language, languageAttempt]);
+  useEffect(() => { view.current?.dispatch({ effects: phraseConfig.current.reconfigure(editorPhrases()) }); }, [t]);
   useEffect(() => { view.current?.dispatch({ effects: readOnlyConfig.current.reconfigure(EditorState.readOnly.of(locked)) }); }, [locked]);
   useEffect(() => { view.current?.dispatch({ effects: themeConfig.current.reconfigure(editorTheme(theme)) }); }, [theme]);
-  return <div className="code-editor" ref={parent} />;
+  return <>
+    {languageError === language && <div className="editor-error" role="status">
+      {t("editor.languageLoadFailed", { language: language === "text" ? t("editor.plainText") : t(`editor.languages.${language}`) })}
+      <button onClick={() => setLanguageAttempt((attempt) => attempt + 1)}>{t("editor.retryLanguage")}</button>
+    </div>}
+    <div className="code-editor" ref={parent} />
+  </>;
 }
 
 export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: boolean; onToggleCollapse?: () => void }) {
@@ -262,8 +287,8 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
               <button disabled={!appCommandEnabled("runWithArgs", { area: "editor" })}
                 title={shortcutTitle(t("workspaceRun.withArgs"), "runWithArgs")} onClick={() => void executeAppCommand("runWithArgs", { area: "editor" })}>{t("workspaceRun.withArgs")}</button>
               <select ref={languageSelect} aria-label={t("editor.languageAria")} value={active.language} disabled={locked}
-                onChange={(event) => useAppStore.getState().setLanguage(event.target.value as EditorLanguage)}>
-                <option value="python">Python</option><option value="shell">Shell</option><option value="text">{t("editor.plainText")}</option>
+                onChange={(event) => { if (isEditorLanguage(event.target.value)) useAppStore.getState().setLanguage(event.target.value); }}>
+                {EDITOR_LANGUAGES.map(({ id }) => <option key={id} value={id}>{id === "text" ? t("editor.plainText") : t(`editor.languages.${id}`)}</option>)}
               </select>
               <span>{cursor} · UTF-8{active.bom ? " BOM" : ""} · {active.eol.toUpperCase()} · {t("editor.escHint")}</span>
             </span>

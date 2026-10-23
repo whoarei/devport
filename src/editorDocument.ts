@@ -1,4 +1,6 @@
-export type EditorLanguage = "python" | "shell" | "text";
+import type { EditorLanguage } from "./editorLanguages";
+export type { EditorLanguage } from "./editorLanguages";
+export { inferLanguage } from "./editorLanguages";
 export type ChangeChoice = "save" | "discard" | "cancel";
 
 /** 一个打开的文件标签：工作区相对路径即标签身份，generation 驱动编辑器 remount */
@@ -19,12 +21,6 @@ export interface EditorTab {
   recovery?: import("./environmentState").FileDraft;
   view?: import("./environmentState").EditorLocation;
   discardRecovery?: boolean;
-}
-
-export function inferLanguage(name: string): EditorLanguage {
-  if (/\.py$/i.test(name)) return "python";
-  if (/\.(sh|bash)$/i.test(name)) return "shell";
-  return "text";
 }
 
 export function dirtyTab(tab: Pick<EditorTab, "fileContent" | "savedContent">): boolean {
