@@ -5,6 +5,8 @@ import { resolve } from "node:path";
 import { api, deviceWorkspace, localWorkspace, type TerminalStatus, type WorkspaceRef } from "../src/api";
 import { useTerminalStore, terminalActive } from "../src/terminalStore";
 import { terminalInput, readTerminal } from "../src/terminalIO";
+import { createTerminalReconnectKey } from "../src/terminalReconnect";
+import { createTerminalDisplay, terminalSessionBoundary } from "../src/terminalDisplay";
 import { loadTabCycleOrder, mruCycleOrder, nextMruId, nextSequentialId } from "../src/tabCycle";
 import { cycleConsoleTab, endConsoleTabCycle, handleConsoleTabKeyDown, handleConsoleTabKeyUp } from "../src/consoleTabs";
 import { terminalCloseTargets } from "../src/terminalTabActions";
@@ -289,6 +291,128 @@ test("StrictMode setup/cleanup does not consume native terminal output", async (
   let calls = 0;
   const stop = readTerminal(async () => { calls++; return { status: status("a"), data: "" }; }, async () => {}, () => {}, () => {});
   stop(); await delay(); assert.equal(calls, 0);
+});
+
+const enterKey = { type: "keydown", key: "Enter", repeat: false, isComposing: false, keyCode: 13,
+  ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, preventDefault() {} };
+
+test("Enter reconnects once and consumes the entire press even when the new session connects immediately", () => {
+  let disconnected = true, calls = 0, prevented = 0;
+  const key = { ...enterKey, preventDefault() { prevented++; } };
+  const handle = createTerminalReconnectKey(() => disconnected, () => { calls++; disconnected = false; });
+  assert.equal(handle(key), false);
+  assert.equal(handle({ ...key, type: "keypress" }), false);
+  assert.equal(handle({ ...key, repeat: true }), false);
+  assert.equal(handle({ ...key, type: "keyup" }), false);
+  assert.equal(calls, 1);
+  assert.equal(prevented, 4);
+  assert.equal(handle(key), true, "a fresh Enter in the connected shell remains normal input");
+  disconnected = true;
+  assert.equal(handle(key), false);
+  assert.equal(calls, 2);
+});
+
+test("reconnect ignores IME confirmation, modifiers, repeats and non-keydown Enter; a failed attempt can retry", () => {
+  let calls = 0, allowed = true;
+  const handle = createTerminalReconnectKey(() => allowed, () => { calls++; });
+  for (const extra of [{ isComposing: true }, { keyCode: 229 }, { repeat: true }, { ctrlKey: true },
+    { shiftKey: true }, { altKey: true }, { metaKey: true }, { type: "keypress" }, { type: "keyup" }, { key: "x" }]) {
+    assert.equal(handle({ ...enterKey, ...extra }), true);
+  }
+  assert.equal(calls, 0);
+  allowed = false;
+  assert.equal(handle(enterKey), true, "connecting, closing, hidden or update-blocked tabs cannot reconnect");
+  allowed = true;
+  assert.equal(handle(enterKey), false);
+  assert.equal(handle({ ...enterKey, type: "keyup" }), false);
+  assert.equal(handle(enterKey), false);
+  assert.equal(calls, 2);
+});
+
+test("reconnect is single-flight through close and open; failed opens remain retryable on the same tab", async t => {
+  const s = reset(t);
+  useTerminalStore.setState({ tabs: [{ id: "tab", deviceId: "device", deviceName: "A", busy: false, status: status("old", "failed") }] });
+  let finishClose!: () => void;
+  const close = t.mock.method(api, "closeTerminal", () => new Promise<void>(resolve => { finishClose = resolve; }));
+  const open = t.mock.method(api, "openTerminal", async () => { throw new Error("Connection refused"); });
+  const pending = s.reconnect("tab");
+  await s.reconnect("tab");
+  assert.equal(close.mock.callCount(), 1);
+  assert.equal(open.mock.callCount(), 0);
+  finishClose();
+  await pending;
+  assert.equal(useTerminalStore.getState().tabs[0].error, "Connection refused");
+  assert.equal(useTerminalStore.getState().tabs[0].busy, false);
+  assert.equal(useTerminalStore.getState().tabs[0].status, undefined);
+  open.mock.mockImplementation(async device => { assert.equal(device, "device"); return status("new"); });
+  await s.reconnect("tab");
+  assert.equal(close.mock.callCount(), 1);
+  assert.equal(useTerminalStore.getState().tabs[0].id, "tab");
+  assert.equal(useTerminalStore.getState().tabs[0].status?.session_id, "new");
+});
+
+test("persistent display serializes old output, session boundary and new output and attributes late OSC titles correctly", async t => {
+  const s = reset(t);
+  useTerminalStore.setState({ tabs: [{ id: "tab", deviceId: "a", deviceName: "A", busy: false, status: status("new") }] });
+  const writes: Array<string | Uint8Array> = [];
+  const callbacks: Array<() => void> = [];
+  const display = createTerminalDisplay({ write(data, done) { writes.push(data); callbacks.push(done); } });
+  const old = display.write("old output", "old");
+  const boundary = terminalSessionBoundary(24, "新会话");
+  const separator = display.write(boundary);
+  const fresh = display.write("new output", "new");
+  assert.deepEqual(writes, ["old output"]);
+  s.setTitle("tab", display.sessionId!, "stale title");
+  assert.equal(useTerminalStore.getState().tabs[0].title, undefined);
+  callbacks.shift()!();
+  assert.equal(display.sessionId, undefined, "local separators cannot update session titles or send replies");
+  callbacks.shift()!();
+  assert.equal(display.sessionId, "new");
+  s.setTitle("tab", display.sessionId!, "new title");
+  callbacks.shift()!();
+  await Promise.all([old, separator, fresh]);
+  assert.deepEqual(writes, ["old output", boundary, "new output"]);
+  assert.equal(useTerminalStore.getState().tabs[0].title, "new title");
+  assert.equal(display.writing, false);
+  display.dispose();
+});
+
+test("closing a display settles pending writes and never writes queued output into a disposed terminal", async () => {
+  const writes: string[] = [];
+  let finish!: () => void;
+  const display = createTerminalDisplay({ write(data, done) { writes.push(String(data)); finish = done; } });
+  const active = display.write("active", "old");
+  const queued = display.write("queued", "new");
+  display.dispose();
+  finish();
+  await Promise.all([active, queued, display.write("late", "new")]);
+  assert.deepEqual(writes, ["active"]);
+});
+
+test("a real xterm keeps the old viewport and separator after the new shell clears its screen and resets input modes", async t => {
+  // xterm's browser bundle can parse output without opening a DOM renderer.
+  const before = Object.getOwnPropertyDescriptor(globalThis, "self");
+  Object.defineProperty(globalThis, "self", { value: globalThis, configurable: true });
+  const { Terminal } = await import("@xterm/xterm");
+  const term = new Terminal({ cols: 60, rows: 4, scrollback: 100 });
+  const display = createTerminalDisplay(term);
+  t.after(() => {
+    display.dispose(); term.dispose();
+    if (before) Object.defineProperty(globalThis, "self", before);
+    else Reflect.deleteProperty(globalThis, "self");
+  });
+  await display.write("old output\r\nlast output\x1b[?1h\x1b[?2004h\x1b]0;unfinished title", "old");
+  assert.equal(term.modes.applicationCursorKeysMode, true);
+  assert.equal(term.modes.bracketedPasteMode, true);
+  await display.write(terminalSessionBoundary(term.rows, "New session"));
+  await display.write("\x1b[2J\x1b[Hnew shell ready", "new");
+  const lines = Array.from({ length: term.buffer.active.length }, (_, i) => term.buffer.active.getLine(i)!.translateToString(true));
+  assert.ok(lines.includes("old output"));
+  assert.ok(lines.includes("last output"));
+  assert.ok(lines.includes("── New session ──"));
+  assert.ok(lines.includes("new shell ready"));
+  assert.equal(term.modes.applicationCursorKeysMode, false);
+  assert.equal(term.modes.bracketedPasteMode, false);
 });
 
 test("tab cycle order preference falls back to sequential on missing or invalid storage", () => {
