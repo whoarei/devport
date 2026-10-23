@@ -21,6 +21,15 @@ export function runPhaseLabel(phase: string): string {
 }
 
 const phase = ["preparing", "syncing", "starting", "running", "stopping"];
+/** Elapsed wall-clock time, including preparation; invalid historical timestamps stay hidden. */
+export function runDuration(start: string, end: string | null, now = Date.now()): string | null {
+  const from = Date.parse(start), to = end ? Date.parse(end) : now;
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+  const seconds = Math.max(0, Math.floor((to - from) / 1000));
+  const s = String(seconds % 60).padStart(2, "0"), minutes = Math.floor(seconds / 60);
+  return minutes < 60 ? `${minutes}:${s}` : `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}:${s}`;
+}
+
 export function newestStatus(current: RunStatus | undefined, incoming: RunStatus): RunStatus {
   if (current && (!isActiveRun(current) || phase.indexOf(current.state) > phase.indexOf(incoming.state) && isActiveRun(incoming))) return current;
   return incoming;

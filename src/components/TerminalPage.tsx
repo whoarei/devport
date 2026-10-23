@@ -30,7 +30,7 @@ interface View {
   clipboard: ReturnType<typeof createTerminalClipboard>;
 }
 
-export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: boolean }) {
+export function TerminalPage({ tab, visible, autoFocus = true }: { tab: TerminalTab; visible: boolean; autoFocus?: boolean }) {
   const { t } = useTranslation();
   const theme = useThemeStore((state) => state.theme);
   const focus = useCommandUiStore((state) => state.focus);
@@ -145,7 +145,7 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
   useEffect(() => {
     if (!visible) return;
     fit.current?.();
-    view.current?.term.focus();
+    if (autoFocus) view.current?.term.focus();
   }, [visible]);
 
   useEffect(() => {

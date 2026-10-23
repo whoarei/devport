@@ -7,6 +7,8 @@ import { useAppStore } from "../store";
 import { ConfirmDialog, ConfirmRequest } from "./ConfirmDialog";
 import { ContextMenu, contextMenuPosition, MenuState } from "./ContextMenu";
 import { PanelTitle } from "./PanelTitle";
+import { Icon } from "./Icon";
+import { deviceDisplayNames } from "../workspacePresentation";
 
 /** 编辑草稿；id 为 null 表示新增 */
 interface PresetDraft {
@@ -103,6 +105,11 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
   const [draft, setDraft] = useState<PresetDraft | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<PresetCommand | null>(null);
+  const launching = useRef(false);
+  const devices = useAppStore((s) => s.devices);
+  const selectedDeviceId = useAppStore((s) => s.selectedDeviceId);
+  const busy = useAppStore((s) => s.starting || s.loading || s.saving || s.guarding || s.updating || s.workspaceMutating);
+  const targetName = selectedDeviceId ? deviceDisplayNames(devices).get(selectedDeviceId) : undefined;
   const report = (error: unknown) => useAppStore.setState({ editorError: errorMessage(error) });
 
   const update = (next: PresetCommand[]) => {
@@ -114,6 +121,7 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
   // 双击直接对当前选中的设备执行；串口设备只有合并输出，强制 pty
   const runPreset = async (preset: PresetCommand) => {
     const state = useAppStore.getState();
+    if (launching.current || state.starting || state.loading || state.saving || state.guarding || state.updating || state.workspaceMutating) return;
     if (!state.selectedDeviceId) {
       useAppStore.setState({ editorError: t("run.selectDeviceFirst") });
       return;
@@ -127,10 +135,13 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
       console_mode: device?.transport === "serial" ? "pty" : preset.consoleMode,
       timeout_secs: preset.timeoutSecs,
     };
+    launching.current = true;
     try {
       await state.startRun(request);
     } catch (error) {
       report(error);
+    } finally {
+      launching.current = false;
     }
   };
 
@@ -138,7 +149,7 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
     event.preventDefault();
     event.stopPropagation();
     const entries = [
-      { label: t("commands.run"), onSelect: () => void runPreset(preset) },
+      { label: t("commands.run"), disabled: busy || !targetName, onSelect: () => void runPreset(preset) },
       {
         label: t("commands.edit"),
         onSelect: () => setDraft({
@@ -148,7 +159,9 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
       },
       { label: t("commands.delete"), danger: true, onSelect: () => setConfirmDelete(preset) },
     ];
-    setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
+    const rect = event.currentTarget.getBoundingClientRect();
+    const keyboard = event.clientX === 0 && event.clientY === 0;
+    setMenu({ ...contextMenuPosition(keyboard ? rect.left : event.clientX, keyboard ? rect.bottom : event.clientY, entries.length), entries });
   };
 
   // 标题栏右键：添加预置命令（与 ＋ 按钮一致）
@@ -192,18 +205,26 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
       <PanelTitle title={t("commands.title")} collapsed={collapsed} onToggle={onToggleCollapse}
         onContextMenu={openTitleMenu}>
         <button type="button" aria-label={t("commands.add")} title={t("commands.add")}
-          onClick={() => setDraft(emptyDraft())}>＋</button>
+          onClick={() => setDraft(emptyDraft())}><Icon name="plus" /></button>
       </PanelTitle>
       {!collapsed && (
         <ul className="commands-list">
           {presets.map((preset) => (
             <li key={preset.id} title={`${preset.command}\n${t("commands.runHint")}`}
-              onDoubleClick={() => void runPreset(preset)}
               onContextMenu={(event) => openEntryMenu(event, preset)}>
+              <div className="commands-content" onDoubleClick={() => void runPreset(preset)}>
               <span className="commands-label">{preset.name || preset.command}</span>
               <span className="commands-meta">
                 {preset.name && `${preset.command} · `}{preset.consoleMode}{preset.timeoutSecs > 0 ? ` · ${preset.timeoutSecs}s` : ""}
               </span>
+              </div>
+              <button type="button" className="command-action command-run" disabled={busy || !targetName}
+                aria-label={t("commands.runOn", { name: preset.name || preset.command, device: targetName ?? t("run.selectDeviceFirst") })}
+                title={targetName ? t("commands.runOn", { name: preset.name || preset.command, device: targetName }) : t("run.selectDeviceFirst")}
+                onClick={(event) => { if (event.detail < 2) void runPreset(preset); }}><Icon name="play" /></button>
+              <button type="button" className="command-action" aria-label={t("commands.more", { name: preset.name || preset.command })}
+                title={t("commands.more", { name: preset.name || preset.command })} aria-haspopup="menu"
+                onClick={(event) => openEntryMenu(event, preset)}><Icon name="more" /></button>
             </li>
           ))}
           {presets.length === 0 && <li className="empty">{t("commands.empty")}</li>}

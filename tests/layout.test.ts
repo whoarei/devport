@@ -14,6 +14,9 @@ import {
   panelCollapsePatch,
   loadLayout,
   saveLayout,
+  centerPanelFractions,
+  resizeCenterPanels,
+  resetCenterPanels,
 } from "../src/layoutState";
 import { PANELS, panelsInDock } from "../src/panels/registry";
 import { useAppStore } from "../src/store";
@@ -48,7 +51,7 @@ test("panel flags cover every registered panel and default to visible", () => {
     assert.equal(DEFAULT_LAYOUT.panelVisible[panel.id], panel.defaultVisible);
     assert.equal(DEFAULT_LAYOUT.panelCollapsed[panel.id], false);
   }
-  assert.deepEqual(Object.keys(DEFAULT_LAYOUT.splits), ["center"]);
+  assert.deepEqual(Object.keys(DEFAULT_LAYOUT.splits), ["center", "panels"]);
   assert.deepEqual(panelsInDock("center").map((panel) => panel.id), ["editor", "console", "transfer"]);
 });
 
@@ -220,4 +223,37 @@ test("store setLayout merges patches, normalizes, and persists", (t) => {
   resetLayout();
   assert.deepEqual(useAppStore.getState().layout, DEFAULT_LAYOUT);
   assert.deepEqual(loadLayout(), DEFAULT_LAYOUT);
+});
+
+test("legacy split ratios migrate to independent center panel weights", () => {
+  const migrated = normalizeLayout({ splits: { center: 0.3 } });
+  assert.deepEqual(centerPanelFractions(migrated, ["editor", "console"]), [0.3, 0.7]);
+  const invalid = normalizeLayout({ splits: { panels: { editor: NaN, console: -3, transfer: Infinity, unknown: 1 } } });
+  assert.equal(invalid.splits.panels.editor, 0.6);
+  assert.equal(invalid.splits.panels.console, 0.001);
+  assert.equal(invalid.splits.panels.transfer, 0.5);
+  assert.equal("unknown" in invalid.splits.panels, false);
+});
+
+test("three-panel resize conserves adjacent space and hidden-panel preferences", () => {
+  const ids = ["editor", "console", "transfer"] as const;
+  const resized = normalizeLayout({ ...DEFAULT_LAYOUT, ...resizeCenterPanels(DEFAULT_LAYOUT, [...ids], 1, 0.1) });
+  const before = centerPanelFractions(DEFAULT_LAYOUT, [...ids]), after = centerPanelFractions(resized, [...ids]);
+  assert.ok(Math.abs(after[0] - before[0] - 0.1) < 1e-9);
+  assert.ok(Math.abs(after[1] - before[1] + 0.1) < 1e-9);
+  assert.equal(resized.splits.panels.transfer, DEFAULT_LAYOUT.splits.panels.transfer);
+  const extreme = normalizeLayout({ ...resized, ...resizeCenterPanels(resized, [...ids], 2, -999) });
+  assert.ok(centerPanelFractions(extreme, [...ids])[1] >= 0.12 - 1e-9);
+  const hidden = normalizeLayout({ ...resized, ...resizeCenterPanels(resized, ["editor", "transfer"], 1, 0.05) });
+  assert.equal(hidden.splits.panels.console, resized.splits.panels.console);
+  assert.deepEqual(resizeCenterPanels(resized, [...ids], 0, 1), {});
+});
+
+test("center split reset restores proportions without moving the third panel", () => {
+  const ids = ["editor", "console", "transfer"] as const;
+  const moved = normalizeLayout({ ...DEFAULT_LAYOUT, ...resizeCenterPanels(DEFAULT_LAYOUT, [...ids], 1, -0.1) });
+  const reset = normalizeLayout({ ...moved, ...resetCenterPanels(moved, [...ids], 1) });
+  const fractions = centerPanelFractions(reset, [...ids]);
+  assert.ok(Math.abs(fractions[0] / (fractions[0] + fractions[1]) - 0.6) < 1e-9);
+  assert.equal(reset.splits.panels.transfer, DEFAULT_LAYOUT.splits.panels.transfer);
 });

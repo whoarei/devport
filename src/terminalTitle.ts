@@ -1,14 +1,17 @@
 import type { DeviceProfile } from "./api";
 import type { TerminalTab } from "./terminalStore";
+import { compactDeviceName } from "./workspacePresentation";
 
 /** OSC 标题是自由文本；只压缩明确的程序路径和 user@host:目录，不据此推断 cwd。 */
 export function terminalTabLabel(
   tab: Pick<TerminalTab, "title" | "deviceName">,
   device?: Pick<DeviceProfile, "name" | "transport">,
+  displayName?: string,
 ): string {
-  const deviceName = device?.name.trim() || tab.deviceName;
+  const fullDeviceName = device?.name.trim() || tab.deviceName;
+  const deviceName = displayName ?? compactDeviceName(fullDeviceName, device?.transport);
   const title = tab.title?.trim();
-  if (!title) return deviceName;
+  if (!title || title === fullDeviceName) return deviceName;
   const remote = device?.transport === "ssh" || device?.transport === "wsl";
   const withDevice = (label: string) => remote && label !== deviceName ? `${deviceName} · ${label}` : label;
 

@@ -69,15 +69,17 @@ test("theme survives invalid or unavailable storage and receives preference chan
   assert.equal(env.document.documentElement.dataset.theme, "dark");
 });
 
-test("light terminal foreground and ANSI colors stay readable on its background", () => {
-  const colors = terminalTheme("light");
+test("terminal foreground and ANSI colors stay readable in both themes", () => {
   const luminance = (hex: string) => {
     const channels = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
       .map((c) => c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4);
     return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
   };
-  const background = luminance(colors.background!);
-  for (const key of ["foreground", "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white", "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"] as const) {
-    assert.ok((background + .05) / (luminance(colors[key]!) + .05) >= 4.5, key);
+  for (const theme of ["light", "dark"] as const) {
+    const colors = terminalTheme(theme), background = luminance(colors.background!);
+    for (const key of ["foreground", "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white", "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"] as const) {
+      const foreground = luminance(colors[key]!);
+      assert.ok((Math.max(background, foreground) + .05) / (Math.min(background, foreground) + .05) >= 4.5, `${theme}: ${key}`);
+    }
   }
 });

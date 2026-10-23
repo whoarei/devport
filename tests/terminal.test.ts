@@ -11,6 +11,8 @@ import { loadTabCycleOrder, mruCycleOrder, nextMruId, nextSequentialId } from ".
 import { cycleConsoleTab, endConsoleTabCycle, handleConsoleTabKeyDown, handleConsoleTabKeyUp } from "../src/consoleTabs";
 import { terminalCloseTargets } from "../src/terminalTabActions";
 import { terminalTabLabel } from "../src/terminalTitle";
+import { compactDeviceName, deviceDisplayNames, workspacePresentation } from "../src/workspacePresentation";
+import { tabNavigationTarget, revealActiveTab } from "../src/tabStrip";
 import { useAppStore } from "../src/store";
 import i18n from "../src/i18n";
 
@@ -20,6 +22,38 @@ test.before(async () => { await i18n.changeLanguage("zh"); });
 const status = (id: string, state: TerminalStatus["state"] = "connected"): TerminalStatus =>
   ({ session_id: id, device_name: id, state, exit_code: null, error: null });
 const delay = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
+test("device labels disambiguate WSL users and duplicate custom names", () => {
+  const names = deviceDisplayNames([
+    { id: "a", name: "wsl-root@Ubuntu", transport: "wsl" },
+    { id: "b", name: "wsl-dev@Ubuntu", transport: "wsl" },
+    { id: "c", name: "Host", transport: "ssh" },
+    { id: "d", name: "Host", transport: "ssh" },
+    { id: "e", name: "Host · 2", transport: "ssh" },
+  ]);
+  assert.equal(names.get("a"), "wsl-root@Ubuntu");
+  assert.equal(names.get("b"), "wsl-dev@Ubuntu");
+  assert.equal(names.get("d"), "Host · 3");
+  assert.equal(new Set(names.values()).size, 5);
+});
+
+test("tab keyboard navigation wraps, supports endpoints, and ignores unrelated keys", () => {
+  assert.equal(tabNavigationTarget(["a", "b", "c"], "c", "ArrowRight"), "a");
+  assert.equal(tabNavigationTarget(["a", "b", "c"], "a", "ArrowLeft"), "c");
+  assert.equal(tabNavigationTarget(["a", "b"], "b", "Home"), "a");
+  assert.equal(tabNavigationTarget(["a", "b"], "a", "End"), "b");
+  assert.equal(tabNavigationTarget([], "a", "Home"), undefined);
+  assert.equal(tabNavigationTarget(["a"], "a", "Tab"), undefined);
+});
+
+test("active tabs reveal horizontally in CSS zoom coordinates with minimal movement", () => {
+  const strip = { clientWidth: 200, offsetWidth: 200, clientLeft: 0, scrollLeft: 0,
+    getBoundingClientRect: () => ({ left: 100, width: 300 }) } as unknown as HTMLElement;
+  const tab = (left: number, right: number) => ({ getBoundingClientRect: () => ({ left, right, width: right - left }) }) as HTMLElement;
+  revealActiveTab(strip, tab(320, 430)); assert.equal(strip.scrollLeft, 20);
+  revealActiveTab(strip, tab(90, 150)); assert.ok(Math.abs(strip.scrollLeft - 13.3333333333) < 1e-8);
+  const current = strip.scrollLeft;
+  revealActiveTab(strip, tab(150, 250)); assert.equal(strip.scrollLeft, current);
+});
 function reset(t: test.TestContext) {
   endConsoleTabCycle();
   const before = useTerminalStore.getState();
@@ -69,6 +103,19 @@ test("SSH and WSL labels retain the configured device identity and do not repeat
   assert.equal(terminalTabLabel({ ...tab, title: String.raw`C:\tools\pwsh.exe` }, { name: "Windows", transport: "ssh" }), "Windows · pwsh");
 });
 
+test("generated device names compact without changing custom names or source paths", () => {
+  const device = { id: "ubuntu", name: "wsl-dev@Ubuntu-24.04", transport: "wsl" as const };
+  assert.equal(terminalTabLabel({ deviceName: device.name, title: "dev@workstation:~/project/tools" }, device), "Ubuntu-24.04 · tools");
+  assert.equal(terminalTabLabel({ deviceName: device.name, title: device.name }, device), "Ubuntu-24.04");
+  assert.equal(compactDeviceName("ssh-dev@[fd00::1]", "ssh"), "dev@[fd00::1]");
+  assert.equal(compactDeviceName("ssh-lab", "ssh"), "ssh-lab");
+  assert.equal(compactDeviceName("我的开发环境", "wsl"), "我的开发环境");
+  assert.deepEqual(workspacePresentation({ type: "device", device_id: "ubuntu", path: "/home/dev/project/" }, [device]),
+    { name: "project", path: "/home/dev/project/", device: "Ubuntu-24.04", transport: "wsl" });
+  assert.equal(workspacePresentation({ type: "local", dir: "C:\\" }, []).name, "C:\\");
+  assert.equal(workspacePresentation({ type: "local", dir: "/" }, []).name, "/");
+});
+
 test("compacting a terminal label keeps the full original title available for hover and rejects stale sessions", async (t) => {
   const s = reset(t);
   t.mock.method(api, "openTerminal", async (id) => status(id));
@@ -101,7 +148,7 @@ test("terminal page does not restore the duplicate status and close toolbar", ()
 test("terminal quick-add targets the default device and keeps a separate device picker", () => {
   const component = readFileSync(resolve("src/components/ConsolePanel.tsx"), "utf8");
   assert.match(component, /defaultDevice = devices\.find\(\(device\) => device\.is_default\)/);
-  assert.match(component, /onClick=\{\(\) => void executeAppCommand\("newTerminal"\)\}>＋<\/button>/);
+  assert.match(component, /onClick=\{\(\) => void executeAppCommand\("newTerminal"\)\}/);
   assert.match(component, /className="terminal-device-picker"/);
   assert.match(component, /aria-label=\{t\("console\.chooseTerminalDevice"\)\}/);
 });

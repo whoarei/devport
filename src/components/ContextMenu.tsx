@@ -31,6 +31,7 @@ function MenuItem({ entry, disabled, close }: {
   const [subOpen, setSubOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const sub = useRef<HTMLDivElement>(null);
+  const focusSubmenu = useRef(false);
   const itemDisabled = disabled || entry.disabled;
   // .context-menu 带 overflow-y: auto（长菜单可滚动），会裁剪 absolute 定位的子菜单，
   // 所以子菜单改用 fixed 按视口坐标展开，并在右缘 / 下缘越界时翻转
@@ -44,8 +45,13 @@ function MenuItem({ entry, disabled, close }: {
     if (left + rect.width > window.innerWidth - 8) left = Math.max(8, anchor.left - rect.width + 2);
     let top = anchor.top - 5;
     if (top + rect.height > window.innerHeight - 8) top = Math.max(8, window.innerHeight - 8 - rect.height);
-    element.style.left = `${left}px`;
-    element.style.top = `${top}px`;
+    const scale = rect.width / element.offsetWidth || 1;
+    element.style.left = `${left / scale}px`;
+    element.style.top = `${top / scale}px`;
+    if (focusSubmenu.current) {
+      element.querySelector<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)')?.focus();
+      focusSubmenu.current = false;
+    }
   }, [subOpen]);
   if (entry.children) {
     return (
@@ -62,13 +68,24 @@ function MenuItem({ entry, disabled, close }: {
           aria-expanded={subOpen}
           className="menu-item"
           disabled={itemDisabled}
+          onClick={() => { focusSubmenu.current = true; setSubOpen(!subOpen); }}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowRight") return;
+            event.preventDefault(); event.stopPropagation();
+            focusSubmenu.current = true; setSubOpen(true);
+          }}
         >
           <span className="menu-check" aria-hidden="true" />
           <span className="menu-label">{entry.label}</span>
           <span className="menu-arrow" aria-hidden="true">▸</span>
         </button>
         {subOpen && (
-          <div className="menu-dropdown menu-subdropdown context-submenu" role="menu" ref={sub}>
+          <div className="menu-dropdown menu-subdropdown context-submenu" role="menu" ref={sub}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "Escape") return;
+              event.preventDefault(); event.stopPropagation(); setSubOpen(false);
+              wrap.current?.querySelector<HTMLButtonElement>(":scope > button")?.focus();
+            }}>
             {entry.children.map((child, index) => child === "separator"
               ? <div key={index} className="menu-separator" role="separator" />
               : <MenuItem key={index} entry={child} disabled={disabled} close={close} />)}
@@ -105,8 +122,9 @@ export function ContextMenu({ menu, disabled, onClose }: {
     const reposition = () => {
       const { width, height } = element.getBoundingClientRect();
       const margin = 8;
-      element.style.left = `${Math.max(margin, Math.min(menu.x, window.innerWidth - width - margin))}px`;
-      element.style.top = `${Math.max(margin, Math.min(menu.y, window.innerHeight - height - margin))}px`;
+      const scale = width / element.offsetWidth || 1;
+      element.style.left = `${Math.max(margin, Math.min(menu.x, window.innerWidth - width - margin)) / scale}px`;
+      element.style.top = `${Math.max(margin, Math.min(menu.y, window.innerHeight - height - margin)) / scale}px`;
     };
     // 首次绘制前定位，并跟随窗口、字体及换行造成的尺寸变化。
     reposition();
@@ -118,6 +136,16 @@ export function ContextMenu({ menu, disabled, onClose }: {
       window.removeEventListener("resize", reposition);
     };
   }, [menu]);
+  const open = menu !== null;
+  useLayoutEffect(() => {
+    const element = container.current;
+    if (!open || !element) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    element.querySelector<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)')?.focus();
+    return () => {
+      if (element.contains(document.activeElement) || document.activeElement === document.body) opener?.focus();
+    };
+  }, [open]);
   useEffect(() => {
     if (!menu) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -133,7 +161,18 @@ export function ContextMenu({ menu, disabled, onClose }: {
   }, [menu, onClose]);
   if (!menu) return null;
   return (
-    <div className="menu-dropdown context-menu" role="menu" ref={container} style={{ left: menu.x, top: menu.y }}>
+    <div className="menu-dropdown context-menu" role="menu" ref={container} style={{ left: menu.x, top: menu.y }}
+      onKeyDown={(event) => {
+        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+        const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)'))
+          .filter((item) => item.closest('[role="menu"]') === (event.target as HTMLElement).closest('[role="menu"]'));
+        if (!items.length) return;
+        event.preventDefault(); event.stopPropagation();
+        const index = items.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+          : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+        items[next]?.focus();
+      }}>
       {menu.entries.map((entry, index) => entry === "separator"
         ? <div key={index} className="menu-separator" role="separator" />
         : <MenuItem key={index} entry={entry} disabled={disabled} close={onClose} />)}

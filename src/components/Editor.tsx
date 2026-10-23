@@ -23,6 +23,9 @@ import { executeAppCommand } from "../appCommands";
 import { shortcutLabel, shortcutTitle } from "../shortcuts";
 import { EDITOR_LANGUAGES, isEditorLanguage } from "../editorLanguages";
 import { completeDocumentWords, configureEditorLanguage, editorLanguageIndent } from "../editorLanguageSupport";
+import { FileIcon, Icon } from "./Icon";
+import { EmptyState } from "./EmptyState";
+import { tabNavigationTarget, useRevealActiveTab } from "../tabStrip";
 
 function editorTheme(theme: Theme) {
   return [syntaxHighlighting(theme === "dark" ? oneDarkHighlightStyle : defaultHighlightStyle),
@@ -197,6 +200,10 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
     workspace: WorkspaceRef | null; workspaceGeneration: number; sourceRevision: string | null;
   } | null>(null);
   const languageSelect = useRef<HTMLSelectElement>(null);
+  const tabStrip = useRef<HTMLDivElement>(null);
+  useRevealActiveTab(tabStrip, state.activeFile);
+  const tabId = (name: string) => `editor-tab-${encodeURIComponent(name)}`;
+  const panelId = (name: string) => `editor-panel-${encodeURIComponent(name)}`;
   const locked = state.loading || state.starting || state.guarding;
   const active = state.tabs.find((tab) => tab.name === state.activeFile);
   const closeLocked = locked || state.saving || state.workspaceMutating;
@@ -240,22 +247,35 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
       {active?.conflict && <button disabled={locked || state.saving} onClick={() => void useAppStore.getState().reloadFile()}>{t("editor.reloadDisk")}</button>}
       {active?.loaded === false && <button disabled={locked} onClick={() => void useAppStore.getState().openWorkspaceFile(active.name)}>{t("environment.retry")}</button>}
     </div>}
-    {state.tabs.length === 0 ? <p>{state.loading ? t("editor.opening") : t("editor.placeholder")}</p> : <>
-      <div className="editor-tabs center-panel-header" role="tablist" aria-label={t("editor.openTabs")}>
-        <button className="editor-collapse center-panel-collapse" aria-label={collapsed ? t("editor.expand") : t("editor.collapse")} aria-expanded={!collapsed}
-          title={collapsed ? t("editor.expand") : t("editor.collapse")} onClick={onToggleCollapse}>{collapsed ? "▸" : "▾"}</button>
+    {state.tabs.length === 0 ? <EmptyState icon="code" title={state.loading ? t("editor.opening") : t("editor.emptyTitle")} description={t("editor.placeholder")}>
+      {state.workspace ? <span className="empty-state-shortcut">{t("editor.previewHint")}</span> : <span className="empty-state-shortcut"><kbd>{shortcutLabel("openWorkspace")}</kbd>{t("shortcuts.openWorkspace")}</span>}
+    </EmptyState> : <>
+      <div ref={tabStrip} className="editor-tabs center-panel-header" role="tablist" aria-label={t("editor.openTabs")} onKeyDown={(event) => {
+        if (event.altKey || event.ctrlKey || event.metaKey || (event.target as HTMLElement).getAttribute("role") !== "tab") return;
+        const next = tabNavigationTarget(state.tabs.map((tab) => tab.name), state.activeFile ?? "", event.key);
+        if (!next) return;
+        event.preventDefault();
+        useAppStore.getState().activateFile(next);
+        const selected = useAppStore.getState().activeFile;
+        if (selected) document.getElementById(tabId(selected))?.focus();
+      }}>
+        <button className="editor-collapse center-panel-collapse" data-tab-strip-inset aria-label={collapsed ? t("editor.expand") : t("editor.collapse")} aria-expanded={!collapsed}
+          title={collapsed ? t("editor.expand") : t("editor.collapse")} onClick={onToggleCollapse}><Icon name={collapsed ? "chevronRight" : "chevronDown"} /></button>
         {state.tabs.map((tab) => (
-          <div key={tab.name} role="tab" aria-selected={tab.name === state.activeFile}
+          <div key={tab.name} data-active-tab={tab.name === state.activeFile}
             onContextMenu={(event) => openTabMenu(event, tab)}
             className={`editor-tab${tab.name === state.activeFile ? " active" : ""}${tab.preview ? " preview" : ""}`}>
-            <button className="editor-tab-label" title={tab.name}
+            <button className="editor-tab-label" role="tab" id={tabId(tab.name)} aria-controls={panelId(tab.name)} aria-selected={tab.name === state.activeFile} tabIndex={tab.name === state.activeFile ? 0 : -1} title={tab.name}
               onDoubleClick={() => useAppStore.getState().pinFile(tab.name)}
-              onClick={() => useAppStore.getState().activateFile(tab.name)}>
-              {nameOf(tab.name)}{dirtyTab(tab) ? " ●" : ""}
+              onClick={() => {
+                useAppStore.getState().activateFile(tab.name);
+                if (useAppStore.getState().activeFile === tab.name) useCommandUiStore.setState({ focus: "editor" });
+              }}>
+              <FileIcon name={tab.name} /><span>{nameOf(tab.name)}</span>{dirtyTab(tab) && <span className="editor-tab-dirty" aria-label={t("titlebar.unsavedChanges")} />}
             </button>
-            <button className="editor-tab-close" aria-label={t("editor.closeTab", { name: tab.name })} title={shortcutTitle(t("editor.closeFileTitle"), "closeFile")}
+            <button className="editor-tab-close" tabIndex={tab.name === state.activeFile ? 0 : -1} aria-label={t("editor.closeTab", { name: tab.name })} title={shortcutTitle(t("editor.closeFileTitle"), "closeFile")}
               disabled={closeLocked}
-              onClick={() => void useAppStore.getState().closeFile(tab.name)}>×</button>
+              onClick={() => void useAppStore.getState().closeFile(tab.name)}><Icon name="close" /></button>
           </div>
         ))}
       </div>
@@ -264,7 +284,7 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
         {active && <>
           {state.tabs.map((tab) => (
             <div key={`${tab.name}:${tab.generation}`}
-              className={`tab-editor${tab.name === state.activeFile ? " active" : ""}`}>
+              className={`tab-editor${tab.name === state.activeFile ? " active" : ""}`} role="tabpanel" id={panelId(tab.name)} aria-labelledby={tabId(tab.name)}>
               {(tab.loaded !== false || tab.name === state.activeFile) && <CodeEditor tab={tab.name} language={tab.language} locked={locked || tab.loaded === false}
                 active={tab.name === state.activeFile && !collapsed} onCursor={setCursor}
                 focusToolbar={() => languageSelect.current?.focus()} />}

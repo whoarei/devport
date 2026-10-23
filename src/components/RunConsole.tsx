@@ -16,14 +16,19 @@ import { terminalTheme, useThemeStore } from "../theme";
 import { useCommandUiStore } from "../commandUiStore";
 import { useTerminalStore } from "../terminalStore";
 import { attachTerminalCopyOnSelect } from "../terminalCopyOnSelect";
+import { executeAppCommand, appCommandEnabled } from "../appCommands";
+import { Icon } from "./Icon";
+import { EmptyState } from "./EmptyState";
 
 /**
  * Run Console：绑定的是“远程进程”的 stdin/stdout/stderr，不是 SSH shell。
  * 折叠时终端保持挂载，仅隐藏 DOM，避免 xterm 重新附着和输出丢失。
  */
-export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { collapsed: boolean; onToggleCollapse: () => void; embedded?: boolean }) {
+export function RunConsole({ collapsed, onToggleCollapse, embedded = false, autoFocus = true }: { collapsed: boolean; onToggleCollapse: () => void; embedded?: boolean; autoFocus?: boolean }) {
   const { t } = useTranslation();
   const theme = useThemeStore((state) => state.theme);
+  const workspace = useAppStore((state) => state.workspace);
+  const workspaceGuideVisible = useAppStore((s) => s.layout.sidebarVisible && s.layout.panelVisible.workspace && !s.layout.panelCollapsed.workspace);
   const focus = useCommandUiStore((state) => state.focus);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -127,7 +132,7 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
   useEffect(() => {
     if (!collapsed) {
       if (containerRef.current?.clientWidth && containerRef.current.clientHeight) fitRef.current?.fit();
-      termRef.current?.focus();
+      if (autoFocus) termRef.current?.focus();
     }
   }, [collapsed]);
 
@@ -194,8 +199,15 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
       </div>}
       {inputError?.runId === activeRunId && <div className="terminal-error" role="alert">{t("console.inputFailed", { error: inputError.message })}</div>}
       {clipboardError && <div className="terminal-error" role="status">{t(clipboardError.action === "copy" ? "terminal.copyFailed" : "terminal.pasteFailed", { message: clipboardError.message })}</div>}
-      <div ref={containerRef} className={`console-body${collapsed ? " collapsed" : ""}`} onContextMenu={openMenu}
-        onPasteCapture={() => { if (!collapsed) termRef.current?.focus(); }} />
+      <div className="console-viewport" hidden={collapsed}>
+        <div ref={containerRef} className="console-body" onContextMenu={openMenu}
+          onPasteCapture={() => { if (!collapsed) termRef.current?.focus(); }} />
+        {!activeRunId && <div className="console-placeholder">
+          <EmptyState icon="terminal" title={t("console.emptyTitle")} description={t(workspace ? "console.emptyHint" : "console.emptyWorkspaceHint")}>
+            {!workspace && !workspaceGuideVisible && <button className="primary" disabled={!appCommandEnabled("openWorkspace")} onClick={() => void executeAppCommand("openWorkspace")}><Icon name="folderOpen" />{t("workspace.openLocal")}</button>}
+          </EmptyState>
+        </div>}
+      </div>
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
     </div>
   );

@@ -633,6 +633,28 @@ test("panel shows independent browsers and explicit partial results", (t) => {
   assert.ok(!markup.includes(".env")); assert.ok(markup.includes("不支持传输此类型"));
 });
 
+test("browser loading, failure and empty directory states remain distinct", (t) => {
+  reset(t);
+  t.mock.method(React, "useSyncExternalStore", (_subscribe, getSnapshot) => getSnapshot());
+  useTransferStore.setState({ local: { ...initial.local, endpoint: local, directory: directory(local) },
+    device: { ...initial.device, endpoint: device, error: "Permission denied" } });
+  const render = () => renderToStaticMarkup(React.createElement(FileTransferPanel, { visible: true, collapsed: false, onToggleCollapse: () => {} }));
+  const failed = render();
+  assert.ok(failed.includes(i18n.t("transfer.readFailed")));
+  assert.ok(failed.includes("Permission denied"));
+  assert.match(failed, />重试<\/button>/);
+  assert.ok(!failed.includes(i18n.t("transfer.chooseDirectory")));
+  useTransferStore.setState({ device: { ...initial.device, endpoint: device, loading: true } });
+  const loading = render();
+  assert.ok(loading.includes(i18n.t("transfer.loading")));
+  assert.ok(!loading.includes(i18n.t("transfer.chooseDirectory")));
+  assert.ok(!loading.includes(i18n.t("transfer.readFailed")));
+  useTransferStore.setState({ device: { ...initial.device, endpoint: device, directory: { ...directory(device), entries: [] } } });
+  const empty = render();
+  assert.ok(empty.includes(i18n.t("transfer.emptyDirectory")));
+  assert.ok(!empty.includes(i18n.t("transfer.chooseDirectory")));
+});
+
 test("batch actions appear in each selected browser and render in both languages", async (t) => {
   reset(t);
   t.mock.method(React, "useSyncExternalStore", (_subscribe, getSnapshot) => getSnapshot());

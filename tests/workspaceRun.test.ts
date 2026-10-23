@@ -13,6 +13,16 @@ import { WorkspaceRunDialogs } from "../src/components/WorkspaceRunDialogs";
 import { ArgumentsEditor } from "../src/components/ArgumentsEditor";
 import { handleRunShortcut, parseRunArguments } from "../src/runArguments";
 import i18n from "../src/i18n";
+import { runDuration } from "../src/runState";
+
+test("run duration formats completed and live runs without invalid or negative values", () => {
+  const start = "2026-10-24T01:00:00Z";
+  assert.equal(runDuration(start, "2026-10-24T01:01:09Z"), "1:09");
+  assert.equal(runDuration(start, "2026-10-24T02:01:09Z"), "1:01:09");
+  assert.equal(runDuration(start, null, Date.parse(start) + 2000), "0:02");
+  assert.equal(runDuration(start, null, Date.parse(start) - 2000), "0:00");
+  assert.equal(runDuration("bad", null), null);
+});
 
 const device = (id: string): DeviceProfile => ({ id, revision: `rev-${id}`, name: id, transport: "ssh", host: "example", port: 22, username: "user", auth: { type: "key", key_path: null }, workspace_root: "/tmp/runs", is_default: id === "a" });
 const workspace = localWorkspace("/project");

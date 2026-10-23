@@ -7,6 +7,7 @@ import { useRunHistoryStore } from "../runHistoryStore";
 import { ContextMenu, type MenuState } from "./ContextMenu";
 import { appCommandEnabled, executeAppCommand } from "../appCommands";
 import { shortcutTitle } from "../shortcuts";
+import { Icon } from "./Icon";
 
 export function RunReplayButton({ run, compact = false, showShortcut = true }: {
   run: RunStatus | null; compact?: boolean; showShortcut?: boolean;
@@ -23,10 +24,10 @@ export function RunReplayButton({ run, compact = false, showShortcut = true }: {
   return <div className={`run-replay-button${compact ? " compact" : ""}`}>
     <button type="button" disabled={disabled} title={showShortcut ? shortcutTitle(title, "rerun") : title}
       aria-label={t("runHistory.originalTooltip", { device: run?.device_name ?? "" })} onClick={() => void executeAppCommand("rerun", context)}>
-      {compact ? "▶" : t("runHistory.restart")}
+      {compact ? <Icon name="play" /> : <><Icon name="play" />{t("runHistory.restart")}</>}
     </button>
     <button type="button" disabled={!run?.replay || starting || updating || state.busy} title={t("runHistory.more")} aria-label={t("runHistory.more")} aria-haspopup="menu" aria-expanded={!!anchor}
-      onClick={e => { const rect = e.currentTarget.getBoundingClientRect(); setAnchor(anchor ? null : { x: rect.left, y: rect.bottom + 3 }); }}>▾</button>
+      onClick={e => { const rect = e.currentTarget.getBoundingClientRect(); setAnchor(anchor ? null : { x: rect.left, y: rect.bottom + 3 }); }}><Icon name="chevronDown" /></button>
     {anchor && <ContextMenu menu={{ ...anchor, entries: [
         { label: t("runHistory.current"), detail: current?.name ?? "—", disabled: disabled || !current, onSelect: () => run && void state.rerun(run, "current") },
         { label: t("runHistory.edit"), disabled: disabled, onSelect: () => run && state.edit(run) },

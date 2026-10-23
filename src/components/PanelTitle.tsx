@@ -1,4 +1,5 @@
 import type { MouseEvent, ReactNode } from "react";
+import { Icon } from "./Icon";
 
 interface PanelTitleProps {
   title: string;
@@ -30,7 +31,7 @@ export function PanelTitle({ title, collapsed, onToggle, className, onContextMen
       }}
     >
       <span className="panel-heading">
-        <span className="panel-chevron" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
+        <span className="panel-chevron"><Icon name={collapsed ? "chevronRight" : "chevronDown"} /></span>
         <span>{title}</span>
       </span>
       {children && (

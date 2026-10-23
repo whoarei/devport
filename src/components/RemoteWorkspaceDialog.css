@@ -1,5 +1,5 @@
 .remote-workspace-dialog { width: min(660px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; color: var(--text-primary, #e5e9f2); background: var(--surface-raised, #23252d); border: 1px solid var(--border, #373b47); border-radius: 12px; box-shadow: 0 12px 42px var(--shadow, #0006); overflow: auto; }
-.remote-workspace-dialog::backdrop { background: #0007; }
+.remote-workspace-dialog::backdrop { background: var(--backdrop); }
 .remote-workspace-dialog button, .remote-workspace-dialog input, .remote-workspace-dialog select { font-family: inherit; }
 .remote-workspace-header { display: flex; align-items: center; gap: 11px; padding: 20px 24px; }
 .remote-workspace-header h2 { flex: 1; min-width: 0; margin: 0; font-size: 20px; font-weight: 500; }
@@ -25,7 +25,7 @@
 .remote-directory-list li:hover { background: var(--surface-hover, #2e3340); }
 .remote-directory-list li.selected { color: var(--accent, #a8c3fb); background: var(--accent-surface, #2c3a55); }
 .remote-directory-list .remote-directory-name { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; height: 41px; padding: 10px; text-align: left; border: 0; background: transparent; color: inherit; font-size: 13px; }
-.remote-directory-name > svg { flex-shrink: 0; width: 19px; height: 19px; color: var(--warning, #d4b36c); }
+.remote-directory-name > svg { flex-shrink: 0; width: 19px; height: 19px; color: var(--file-folder); }
 .remote-directory-list li.selected .remote-directory-name > svg { color: inherit; }
 .remote-directory-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .remote-directory-list li > svg { width: 14px; height: 14px; flex-shrink: 0; }

@@ -19,6 +19,9 @@ import { PanelTitle } from "./PanelTitle";
 import { workspaceRunMenu } from "../workspaceRunMenu";
 import { useWorkspaceRunStore } from "../workspaceRunStore";
 import { workspaceSourceRevision } from "../workspaceRun";
+import { workspacePresentation } from "../workspacePresentation";
+import { FileIcon, Icon } from "./Icon";
+import { EmptyState } from "./EmptyState";
 
 type Editing =
   | { mode: "create-file"; dir: WorkspacePath }
@@ -224,9 +227,9 @@ function TreeLevel(props: TreeProps) {
                 onContextMenu={(event) => onMenu(event, dir, entry)}
               >
                 <span className="tree-chevron" aria-hidden="true">
-                  {entry.is_dir ? (child?.expanded ? "▾" : "▸") : ""}
+                  {entry.is_dir && <Icon name={child?.expanded ? "chevronDown" : "chevronRight"} />}
                 </span>
-                <span className="tree-icon" aria-hidden="true">{entry.is_dir ? "📁" : "📄"}</span>
+                <FileIcon name={entry.name} directory={entry.is_dir} expanded={!!child?.expanded} />
                 <span className="tree-name">{entry.name}</span>
               </button>
             )}
@@ -260,6 +263,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
   const [editing, setEditing] = useState<Editing | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const label = workspaceLabel(workspace, devices);
+  const presentation = workspace ? workspacePresentation(workspace, devices) : null;
   const panel = useRef<HTMLDivElement>(null);
   const focus = useCommandUiStore((state) => state.focus);
   useEffect(() => {
@@ -371,7 +375,11 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
       <PanelTitle title={t("workspace.title")} collapsed={collapsed} onToggle={onToggleCollapse} />
       {!collapsed && (
         <>
-          {label && <div className="workspace-dir">{label}</div>}
+          {presentation && <div className="workspace-dir" title={label ?? undefined}>
+            <Icon name={workspace?.type === "device" ? "server" : "folder"} />
+            <div><strong>{presentation.name}</strong><span>{presentation.device ?? t(workspace?.type === "device" ? "workspace.remoteDevice" : "transfer.local")}</span></div>
+            {presentation.transport && <span className="workspace-transport">{presentation.transport.toUpperCase()}</span>}
+          </div>}
           {workspaceError && <div className="workspace-error" role="alert">
             <span>{workspaceError}</span>
             <button onClick={() => useAppStore.getState().dismissWorkspaceError()}>{t("workspace.close")}</button>
@@ -391,7 +399,10 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
                 onEditing={setEditing}
               />
             </div>
-          ) : <p className="workspace-empty">{t("workspace.empty")}</p>}
+          ) : <EmptyState icon="folderOpen" title={t("workspace.empty")} description={t("workspace.emptyHint")} compact>
+            <button className="primary" disabled={disabled} onClick={() => void executeAppCommand("openWorkspace")}>{t("workspace.openLocal")}</button>
+            <button disabled={disabled} onClick={() => void executeAppCommand("openRemoteWorkspace")}>{t("workspace.openRemote")}</button>
+          </EmptyState>}
         </>
       )}
       <ContextMenu menu={menu} disabled={disabled} onClose={() => setMenu(null)} />

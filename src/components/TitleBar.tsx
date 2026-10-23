@@ -18,6 +18,8 @@ import appIcon from "../../src-tauri/icons/18x18.png";
 import appIcon2x from "../../src-tauri/icons/36x36.png";
 import appIcon3x from "../../src-tauri/icons/54x54.png";
 import type { UiZoomAction } from "../uiZoom";
+import { workspacePresentation } from "../workspacePresentation";
+import { Icon } from "./Icon";
 
 function reportWindowError(error: unknown) {
   useAppStore.setState({ editorError: i18n.t("app.windowError", { message: errorMessage(error) }) });
@@ -43,9 +45,7 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
   const [updatePhase, setUpdatePhase] = useState<UpdateButtonPhase | null>(null);
   const desktop = isTauri();
   const label = workspaceLabel(workspace, devices);
-  const workspaceName = workspace?.type === "device"
-    ? label
-    : label?.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || label;
+  const presentation = workspace ? workspacePresentation(workspace, devices) : null;
 
   useEffect(() => {
     if (!desktop) return;
@@ -82,7 +82,9 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
       <MenuBar uiZoom={uiZoom} onUiZoom={onUiZoom} onAbout={onAbout} onCheckUpdate={onCheckUpdate} />
       <div className="titlebar-drag" data-tauri-drag-region>
         <div className="titlebar-workspace" data-tauri-drag-region title={label ?? t("titlebar.noWorkspaceTitle")}>
-          <span className="titlebar-workspace-name">{workspaceName ?? t("titlebar.noWorkspace")}</span>
+          {presentation && <Icon name={workspace?.type === "device" ? "server" : "folder"} />}
+          <span className="titlebar-workspace-name">{presentation?.name ?? t("titlebar.noWorkspace")}</span>
+          {presentation?.device && <span className="titlebar-workspace-context">{presentation.device}</span>}
           {dirty && <span className="titlebar-dirty" role="img" aria-label={t("titlebar.unsavedChanges")} />}
         </div>
       </div>

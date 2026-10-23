@@ -1,33 +1,94 @@
-/* Dark colors remain at their existing declarations as fallbacks. These roles
-   cover the whole UI, including panels loaded after a theme switch. */
+/* Both palettes define the same semantic roles, including lazy-loaded panels. */
+:root {
+  --font-size-ui: 13px;
+  --font-size-secondary: 12px;
+  --font-size-meta: 11px;
+  --radius-control: 6px;
+  --radius-panel: 8px;
+  --radius-dialog: 12px;
+  --control-height: 30px;
+}
+
+:root, :root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-base: #1b1e24;
+  --surface-chrome: #171a20;
+  --surface-panel: #20242c;
+  --surface-raised: #272c36;
+  --surface-control: #2a303b;
+  --surface-hover: #343d4b;
+  --text-primary: #e5eaf3;
+  --text-secondary: #b0bbcd;
+  --text-muted: #909db2;
+  --border: #343c49;
+  --border-strong: #4b596e;
+  --accent: #a3c1ff;
+  --accent-hover: #c3d7ff;
+  --accent-solid: #426ed1;
+  --accent-solid-hover: #365fb9;
+  --accent-surface: #293b5b;
+  --accent-border: #6e94d9;
+  --focus-glow: #7caaff30;
+  --selection: #344f79;
+  --success: #91d4b0;
+  --success-surface: #253c33;
+  --success-border: #436d59;
+  --warning: #e1c18b;
+  --warning-surface: #3a3225;
+  --warning-border: #75613f;
+  --danger: #f0a7b0;
+  --danger-solid: #b33448;
+  --danger-solid-hover: #98283b;
+  --danger-surface: #402a33;
+  --danger-border: #83505e;
+  --hover-overlay: #b1c9f50b;
+  --line-subtle: #b1c9f512;
+  --shadow: #00000040;
+  --backdrop: #0b0e167a;
+  --file-folder: #a8b9d5;
+  --file-code: #9ebcff;
+  --file-config: #c6b2df;
+  --file-text: #9dbcae;
+}
+
 :root[data-theme="light"] {
   color-scheme: light;
   --surface-base: #ffffff;
-  --surface-panel: #f8f9fc;
+  --surface-chrome: #edf1f7;
+  --surface-panel: #f5f7fa;
   --surface-raised: #ffffff;
-  --surface-control: #eef1f6;
-  --surface-hover: #e2e8f1;
-  --text-primary: #242c3b;
-  --text-secondary: #4e5b70;
-  --text-muted: #657187;
-  --border: #ced5e0;
-  --border-strong: #aab7cb;
-  --accent: #285ab8;
-  --accent-hover: #19458f;
-  --accent-surface: #e7eefb;
-  --accent-border: #9bb5df;
-  --focus-glow: #2563eb29;
+  --surface-control: #eef2f7;
+  --surface-hover: #e3e9f2;
+  --text-primary: #273347;
+  --text-secondary: #53637a;
+  --text-muted: #68788e;
+  --border: #dce3ed;
+  --border-strong: #b7c5d9;
+  --accent: #315fbd;
+  --accent-hover: #204a9e;
+  --accent-solid: #315fbd;
+  --accent-solid-hover: #254fa5;
+  --accent-surface: #e9f0ff;
+  --accent-border: #a4bce8;
+  --focus-glow: #315fbd24;
   --selection: #cbdcfb;
   --success: #25703d;
-  --success-surface: #e7f3eb;
+  --success-surface: #e8f5ed;
   --success-border: #a5c9b0;
   --warning: #805b0b;
-  --warning-surface: #fff4df;
+  --warning-surface: #fff5e3;
   --warning-border: #ddc28c;
-  --danger: #b42332;
-  --danger-surface: #fbecef;
+  --danger: #b4233b;
+  --danger-solid: #b4233b;
+  --danger-solid-hover: #941b30;
+  --danger-surface: #fceef1;
   --danger-border: #e0b0b8;
-  --hover-overlay: #1d35500a;
-  --line-subtle: #1d355010;
-  --shadow: #14233720;
+  --hover-overlay: #28426607;
+  --line-subtle: #2842660c;
+  --shadow: #1c315d1c;
+  --backdrop: #17243b59;
+  --file-folder: #7788a2;
+  --file-code: #4f6fb1;
+  --file-config: #88719f;
+  --file-text: #4c806d;
 }

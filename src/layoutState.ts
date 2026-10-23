@@ -19,8 +19,8 @@ export interface LayoutState {
   /** 侧栏 dock 整体显隐：隐藏时保留各面板自身的显隐设置，恢复时原样展示 */
   sidebarVisible: boolean;
   historyHeight: number;
-  /** 中间 dock 两个展开面板的分割比例（0..1） */
-  splits: { center: number };
+  /** center 保留旧版比例以迁移；panels 保存独立的面板权重。 */
+  splits: { center: number; panels: Record<string, number> };
 }
 
 function defaultPanelVisible(): Record<PanelId, boolean> {
@@ -38,7 +38,7 @@ export const DEFAULT_LAYOUT: LayoutState = {
   sidebarPosition: "left",
   sidebarVisible: true,
   historyHeight: 260,
-  splits: { center: 0.6 },
+  splits: { center: 0.6, panels: { editor: 0.6, console: 0.4, transfer: 0.5 } },
 };
 
 /** v1 旧字段名 → 面板 id，用于迁移已持久化的布局数据 */
@@ -103,6 +103,34 @@ export function panelCollapsePatch(layout: LayoutState, id: PanelId, collapsed: 
   return { panelCollapsed: { ...layout.panelCollapsed, [id]: collapsed } };
 }
 
+export function centerPanelFractions(layout: LayoutState, ids: PanelId[]): number[] {
+  const weights = ids.map((id) => layout.splits.panels[id] ?? 1);
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  return weights.map((weight) => weight / total);
+}
+
+/** 只调整分隔条两侧的展开面板，保留其余面板（包括隐藏面板）的尺寸偏好。 */
+export function resizeCenterPanels(layout: LayoutState, ids: PanelId[], boundary: number, delta: number): Partial<LayoutState> {
+  if (boundary < 1 || boundary >= ids.length || !Number.isFinite(delta)) return {};
+  const fractions = centerPanelFractions(layout, ids);
+  const first = boundary - 1, second = boundary;
+  const pair = fractions[first] + fractions[second];
+  const min = Math.min(ids.length === 2 ? SPLIT_MIN : 0.12, pair / 2);
+  const next = Math.max(min, Math.min(pair - min, fractions[first] + delta));
+  const total = ids.reduce((sum, id) => sum + (layout.splits.panels[id] ?? 1), 0);
+  return { splits: { ...layout.splits, panels: { ...layout.splits.panels,
+    [ids[first]]: next * total, [ids[second]]: (pair - next) * total,
+  } } };
+}
+
+export function resetCenterPanels(layout: LayoutState, ids: PanelId[], boundary: number): Partial<LayoutState> {
+  const fractions = centerPanelFractions(layout, ids);
+  const pair = fractions[boundary - 1] + fractions[boundary];
+  const first = DEFAULT_LAYOUT.splits.panels[ids[boundary - 1]] ?? 1;
+  const second = DEFAULT_LAYOUT.splits.panels[ids[boundary]] ?? 1;
+  return resizeCenterPanels(layout, ids, boundary, pair * first / (first + second) - fractions[boundary - 1]);
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
 }
@@ -129,6 +157,9 @@ function normalizePanelFlags(
 export function normalizeLayout(value: unknown): LayoutState {
   const source = asRecord(value);
   const splits = asRecord(source.splits);
+  const center = clampSplit(splits.center as number, DEFAULT_LAYOUT.splits.center);
+  const weights = asRecord(splits.panels);
+  const legacyWeights: Record<string, number> = { editor: center, console: 1 - center, transfer: 0.5 };
   return {
     panelVisible: normalizePanelFlags(source.panelVisible, source, LEGACY_VISIBLE_KEYS, (id) => DEFAULT_LAYOUT.panelVisible[id]),
     panelCollapsed: normalizePanelFlags(source.panelCollapsed, source, LEGACY_COLLAPSED_KEYS, () => false),
@@ -137,7 +168,9 @@ export function normalizeLayout(value: unknown): LayoutState {
     sidebarVisible: clampBoolean(source.sidebarVisible, DEFAULT_LAYOUT.sidebarVisible),
     historyHeight: clampNumber(source.historyHeight, 120, 600, DEFAULT_LAYOUT.historyHeight),
     splits: {
-      center: clampSplit(splits.center as number, DEFAULT_LAYOUT.splits.center),
+      center,
+      panels: Object.fromEntries(PANELS.filter((panel) => panel.dock === "center")
+        .map((panel) => [panel.id, clampNumber(weights[panel.id], 0.001, 10, legacyWeights[panel.id] ?? 1)])),
     },
   };
 }

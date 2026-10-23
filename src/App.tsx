@@ -12,6 +12,7 @@ import { useWorkspaceRunStore } from "./workspaceRunStore";
 import { TitleBar } from "./components/TitleBar";
 import { AboutDialog } from "./components/AboutDialog";
 import { SplitHandle } from "./components/SplitHandle";
+import { CenterDock } from "./components/CenterDock";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -20,7 +21,7 @@ import { errorMessage } from "./api";
 import i18n from "./i18n";
 import { requestQuit } from "./appLifecycle";
 import { pollTransfers } from "./transferStore";
-import { clampSidebarWidth, clampSplit, panelCollapsePatch, DEFAULT_LAYOUT } from "./layoutState";
+import { clampSidebarWidth, panelCollapsePatch, DEFAULT_LAYOUT } from "./layoutState";
 import { panelsInDock, type PanelId } from "./panels/registry";
 import { PANEL_COMPONENTS } from "./panels/components";
 import { checkForAvailableUpdate } from "./updateStatus";
@@ -134,14 +135,10 @@ export default function App() {
   const hasRunHistory = useAppStore((state) => Object.values(state.runs).some(isExecutionRun));
   const environmentError = useAppStore((state) => state.environmentError);
   const setLayout = useAppStore((state) => state.setLayout);
-  const centerRef = useRef<HTMLDivElement>(null);
 
   const visible = (id: PanelId) => layout.panelVisible[id] && (id !== "history" || hasRunHistory);
   const collapsed = (id: PanelId) => layout.panelCollapsed[id];
   const toggleCollapse = (id: PanelId) => () => setLayout(panelCollapsePatch(layout, id, !layout.panelCollapsed[id]));
-  const setCenterSplit = (ratio: number) =>
-    setLayout({ splits: { center: clampSplit(ratio, DEFAULT_LAYOUT.splits.center) } });
-
   // ---- 侧栏 dock：面板按注册表顺序堆叠，展开面板分配可用高度 ----
   // 预置命令面板不参与比例分配：有其他展开面板时限制最大高度，独占侧栏时占满。
   const sidebarPanels = panelsInDock("sidebar");
@@ -194,52 +191,6 @@ export default function App() {
     </>
   );
 
-  // ---- 中间 dock：编辑器 → 控制台 → 文件传输；两区展开时按 splits.center 分配，三区展开时均分 ----
-  // 各区都允许隐藏：dock 以 hidden 属性隐藏（不卸载），编辑器与终端实例保持存活。
-  const centerPanels = panelsInDock("center");
-  const centerShown = centerPanels.some((panel) => visible(panel.id));
-  const expandedCenter = centerPanels.filter((panel) => visible(panel.id) && !collapsed(panel.id));
-  const bothCenterExpanded = expandedCenter.length === 2;
-
-  const centerSectionStyle = (id: PanelId): CSSProperties | undefined => {
-    if (collapsed(id)) return { flex: "0 0 auto" };
-    if (bothCenterExpanded) return { flexGrow: id === expandedCenter[0].id ? layout.splits.center : 1 - layout.splits.center, flexBasis: 0 };
-    if (expandedCenter.length > 2) return { flexGrow: 1, flexBasis: 0 };
-    return undefined;
-  };
-
-  const centerDock = (
-    <div className="dock dock-center" ref={centerRef} hidden={!centerShown}>
-      {centerPanels.map((panel) => {
-        const Component = PANEL_COMPONENTS[panel.id];
-        return (
-          <Fragment key={panel.id}>
-            {bothCenterExpanded && panel.id === expandedCenter[1].id && (
-              <SplitHandle
-                direction="horizontal"
-                label={t("app.resizeCenter")}
-                onDelta={(delta) => {
-                  const height = centerRef.current?.clientHeight ?? 0;
-                  if (height > 0) setCenterSplit(layout.splits.center + delta / height);
-                }}
-                onReset={() => setLayout({ splits: { ...layout.splits, center: DEFAULT_LAYOUT.splits.center } })}
-              />
-            )}
-            <section
-              className={`dock-section ${panel.id}-section`}
-              hidden={!visible(panel.id)}
-              style={visible(panel.id) ? centerSectionStyle(panel.id) : undefined}
-            >
-              <Suspense fallback={panel.id === "editor" ? <div className="editor empty">{t("app.loadingEditor")}</div> : null}>
-                <Component visible={visible(panel.id)} collapsed={collapsed(panel.id)} onToggleCollapse={toggleCollapse(panel.id)} />
-              </Suspense>
-            </section>
-          </Fragment>
-        );
-      })}
-    </div>
-  );
-
   return (
     <div className="app">
       <UnsavedDialog />
@@ -262,7 +213,7 @@ export default function App() {
       />
       <main className="app-main">
         {layout.sidebarPosition === "left" && sidebarDock}
-        {centerDock}
+        <CenterDock />
         {layout.sidebarPosition === "right" && sidebarDock}
       </main>
       {environmentError && <div className="environment-notice" role="alert">{environmentError}</div>}

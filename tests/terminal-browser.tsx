@@ -10,6 +10,7 @@ import { RunConsole } from "../src/components/RunConsole";
 import { MenuBar } from "../src/components/MenuBar";
 import i18n from "../src/i18n";
 import "../src/styles.css";
+import "../src/theme.css";
 
 await i18n.changeLanguage("zh");
 const useInputLog = create<{ entries: { target: string; text: string }[] }>(() => ({ entries: [] }));

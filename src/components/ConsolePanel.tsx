@@ -14,6 +14,10 @@ import { RunConsole } from "./RunConsole";
 import { TerminalPage } from "./TerminalPage";
 import { appCommandEnabled, executeAppCommand } from "../appCommands";
 import { shortcutTitle } from "../shortcuts";
+import { Icon } from "./Icon";
+import { deviceDisplayNames } from "../workspacePresentation";
+import { tabNavigationTarget, useRevealActiveTab } from "../tabStrip";
+import { useCommandUiStore } from "../commandUiStore";
 
 export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
   visible: boolean; collapsed: boolean; onToggleCollapse: () => void;
@@ -25,17 +29,27 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [error, setError] = useState("");
   const deviceButton = useRef<HTMLButtonElement>(null);
+  const tabStrip = useRef<HTMLDivElement>(null);
+  const keyboardTabFocus = useRef(false);
+  const selectTab = (id: string) => {
+    keyboardTabFocus.current = false;
+    select(id);
+    useCommandUiStore.setState({ focus: "console" });
+  };
+  useRevealActiveTab(tabStrip, activeTab, visible);
+  const deviceNames = deviceDisplayNames(devices);
   const defaultDevice = devices.find((device) => device.is_default) ?? devices[0];
   const defaultTerminalAvailable = !!defaultDevice && defaultDevice.transport !== "serial";
   const activeRunId = useAppStore((s) => s.activeRunId);
   const previousRun = useRef(activeRunId);
   useEffect(() => {
-    if (activeRunId !== previousRun.current) { select("run"); previousRun.current = activeRunId; }
+    if (activeRunId !== previousRun.current) { keyboardTabFocus.current = false; select("run"); previousRun.current = activeRunId; }
   }, [activeRunId, select]);
 
   const open = (deviceId: string) => {
     const device = devices.find((d) => d.id === deviceId);
     if (!device || device.transport === "serial") return;
+    keyboardTabFocus.current = false;
     setError("");
     if (collapsed) onToggleCollapse();
     void useTerminalStore.getState().open(device.id, device.name).catch((e) => setError(errorMessage(e)));
@@ -111,29 +125,29 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
   const contentVisible = visible && !collapsed;
   return <div className="console-panel">
     <div className="console-tabs-bar center-panel-header">
-      <button className="console-collapse center-panel-collapse" aria-label={collapsed ? t("console.expand") : t("console.collapse")} aria-expanded={!collapsed} onClick={onToggleCollapse}>{collapsed ? "▸" : "▾"}</button>
-      <div className="console-tabs" role="tablist" aria-label={t("console.tabsAria")} onContextMenu={openTabsBlankMenu} onKeyDown={(event) => {
-        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      <button className="console-collapse center-panel-collapse" aria-label={collapsed ? t("console.expand") : t("console.collapse")} aria-expanded={!collapsed} onClick={onToggleCollapse}><Icon name={collapsed ? "chevronRight" : "chevronDown"} /></button>
+      <div ref={tabStrip} className="console-tabs" role="tablist" aria-label={t("console.tabsAria")} onContextMenu={openTabsBlankMenu} onKeyDown={(event) => {
+        if (event.altKey || event.ctrlKey || event.metaKey) return;
         if ((event.target as HTMLElement).getAttribute("role") !== "tab") return;
+        const next = tabNavigationTarget(["run", ...tabs.map((tab) => tab.id)], activeTab, event.key);
+        if (!next) return;
         event.preventDefault();
-        const ids = ["run", ...tabs.map((tab) => tab.id)];
-        const index = ids.indexOf(activeTab);
-        const next = event.key === "Home" ? 0 : event.key === "End" ? ids.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + ids.length) % ids.length;
-        select(ids[next]); document.getElementById(`tab-${ids[next]}`)?.focus();
+        keyboardTabFocus.current = true;
+        select(next); document.getElementById(`tab-${next}`)?.focus();
       }}>
-        <button role="tab" id="tab-run" aria-controls="panel-run" aria-selected={activeTab === "run"} tabIndex={activeTab === "run" ? 0 : -1} onClick={() => select("run")}>{t("console.runTab")}</button>
+        <button role="tab" id="tab-run" data-active-tab={activeTab === "run"} aria-controls="panel-run" aria-selected={activeTab === "run"} tabIndex={activeTab === "run" ? 0 : -1} onClick={() => selectTab("run")}>{t("console.runTab")}</button>
         {tabs.map((tab, index) => {
           const device = devices.find((candidate) => candidate.id === tab.deviceId);
           const deviceName = device?.name.trim() || tab.deviceName;
-          const label = terminalTabLabel(tab, device);
+          const label = terminalTabLabel(tab, device, deviceNames.get(tab.deviceId));
           const title = t("console.terminalTitle", { name: tab.title ?? deviceName, device: deviceName, index: index + 1 });
-          return <div className={`console-tab${activeTab === tab.id ? " active" : ""}`} key={tab.id} onContextMenu={(event) => openTabMenu(event, tab)}>
+          return <div className={`console-tab${activeTab === tab.id ? " active" : ""}`} data-active-tab={activeTab === tab.id} key={tab.id} onContextMenu={(event) => openTabMenu(event, tab)}>
             <button role="tab" id={`tab-${tab.id}`} aria-controls={`panel-${tab.id}`} aria-selected={activeTab === tab.id} tabIndex={activeTab === tab.id ? 0 : -1}
-              onClick={() => select(tab.id)} title={title} aria-label={title}>
+              onClick={() => selectTab(tab.id)} title={title} aria-label={title}>
               <span className={`terminal-dot terminal-${tab.status?.state ?? "connecting"}`} aria-hidden="true" />
               <span className="terminal-tab-label">{t("console.terminalTab", { name: label })}</span><span className="terminal-number">{index + 1}</span>
             </button>
-            <button className="terminal-tab-close" disabled={tab.busy} aria-label={t("console.closeTerminalAria", { name: label, index: index + 1 })} onClick={() => void useTerminalStore.getState().close(tab.id)}>×</button>
+            <button className="terminal-tab-close" tabIndex={activeTab === tab.id ? 0 : -1} disabled={tab.busy} aria-label={t("console.closeTerminalAria", { name: label, index: index + 1 })} onClick={() => void useTerminalStore.getState().close(tab.id)}><Icon name="close" /></button>
           </div>;
         })}
       </div>
@@ -142,11 +156,11 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
           ? t("console.newDefaultTerminalTitle", { name: defaultDevice.name })
           : defaultDevice?.transport === "serial" ? t("console.defaultSerialNoTerminal") : t("console.noDefaultDevice"), "newTerminal")}
           disabled={!appCommandEnabled("newTerminal")}
-          onClick={() => void executeAppCommand("newTerminal")}>＋</button>
+          onClick={() => void executeAppCommand("newTerminal")}><Icon name="plus" /></button>
         <button className="terminal-device-picker" ref={deviceButton} aria-label={t("console.chooseTerminalDevice")}
           title={t("console.chooseTerminalDevice")} aria-haspopup="menu" aria-expanded={!!menu}
           disabled={updating || shuttingDown || tabs.length >= 8} onClick={toggleMenu}>
-          <span className="terminal-device-picker-icon" aria-hidden="true" />
+          <Icon name="chevronDown" />
         </button>
       </div>
     </div>
@@ -154,8 +168,8 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
     {error && <div className="terminal-error" role="alert">{error}</div>}
     <section className="run-page" role="tabpanel" id="panel-run" aria-labelledby="tab-run" hidden={!contentVisible || activeTab !== "run"}>
       <RunToolbar />
-      <RunConsole collapsed={!contentVisible || activeTab !== "run"} onToggleCollapse={onToggleCollapse} embedded />
+      <RunConsole collapsed={!contentVisible || activeTab !== "run"} onToggleCollapse={onToggleCollapse} embedded autoFocus={!keyboardTabFocus.current} />
     </section>
-    {tabs.map((tab) => <TerminalPage key={tab.id} tab={tab} visible={contentVisible && activeTab === tab.id} />)}
+    {tabs.map((tab) => <TerminalPage key={tab.id} tab={tab} visible={contentVisible && activeTab === tab.id} autoFocus={!keyboardTabFocus.current} />)}
   </div>;
 }

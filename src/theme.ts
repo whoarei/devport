@@ -67,8 +67,15 @@ export function initializeTheme(): () => void {
 }
 
 export function terminalTheme(theme: Theme): ITheme {
-  return theme === "dark" ? { background: "#1e1f24" } : {
-    background: "#f8f9fc", foreground: "#242c3b", cursor: "#242c3b", cursorAccent: "#f8f9fc",
+  return theme === "dark" ? {
+    background: "#1b1e24", foreground: "#e5eaf3", cursor: "#a3c1ff", cursorAccent: "#1b1e24",
+    selectionBackground: "#344f79", selectionInactiveBackground: "#303d54",
+    black: "#8792a4", red: "#ef9aa7", green: "#9bc89e", yellow: "#d6bd87",
+    blue: "#98b7ee", magenta: "#c3a0dc", cyan: "#8fc9cf", white: "#c3cbd8",
+    brightBlack: "#96a2b6", brightRed: "#ffb0bc", brightGreen: "#b0dfb0", brightYellow: "#ead29c",
+    brightBlue: "#b0cdff", brightMagenta: "#d9b8f0", brightCyan: "#a6dfe3", brightWhite: "#edf2fa",
+  } : {
+    background: "#ffffff", foreground: "#273347", cursor: "#315fbd", cursorAccent: "#ffffff",
     selectionBackground: "#cbdcfb", selectionInactiveBackground: "#dfe6f1",
     black: "#202733", red: "#b42332", green: "#26723b", yellow: "#856000",
     blue: "#245ac2", magenta: "#8542a4", cyan: "#087586", white: "#626e80",

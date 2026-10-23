@@ -10,6 +10,7 @@ import {WorkspaceRunDialogs} from "../src/components/WorkspaceRunDialogs";
 import {rootTree} from "../src/workspaceTree";
 import i18n from "../src/i18n";
 import "../src/styles.css";
+import "../src/theme.css";
 
 await i18n.changeLanguage("zh");
 const workspace=localWorkspace("E:\\projects\\example"), sessions=new Map<string,WorkspaceRunSession>();
