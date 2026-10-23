@@ -60,7 +60,7 @@ cargo test --offline --lib wsl::tests -- --include-ignored
 
 普通测试不依赖物理串口、USB 或用户 SSH 凭据。`rr-cli` 是 SSH-only smoke 工具，只有存在授权可达目标时使用，不加入必须成功的普通硬件套件。
 
-浏览器交互样例：`tests/run-console-browser.html`、`tests/editor-browser.html` 与 `tests/device-browser.html`，用模拟后端验证菜单、参数、编辑恢复、设备自动命名、焦点和布局；不等于设备实测。主 HTML 文档可直接打开，或通过本地 Vite 访问 `/docs/00001-product.html` 和 `/docs/00002-architecture.html`。
+浏览器交互样例：`tests/run-console-browser.html`、`tests/editor-browser.html`、`tests/terminal-browser.html` 与 `tests/device-browser.html`，用模拟后端验证菜单、参数、编辑恢复、粘贴焦点、剪贴板延迟与会话替换、设备自动命名和布局；不等于设备实测。主 HTML 文档可直接打开，或通过本地 Vite 访问 `/docs/00001-product.html` 和 `/docs/00002-architecture.html`。
 
 ## 4. 发布、版本与打包
 

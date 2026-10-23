@@ -62,6 +62,9 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
       if (id) useTerminalStore.getState().report(tab.id, id, error);
     };
     const instance: View = { term, display, paste: () => {
+      if (view.current !== instance || !current.current.visible) return;
+      // Focus while handling the user action, before the asynchronous clipboard read.
+      term.focus();
       const session = instance.session;
       if (!connected(session)) return;
       void navigator.clipboard.readText().then(text => {
@@ -189,7 +192,8 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
 
   return <section className="terminal-page" role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} hidden={!visible}>
     {error && <div className="terminal-error" role="alert">{error}</div>}
-    <div className="console-body" ref={container} onContextMenu={openMenu} />
+    <div className="console-body" ref={container} onContextMenu={openMenu}
+      onPasteCapture={() => { if (visible) view.current?.term.focus(); }} />
     {(canReconnect || connecting || closing) && <div className="terminal-restore" role="status">
       <span>{connecting ? t("terminal.connecting") : closing ? t("terminal.closing")
         : sessionId ? t("terminal.reconnectHint") : t("terminal.connectHint")}</span>

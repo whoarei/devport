@@ -138,12 +138,16 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
         // 粘贴写入远程进程 stdin（pty 模式下由远端回显）
         label: t("ctxmenu.paste"),
         disabled: !(activeRun && isActiveRun(activeRun)),
-        onSelect: () => void navigator.clipboard.readText().then((text) => {
-          const runId = useAppStore.getState().activeRunId;
-          if (text && runId && useAppStore.getState().runs[runId]?.state === "running") {
-            void api.sendRunInput(runId, text).catch(() => {});
-          }
-        }).catch(() => {}),
+        onSelect: () => {
+          term.focus();
+          const runId = activeRunId;
+          void navigator.clipboard.readText().then((text) => {
+            const state = useAppStore.getState();
+            if (text && termRef.current === term && runId && state.activeRunId === runId && state.runs[runId]?.state === "running") {
+              void api.sendRunInput(runId, text).catch(() => {});
+            }
+          }).catch(() => {});
+        },
       },
       { label: t("ctxmenu.selectAll"), onSelect: () => term.selectAll() },
       { label: t("ctxmenu.clearTerminal"), onSelect: () => term.clear() },
@@ -173,7 +177,8 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
         <code>{activeRun.workspace_sync.destination}</code>
       </div>}
       {inputError?.runId === activeRunId && <div className="terminal-error" role="alert">{t("console.inputFailed", { error: inputError.message })}</div>}
-      <div ref={containerRef} className={`console-body${collapsed ? " collapsed" : ""}`} onContextMenu={openMenu} />
+      <div ref={containerRef} className={`console-body${collapsed ? " collapsed" : ""}`} onContextMenu={openMenu}
+        onPasteCapture={() => { if (!collapsed) termRef.current?.focus(); }} />
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />
     </div>
   );
