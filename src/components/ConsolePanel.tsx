@@ -127,7 +127,7 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
           const deviceName = device?.name.trim() || tab.deviceName;
           const label = terminalTabLabel(tab, device);
           const title = t("console.terminalTitle", { name: tab.title ?? deviceName, device: deviceName, index: index + 1 });
-          return <div className="console-tab" key={tab.id} onContextMenu={(event) => openTabMenu(event, tab)}>
+          return <div className={`console-tab${activeTab === tab.id ? " active" : ""}`} key={tab.id} onContextMenu={(event) => openTabMenu(event, tab)}>
             <button role="tab" id={`tab-${tab.id}`} aria-controls={`panel-${tab.id}`} aria-selected={activeTab === tab.id} tabIndex={activeTab === tab.id ? 0 : -1}
               onClick={() => select(tab.id)} title={title} aria-label={title}>
               <span className={`terminal-dot terminal-${tab.status?.state ?? "connecting"}`} aria-hidden="true" />

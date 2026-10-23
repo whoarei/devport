@@ -576,14 +576,18 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
   line-height: 1.5;
 }
 
-.editor-tabs { display: flex; align-items: stretch; gap: 0; padding: 0; border-bottom: 1px solid var(--border, #2a2b30); overflow-x: auto; flex-shrink: 0; }
-.editor-tab { display: flex; align-items: center; border-radius: 8px 8px 0 0; color: var(--text-secondary, #9fa2b0); font-size: inherit; white-space: nowrap; }
-.editor-tab.active { background: var(--accent-surface, #2c3346); color: var(--text-primary, #e5eafa); box-shadow: inset 0 0 0 1px var(--line-subtle, #ffffff14); }
-.editor-tab-label { border: 0; background: transparent; color: inherit; padding: 5px 4px 5px var(--center-label-inset); font: inherit; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
-.editor-tab-label:hover { background: transparent; color: var(--text-primary, #ddd); }
+.editor-tabs { display: flex; align-items: stretch; gap: 0; padding: 0; background: var(--surface-panel, #1b1c21); border-bottom: 1px solid var(--border, #34353d); overflow-x: auto; flex-shrink: 0; }
+.editor-tabs, .console-tabs { overflow-y: hidden; scrollbar-width: thin; scrollbar-color: var(--border-strong, #4a4e5c) transparent; }
+.editor-tabs::-webkit-scrollbar, .console-tabs::-webkit-scrollbar { height: 6px; }
+/* Paint the whole tab, including its close button, as one square-edged surface. */
+.editor-tab, .console-tab { display: flex; flex-shrink: 0; border-radius: 0; border-bottom: 2px solid transparent; color: var(--text-secondary, #9fa2b0); font-size: inherit; white-space: nowrap; }
+.editor-tab.active, .console-tab.active, .console-tabs > button[role="tab"][aria-selected="true"] { color: var(--text-primary, #e5eafa); background: var(--surface-control, #242630); border-bottom-color: var(--accent-border, #8fa9e8); }
+.editor-tab-label { border: 0; border-radius: 0; background: transparent; color: inherit; padding: 0 var(--center-label-inset); font: inherit; min-width: 0; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.editor-tab-label:hover, .console-tab button[role="tab"]:hover { background: transparent; color: var(--text-primary, #ddd); }
 .editor-tab.preview .editor-tab-label { font-style: italic; }
-.editor-tab-close { border: 0; background: transparent; color: var(--text-muted, #777); padding: 2px 6px; margin-right: 2px; border-radius: 3px; font-size: 12px; line-height: 1.4; }
-.editor-tab-close:hover:not(:disabled) { background: var(--hover-overlay, #ffffff14); color: var(--text-primary, #ddd); }
+.editor-tab-close, .terminal-tab-close { align-self: center; flex-shrink: 0; width: 22px; height: 18px; border: 0; border-radius: 0; background: transparent; color: var(--text-secondary, #999daa); padding: 0; margin-right: 4px; font-size: 12px; line-height: 18px; }
+.editor-tab-close:hover:not(:disabled), .terminal-tab-close:hover:not(:disabled) { color: var(--text-primary, #fff); background: var(--danger-surface, #3b3036); }
+.editor-tabs button:focus-visible, .console-tabs button:focus-visible { outline: 1px solid var(--accent-border, #8fa9e8); outline-offset: -3px; }
 .editor-collapse { border: 0; background: transparent; color: var(--text-muted, #888); padding: 0 2px; cursor: pointer; font-size: 12px; line-height: 1; }
 .editor-collapse:hover { color: var(--text-primary, #ccc); }
 .editor-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -713,14 +717,9 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .console-panel, .run-page, .terminal-page { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
 .console-tabs-bar { display: flex; align-items: stretch; flex-shrink: 0; background: var(--surface-panel, #1b1c21); border-bottom: 1px solid var(--border, #34353d); }
 .console-tabs { display: flex; flex: 1; min-width: 0; overflow-x: auto; }
-.console-tab { display: flex; flex-shrink: 0; }
 .console-tabs button, .console-collapse, .terminal-add, .terminal-device-picker { border: 0; border-radius: 0; background: transparent; white-space: nowrap; }
-.console-tabs button[role="tab"] { padding: 4px var(--center-label-inset); font: inherit; border-bottom: 2px solid transparent; color: var(--text-secondary, #9fa2b0); }
-.console-tab button[role="tab"] { display: flex; align-items: center; min-width: 0; }
-.console-tabs button[aria-selected="true"] { color: var(--text-primary, #e5eafa); background: var(--surface-control, #242630); border-bottom-color: var(--accent-border, #8fa9e8); }
-.console-tabs button:focus-visible { outline: 1px solid var(--accent-border, #8fa9e8); outline-offset: -3px; }
-.terminal-tab-close { flex-shrink: 0; color: var(--text-secondary, #999daa); padding: 3px 7px; }
-.terminal-tab-close:hover { color: var(--text-primary, #fff); background: var(--danger-surface, #3b3036); }
+.console-tabs button[role="tab"] { padding: 0 var(--center-label-inset); font: inherit; border-bottom: 2px solid transparent; color: var(--text-secondary, #9fa2b0); }
+.console-tab button[role="tab"] { display: flex; align-items: center; min-width: 0; border-bottom: 0; color: inherit; }
 .terminal-add-group { display: flex; flex-shrink: 0; border-left: 1px solid var(--border, #2f3037); }
 .terminal-add { padding: 4px 10px 4px 12px; }
 .terminal-device-picker { padding: 4px 8px 4px 5px; color: var(--text-secondary, #aeb2c0); }
