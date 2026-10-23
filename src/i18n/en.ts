@@ -591,7 +591,7 @@ export const en: Messages = {
     envVars: "Additional environment variables", consoleMode: "Console mode", timeout: "Timeout (seconds)", unlimited: "Unlimited", started: "Started", ended: "Ended", duration: "Duration", exitCode: "Exit code",
     logs: "Output log", noOutput: "No output available", outputTruncated: "Output was truncated; only the first 2 MiB is retained.", restart: "Restart", original: "Rerun on original device", current: "Rerun on current device", more: "Other run options",
     edit: "Edit and Run…", delete: "Delete Record", originalTooltip: "Rerun on original device: {{device}}", currentTooltip: "Rerun on current device: {{device}}",
-    clearWorkspace: "Clear Current Workspace History", clearAll: "Clear All History", deleted: "Removed {{count}} history records", deletedHint: "Run records and logs are retained. Undo to restore them.", undoDelete: "Undo",
+    clearWorkspace: "Clear Current Workspace History", clearAll: "Clear All History", deleted: "Removed {{count}} history records", undoDelete: "Undo",
     deleteFailed: "Could not remove command history", refreshFailed: "Could not refresh command history", loadDeletedFailed: "Could not load recoverable command history",
     latest: "Latest task", result: "Result", noLatest: "No task has been run", showDetails: "View details and output for {{name}}", notRecorded: "Not recorded", envSummary: "{{count}} variables (view values in details)",
     legacy: "This older record has no saved run configuration. Existing output can be viewed; run it again from its original entry.", deviceChanged: "The original device was removed or changed. Review the target device before running.",

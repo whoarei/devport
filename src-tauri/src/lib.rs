@@ -70,6 +70,7 @@ pub fn run() {
             let leases = std::sync::Arc::new(crate::runtime::manager::LeaseSet::default());
             let mut run_manager = RunManager::new(&config_dir, event_tx);
             run_manager.attach_leases(leases.clone());
+            let history_cleanup = run_manager.clone();
 
             let state = AppState {
                 transfer_manager: file_transfer::TransferManager::new(&config_dir),
@@ -82,6 +83,25 @@ pub fn run() {
                 workspace_sessions: remote_workspace::SessionStore::default(),
             };
             app.manage(state);
+
+            // Native timer also runs while the window is hidden in the tray.
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    let manager = history_cleanup.clone();
+                    match tauri::async_runtime::spawn_blocking(move || {
+                        manager.cleanup_deleted_history()
+                    })
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => {
+                            tracing::warn!("could not clean up deleted run history: {error}")
+                        }
+                        Err(error) => tracing::warn!("run history cleanup task failed: {error}"),
+                    }
+                }
+            });
 
             tray::setup(app)?;
 

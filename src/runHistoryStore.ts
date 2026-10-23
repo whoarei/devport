@@ -59,7 +59,6 @@ function addDeletedHistoryEvent(batch: DeletedRunHistory) {
   useEventStore.getState().add({
     id: deletedEventId(batch.id), timestamp: Date.parse(batch.deleted_at), dismissible: false,
     title: () => i18n.t("runHistory.deleted", { count: batch.run_ids.length }),
-    message: () => i18n.t("runHistory.deletedHint"),
     action: { label: () => i18n.t("runHistory.undoDelete"), run: () => serializeHistory(async () => {
       const restored = await api.restoreRunHistory(batch.id);
       useRunHistoryStore.setState({ error: null });
@@ -94,8 +93,11 @@ export function loadDeletedRunHistoryEvents(): Promise<void> {
       for (const event of useEventStore.getState().events) {
         if (event.id.startsWith("history-deleted:") && !ids.has(event.id)) useEventStore.getState().dismiss(event.id);
       }
-      hideHistory(batches.flatMap(b => b.run_ids));
-      batches.forEach(addDeletedHistoryEvent);
+      const newlyHidden = batches.flatMap(b => b.run_ids).filter(id => !useAppStore.getState().deletedRunIds.has(id));
+      if (newlyHidden.length) hideHistory(newlyHidden);
+      // Keep existing action errors and in-flight action identities during periodic refreshes.
+      const existing = new Set(useEventStore.getState().events.map(event => event.id));
+      batches.filter(batch => !existing.has(deletedEventId(batch.id))).forEach(addDeletedHistoryEvent);
     } catch (error) { reportHistoryError("loadDeletedFailed", error); }
   });
 }

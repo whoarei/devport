@@ -12,7 +12,7 @@ use crate::runtime::{code, PreparedEnvironment, RuntimePhase, RuntimeReady};
 use crate::ssh::client::SshConnection;
 use crate::ssh::session::{self, SpawnSpec};
 use crate::workspace_ref::WorkspaceRef;
-use chrono::Local;
+use chrono::{DateTime, Local, Utc};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -134,7 +134,7 @@ pub struct RunStatus {
     /// Submitted inputs only, captured before staging or shell environment resolution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay: Option<Box<RunReplay>>,
-    /// Persisted tombstone; hidden records retain their logs until restored.
+    /// Persisted tombstone; hidden records and logs are retained for seven days.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history_deletion: Option<HistoryDeletion>,
 }
@@ -316,8 +316,14 @@ impl Drop for EnvLeaseGuard {
 }
 
 const HISTORY_LIMIT: usize = 200;
+const DELETED_HISTORY_RETENTION: chrono::Duration = chrono::Duration::days(7);
 /// 单个 run 持久化输出日志的大小上限
 const RUN_LOG_LIMIT: u64 = 2 * 1024 * 1024;
+
+fn history_deletion_expired(deletion: &HistoryDeletion, now: DateTime<Utc>) -> bool {
+    DateTime::parse_from_rfc3339(&deletion.deleted_at)
+        .is_ok_and(|deleted_at| now.signed_duration_since(deleted_at) >= DELETED_HISTORY_RETENTION)
+}
 
 /// run_id 用于拼日志文件名，只允许安全字符，防止路径穿越
 fn valid_run_id(run_id: &str) -> bool {
@@ -372,7 +378,11 @@ fn prune_orphan_logs(logs_dir: &std::path::Path, history: &VecDeque<RunStatus>) 
             continue;
         };
         if !valid_run_id(id) || !keep.contains(id) {
-            let _ = std::fs::remove_file(entry.path());
+            if let Err(error) = std::fs::remove_file(entry.path()) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!("could not remove orphan run log: {error}");
+                }
+            }
         }
     }
 }
@@ -394,7 +404,7 @@ impl RunManager {
             remove_log(&logs_dir, &old.run_id);
         }
         prune_orphan_logs(&logs_dir, &history);
-        Self {
+        let manager = Self {
             handles: Arc::new(Mutex::new(HashMap::new())),
             history: Arc::new(Mutex::new(history)),
             history_path,
@@ -404,7 +414,40 @@ impl RunManager {
             workspace_contexts: Arc::new(Mutex::new(HashMap::new())),
             launches: Arc::new(Mutex::new(HashMap::new())),
             workspace_warnings: Arc::new(Mutex::new(HashMap::new())),
+        };
+        if let Err(error) = manager.cleanup_deleted_history() {
+            tracing::warn!("could not clean up deleted run history: {error}");
         }
+        manager
+    }
+
+    /// Commit expired-record removal before pruning logs. Failed writes preserve records;
+    /// failed log removals are retried by the next sweep, including after a restart.
+    pub fn cleanup_deleted_history(&self) -> Result<()> {
+        self.cleanup_deleted_history_at(Utc::now())
+    }
+
+    fn cleanup_deleted_history_at(&self, now: DateTime<Utc>) -> Result<()> {
+        // Keep the same lock order as archive_history and protect active logs while scanning.
+        let handles = self.handles.lock();
+        let mut history = self.history.lock();
+        let mut next = history.clone();
+        next.retain(|run| {
+            handles.contains_key(&run.run_id)
+                || run.state.is_active()
+                || !run
+                    .history_deletion
+                    .as_ref()
+                    .is_some_and(|deletion| history_deletion_expired(deletion, now))
+        });
+        if next.len() != history.len() {
+            self.write_history(&next)?;
+            *history = next;
+        }
+        let mut retained = history.clone();
+        retained.extend(handles.values().map(|handle| handle.status.clone()));
+        prune_orphan_logs(&self.logs_dir, &retained);
+        Ok(())
     }
 
     /// 与 AppState 共享同一个 LeaseSet（管理命令的删除/GC 据此保护活跃环境）
@@ -609,12 +652,14 @@ impl RunManager {
         let mut history = self.history.lock();
         let mut next = history.clone();
         let mut restored = std::collections::HashSet::new();
+        let now = Utc::now();
         for run in next.iter_mut() {
-            if run
-                .history_deletion
-                .as_ref()
-                .is_some_and(|d| d.id == batch_id)
-            {
+            if let Some(deletion) = run.history_deletion.as_ref().filter(|d| d.id == batch_id) {
+                if history_deletion_expired(deletion, now) {
+                    return Err(RunnerError::InvalidInput(
+                        "Deleted history has expired after seven days".into(),
+                    ));
+                }
                 run.history_deletion = None;
                 restored.insert(run.run_id.clone());
             }
@@ -2879,6 +2924,179 @@ mod tests {
         std::fs::rename(&backup, &path).unwrap();
         manager.restore_history(&batch.id).unwrap();
         assert_eq!(manager.history().len(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn deleted_history_expires_at_seven_days_and_keeps_other_and_active_logs() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        for id in ["first", "second", "recent", "future", "visible", "active"] {
+            manager.handles.lock().insert(id.into(), test_handle(id));
+            manager.emit_output(id, OutputStream::Stdout, id.as_bytes());
+            if id != "active" {
+                manager.finish(id, RunState::Exited, Some(0), None);
+            }
+        }
+        let expired = manager
+            .archive_history(&["first".into(), "second".into()])
+            .unwrap()
+            .unwrap();
+        manager.archive_history(&["recent".into()]).unwrap();
+        manager.archive_history(&["future".into()]).unwrap();
+        let now = Utc::now();
+        {
+            let mut history = manager.history.lock();
+            for run in history.iter_mut() {
+                if let Some(deletion) = &mut run.history_deletion {
+                    deletion.deleted_at = match run.run_id.as_str() {
+                        "first" | "second" => now - DELETED_HISTORY_RETENTION,
+                        "future" => now + chrono::Duration::days(1),
+                        _ => now - chrono::Duration::days(6),
+                    }
+                    .to_rfc3339();
+                }
+            }
+            manager.write_history(&history).unwrap();
+        }
+        manager
+            .cleanup_deleted_history_at(now - chrono::Duration::nanoseconds(1))
+            .unwrap();
+        assert_eq!(manager.deleted_history().len(), 3);
+        assert!(root.join("run_logs/first.log").exists());
+        manager.cleanup_deleted_history_at(now).unwrap();
+        assert_eq!(manager.deleted_history().len(), 2);
+        assert!(manager.restore_history(&expired.id).is_err());
+        for id in ["first", "second"] {
+            assert!(!root.join(format!("run_logs/{id}.log")).exists());
+            assert!(!manager.history.lock().iter().any(|run| run.run_id == id));
+        }
+        for id in ["recent", "future", "visible", "active"] {
+            assert_eq!(
+                std::fs::read(root.join(format!("run_logs/{id}.log"))).unwrap(),
+                id.as_bytes()
+            );
+        }
+        assert!(manager.status("active").unwrap().state.is_active());
+        assert_eq!(manager.history().len(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn startup_cleans_expired_history_without_extending_recent_undo_deadlines() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        for id in ["expired", "recent"] {
+            manager.handles.lock().insert(id.into(), test_handle(id));
+            manager.emit_output(id, OutputStream::Stdout, b"saved output");
+            manager.finish(id, RunState::Exited, Some(0), None);
+        }
+        let expired = manager
+            .archive_history(&["expired".into()])
+            .unwrap()
+            .unwrap();
+        let recent = manager
+            .archive_history(&["recent".into()])
+            .unwrap()
+            .unwrap();
+        let recent_date = (Utc::now() - chrono::Duration::days(6)).to_rfc3339();
+        {
+            let mut history = manager.history.lock();
+            for run in history.iter_mut() {
+                run.history_deletion.as_mut().unwrap().deleted_at = if run.run_id == "expired" {
+                    (Utc::now() - chrono::Duration::days(8)).to_rfc3339()
+                } else {
+                    recent_date.clone()
+                };
+            }
+            manager.write_history(&history).unwrap();
+        }
+        // An old frontend action cannot restore expired data before the next sweep.
+        assert!(manager
+            .restore_history(&expired.id)
+            .unwrap_err()
+            .to_string()
+            .contains("expired"));
+        drop(manager);
+        let (tx, _) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        let batches = manager.deleted_history();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].id, recent.id);
+        assert_eq!(batches[0].deleted_at, recent_date);
+        assert!(!root.join("run_logs/expired.log").exists());
+        assert!(root.join("run_logs/recent.log").exists());
+        let saved: VecDeque<RunStatus> =
+            serde_json::from_slice(&std::fs::read(root.join("history.json")).unwrap()).unwrap();
+        assert_eq!(saved.len(), 1);
+        manager.restore_history(&recent.id).unwrap();
+        assert!(!manager.read_history_output("recent").unwrap().is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn expired_history_write_failure_preserves_records_and_logs_for_retry() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        manager
+            .handles
+            .lock()
+            .insert("saved".into(), test_handle("saved"));
+        manager.emit_output("saved", OutputStream::Stdout, b"output");
+        manager.finish("saved", RunState::Exited, Some(0), None);
+        let batch = manager.archive_history(&["saved".into()]).unwrap().unwrap();
+        let expired_at = Utc::now() + chrono::Duration::days(8);
+        let path = root.join("history.json");
+        let backup = root.join("history-backup.json");
+        let original = std::fs::read(&path).unwrap();
+        std::fs::rename(&path, &backup).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(manager.cleanup_deleted_history_at(expired_at).is_err());
+        assert_eq!(manager.deleted_history()[0].id, batch.id);
+        assert_eq!(std::fs::read(&backup).unwrap(), original);
+        assert_eq!(
+            std::fs::read(root.join("run_logs/saved.log")).unwrap(),
+            b"output"
+        );
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::rename(&backup, &path).unwrap();
+        manager.cleanup_deleted_history_at(expired_at).unwrap();
+        assert!(manager.deleted_history().is_empty());
+        assert!(!root.join("run_logs/saved.log").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cleanup_retries_locked_orphan_logs_after_metadata_is_removed() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        manager
+            .handles
+            .lock()
+            .insert("saved".into(), test_handle("saved"));
+        manager.emit_output("saved", OutputStream::Stdout, b"output");
+        manager.finish("saved", RunState::Exited, Some(0), None);
+        manager.archive_history(&["saved".into()]).unwrap();
+        let path = root.join("run_logs/saved.log");
+        let locked = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        manager
+            .cleanup_deleted_history_at(Utc::now() + chrono::Duration::days(8))
+            .unwrap();
+        assert!(manager.deleted_history().is_empty());
+        assert!(path.exists());
+        drop(locked);
+        manager.cleanup_deleted_history().unwrap();
+        assert!(!path.exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 

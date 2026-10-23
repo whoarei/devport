@@ -671,6 +671,7 @@ pub fn archive_run_history(
 pub fn list_deleted_run_history(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<crate::runner::DeletedRunHistory>> {
+    state.run_manager.cleanup_deleted_history()?;
     Ok(state.run_manager.deleted_history())
 }
 

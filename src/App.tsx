@@ -66,11 +66,16 @@ export default function App() {
     const report = (error: unknown) => useAppStore.setState({ editorError: errorMessage(error) });
     const devicesReady = loadDevices().catch(report);
     void loadDeletedDeviceEvents();
-    void loadDeletedRunHistoryEvents();
     restoreWorkEnvironment(devicesReady);
     void loadRuns().catch(report);
     return onRunEvents((events) => { handleRunEvents(events); useWorkspaceRunStore.getState().events(events); }, report);
   }, [loadDevices, loadRuns, handleRunEvents]);
+
+  useEffect(() => {
+    void loadDeletedRunHistoryEvents();
+    const timer = setInterval(() => void loadDeletedRunHistoryEvents(), 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
   // 启动后静默检查一次更新；发现新版本时点亮标题栏「更新」按钮，失败不打扰用户。
   useEffect(() => {

@@ -163,6 +163,7 @@ test("clear follows the visible workspace scope, preserves active runs, and its 
   assert.equal(event.timestamp, Date.parse("2026-10-22T06:00:00Z"));
   assert.equal(event.dismissible, false);
   assert.equal(eventText(event.title), "已移除 1 条历史命令");
+  assert.equal(event.message, undefined);
   await useEventStore.getState().runAction(event.id);
   assert.deepEqual(useAppStore.getState().runs.old, old);
   assert.deepEqual(useAppStore.getState().runs.old.replay, old.replay);
@@ -272,5 +273,24 @@ test("persistent deleted-history events rebuild without duplicates and follow la
   await i18n.changeLanguage("en");
   assert.equal(eventText(event.title), "Removed 2 history records");
   assert.equal(eventText(event.action!.label), "Undo");
+  assert.ok(!useAppStore.getState().runs.old);
+});
+
+test("deleted-history refresh removes expired events and preserves unrelated events and retry errors", async t => {
+  setup(t);
+  let batches = [{ id: "expired", deleted_at: "2026-10-15T06:00:00Z", run_ids: ["old"] },
+    { id: "recent", deleted_at: "2026-10-22T06:00:00Z", run_ids: ["another"] }];
+  t.mock.method(api, "listDeletedRunHistory", async () => batches);
+  t.mock.method(api, "restoreRunHistory", async () => { throw new Error("disk unavailable"); });
+  useEventStore.getState().add({ id: "other", timestamp: Date.now(), title: "Other event" });
+  await loadDeletedRunHistoryEvents();
+  await useEventStore.getState().runAction("history-deleted:recent");
+  const recent = useEventStore.getState().events.find(event => event.id === "history-deleted:recent");
+  assert.equal(recent?.actionError, "disk unavailable");
+  batches = batches.filter(batch => batch.id !== "expired");
+  await loadDeletedRunHistoryEvents();
+  assert.deepEqual(new Set(useEventStore.getState().events.map(event => event.id)), new Set(["other", "history-deleted:recent"]));
+  assert.equal(useEventStore.getState().events.find(event => event.id === "history-deleted:recent"), recent);
+  assert.equal(useAppStore.getState().deletedRunIds.has("old"), true);
   assert.ok(!useAppStore.getState().runs.old);
 });
