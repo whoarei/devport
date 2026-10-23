@@ -40,14 +40,14 @@ export function RunToolbar() {
       {feature.info?.project && !feature.checking && <span className="secondary-text">{t(feature.cached ? "runnerEntry.cached" : "runnerEntry.notPrepared")}</span>}
       {feature.infoError && <span className="runtime-error" title={feature.infoError}>{t("workspaceRun.invalidConfig")}</span>}
     </div>
-    <div className="run-toolbar-options">
-      <span className="run-latest-task" aria-label={t("runHistory.latest")} title={active ? `${active.label} @ ${active.device_name}` : undefined}>{active ? `${active.label} @ ${active.device_name}` : t("runHistory.noLatest")}</span>
-      {active && <span className={`run-state state-${active.state}`} role="status">{active.waiting_workspace ? t("workspaceSync.waiting") : runStateLabel(active.state)}{active.phase ? ` · ${runPhaseLabel(active.phase)}` : ""}{progress ? ` · ${progress}` : ""}{active.exit_code != null ? ` (${active.exit_code})` : ""}</span>}
+    {active && <div className="run-toolbar-options">
+      <span className="run-latest-task" aria-label={t("runHistory.latest")} title={`${active.label} @ ${active.device_name}`}>{`${active.label} @ ${active.device_name}`}</span>
+      <span className={`run-state state-${active.state}`} role="status">{active.waiting_workspace ? t("workspaceSync.waiting") : runStateLabel(active.state)}{active.phase ? ` · ${runPhaseLabel(active.phase)}` : ""}{progress ? ` · ${progress}` : ""}{active.exit_code != null ? ` (${active.exit_code})` : ""}</span>
       <button className="danger" disabled={!appCommandEnabled("stop", { area: "run", runId: activeRunId ?? undefined })}
-        title={shortcutTitle(`${t("run.stop")}${active ? ` · ${active.label} @ ${active.device_name}` : ""}`, "stop")}
+        title={shortcutTitle(`${t("run.stop")} · ${active.label} @ ${active.device_name}`, "stop")}
         onClick={() => void executeAppCommand("stop", { area: "run", runId: activeRunId ?? undefined })}>{t("run.stop")}</button>
       <RunReplayButton run={active} />
-    </div>
+    </div>}
     {launch && <div className="run-launch" title={launch.python_path.join("\n")}>
       <strong>{launch.environment === "command" ? t("workspaceRun.presetShell") : launch.environment === "bash" ? "Bash" : launch.environment === "project" ? t("workspaceRun.project") : t("workspaceRun.system")}</strong>
       <code>{launch.program}</code>{launch.version && <span>{launch.version}</span>}<span>cwd: {launch.cwd}</span>
