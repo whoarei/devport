@@ -10,6 +10,9 @@ import { UnsavedDialog } from "../src/components/UnsavedDialog";
 import { api, localWorkspace, WorkspaceEntry } from "../src/api";
 import { useAppStore } from "../src/store";
 import { rootTree, WORKSPACE_ROOT } from "../src/workspaceTree";
+import { endAppTabCycle, handleAppKeyDown, handleAppKeyUp } from "../src/appShortcuts";
+import { trackEditorTabUsage } from "../src/editorTabCycle";
+import { restoredTab } from "../src/environmentState";
 import "../src/styles.css";
 
 const files: Record<string, { content: string; revision: string }> = {
@@ -53,6 +56,7 @@ function renamePath(path: string, target: string) {
 }
 
 api.readWorkspaceFile = async (_dir, name) => {
+  await new Promise(resolve => setTimeout(resolve, 80));
   const file = files[name];
   if (!file) throw { code: "not_found", message: `文件不存在：${name}` };
   return { ...file, eol: "lf", bom: false };
@@ -94,10 +98,25 @@ useAppStore.setState({ workspace, recentWorkspaces: [workspace],
   workspaceTree: rootTree(await api.listWorkspaceDir(workspace, WORKSPACE_ROOT)),
   selectedDeviceId: "mock",
   openTabs: [{ name: "main.py", fileContent: files["main.py"].content, savedContent: files["main.py"].content,
-    revision: "1", eol: "lf", bom: false, language: "python", conflict: false, generation: 1 }],
+    revision: "1", eol: "lf", bom: false, language: "python", conflict: false, generation: 1 },
+    restoredTab({ name: "notes.txt", language: "text" })],
   activeFile: "main.py" });
 
 function Fixture() {
+  React.useEffect(() => {
+    const stopTracking = trackEditorTabUsage();
+    const keydown = (event: KeyboardEvent) => { handleAppKeyDown(event, () => {}); };
+    const keyup = (event: KeyboardEvent) => { handleAppKeyUp(event); };
+    window.addEventListener("keydown", keydown, true);
+    window.addEventListener("keyup", keyup, true);
+    window.addEventListener("blur", endAppTabCycle);
+    return () => {
+      window.removeEventListener("keydown", keydown, true);
+      window.removeEventListener("keyup", keyup, true);
+      window.removeEventListener("blur", endAppTabCycle);
+      stopTracking();
+    };
+  }, []);
   return <div className="app">
     <UnsavedDialog />
     <header style={{ padding: 8, flexShrink: 0 }}>编辑器与文件管理交互验收（模拟文件接口，不连接设备）

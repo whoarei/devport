@@ -24,12 +24,12 @@ import { clampSidebarWidth, clampSplit, panelCollapsePatch, DEFAULT_LAYOUT } fro
 import { panelsInDock, type PanelId } from "./panels/registry";
 import { PANEL_COMPONENTS } from "./panels/components";
 import { checkForAvailableUpdate } from "./updateStatus";
-import { endConsoleTabCycle, handleConsoleTabKeyUp } from "./consoleTabs";
+import { trackEditorTabUsage } from "./editorTabCycle";
 import { applyUiZoom, changeUiZoom, loadUiZoom, saveUiZoom, type UiZoomAction } from "./uiZoom";
 import { restoreWorkEnvironment } from "./workEnvironment";
 import { loadDeletedDeviceEvents } from "./deviceActions";
 import { loadDeletedRunHistoryEvents } from "./runHistoryStore";
-import { handleAppKeyDown } from "./appShortcuts";
+import { endAppTabCycle, handleAppKeyDown, handleAppKeyUp } from "./appShortcuts";
 import { ShortcutsDialog } from "./components/ShortcutsDialog";
 import { isExecutionRun } from "./runState";
 
@@ -86,9 +86,10 @@ export default function App() {
 
   useEffect(() => {
     // capture 阶段统一接管，确保事件不会先后被 xterm 与 window 处理两次。
+    const stopTracking = trackEditorTabUsage();
     const onKeyDown = (event: KeyboardEvent) => { handleAppKeyDown(event, updateUiZoom); };
-    const onKeyUp = (event: KeyboardEvent) => { handleConsoleTabKeyUp(event); };
-    const onBlur = () => endConsoleTabCycle();
+    const onKeyUp = (event: KeyboardEvent) => { handleAppKeyUp(event); };
+    const onBlur = () => endAppTabCycle();
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("blur", onBlur);
@@ -96,7 +97,8 @@ export default function App() {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("blur", onBlur);
-      endConsoleTabCycle();
+      endAppTabCycle();
+      stopTracking();
     };
   }, [updateUiZoom]);
 

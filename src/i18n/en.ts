@@ -10,10 +10,10 @@ export const en: Messages = {
     saveFile: "Save Current File", saveAll: "Save All Files", closeFile: "Close Current File",
     runFile: "Run Current Script", runWithArgs: "Run Current Script with Arguments…", rerun: "Run Again with Original Settings", stop: "Stop Selected Task",
     newTerminal: "New Default Device Terminal", focusConsole: "Focus Console", focusEditor: "Focus Editor", toggleSidebar: "Show / Hide Sidebar",
-    cycleTabs: "Switch Run / Terminal Tab", zoom: "Zoom In / Out / Reset", find: "Find in File", clipboard: "Copy / Paste",
+    cycleTabs: "Switch Tabs in Focused Area", zoom: "Zoom In / Out / Reset", find: "Find in File", clipboard: "Copy / Paste",
     scope_app: "Main window, outside terminals", scope_files: "File tree or editor", scope_editor: "Editor",
     scope_script: "Current .py / .sh file in editor, or focused script in tree", scope_run: "Run toolbar or focused history record",
-    scope_navigation: "Main window, including terminals", scope_tabs: "Run and terminal tabs, outside dialogs", scope_terminal: "Standalone terminal",
+    scope_navigation: "Main window, including terminals", scope_tabs: "Files in editor; run / terminal tabs elsewhere, outside dialogs", scope_terminal: "Standalone terminal",
   },
   environment: {
     saveFailed: "Could not save the work environment: {{message}}",

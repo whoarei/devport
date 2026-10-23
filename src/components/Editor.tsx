@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Compartment, EditorState } from "@codemirror/state";
@@ -50,7 +50,7 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
   const handlers = useRef({ active, onCursor, focusToolbar });
   handlers.current = { active, onCursor, focusToolbar };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!parent.current) return;
     const source = useAppStore.getState().workspace;
     const initial = useAppStore.getState().openTabs.find((file) => file.name === tab);
@@ -123,8 +123,16 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
     } });
     restoreLocation.current();
     report(editor.state);
-    return () => { capture(editor); editor.scrollDOM.removeEventListener("scroll", onScroll);
-      editor.destroy(); view.current = null; restoreLocation.current = null; };
+    return () => {
+      // A restored file replaces its loading view; carry keyboard focus to the loaded document.
+      const state = useAppStore.getState();
+      const current = state.openTabs.find((file) => file.name === tab);
+      if (editor.hasFocus && state.activeFile === tab && current && current.generation !== initial?.generation
+        && workspaceRefEquals(source, state.workspace)) useCommandUiStore.setState({ focus: "editor" });
+      capture(editor);
+      editor.scrollDOM.removeEventListener("scroll", onScroll);
+      editor.destroy(); view.current = null; restoreLocation.current = null;
+    };
     // A document generation remounts this component; ordinary edits preserve history.
   }, []);
 

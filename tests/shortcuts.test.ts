@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { APP_SHORTCUTS, matchAppShortcut, shortcutLabel, type AppCommandId, type ShortcutContext } from "../src/shortcuts";
-import { handleAppKeyDown, handleAppShortcut, shortcutContext } from "../src/appShortcuts";
+import { endAppTabCycle, handleAppKeyDown, handleAppKeyUp, handleAppShortcut, shortcutContext } from "../src/appShortcuts";
 import { appCommandEnabled, executeAppCommand, scriptCommand } from "../src/appCommands";
 import { api, localWorkspace, type DeviceProfile, type RunStatus } from "../src/api";
 import { useAppStore } from "../src/store";
@@ -16,6 +16,8 @@ import { type EditorTab } from "../src/editorDocument";
 import { ShortcutsDialog } from "../src/components/ShortcutsDialog";
 import { handleRunConsoleKey } from "../src/runConsoleInput";
 import { endConsoleTabCycle } from "../src/consoleTabs";
+import { trackEditorTabUsage } from "../src/editorTabCycle";
+import { restoredTab } from "../src/environmentState";
 import { RunReplayButton } from "../src/components/RunReplayButton";
 import i18n from "../src/i18n";
 
@@ -41,7 +43,9 @@ const run = (id: string, state = "running"): RunStatus => ({ run_id: id, device_
 function reset(t: test.TestContext) {
   const app = useAppStore.getState(), feature = useWorkspaceRunStore.getState(), history = useRunHistoryStore.getState();
   const terminals = useTerminalStore.getState(), ui = useCommandUiStore.getState();
+  let stopTracking = () => {};
   t.after(() => {
+    endAppTabCycle(); stopTracking();
     useAppStore.setState(app, true); useWorkspaceRunStore.setState(feature, true);
     useRunHistoryStore.setState(history, true); useTerminalStore.setState(terminals, true); useCommandUiStore.setState(ui, true);
   });
@@ -52,6 +56,7 @@ function reset(t: test.TestContext) {
   useRunHistoryStore.setState({ busy: false, error: null });
   useTerminalStore.setState({ tabs: [], activeTab: "run", shuttingDown: false });
   useCommandUiStore.setState({ focus: null, shortcutsOpen: false });
+  stopTracking = trackEditorTabUsage();
 }
 
 test("fixed bindings match exact modifiers, Mac primary keys and physical terminal control keys", () => {
@@ -122,6 +127,122 @@ test("the complete route consumes zoom and Ctrl+Tab exactly once, preserves repe
   }
   assert.equal(useTerminalStore.getState().activeTab, "run");
   assert.deepEqual(zooms, ["in", "in", "out", "reset"]);
+});
+
+test("Ctrl+Tab follows editor focus, wraps both ways and keeps dirty documents and console selection", t => {
+  reset(t);
+  const tabs = [file("a.py"), file("b.py"), file("c.py")];
+  useAppStore.setState({ openTabs: tabs, activeFile: "a.py" });
+  useTerminalStore.setState({ tabs: [{ id: "terminal", deviceId: "default", deviceName: "default", busy: false }],
+    activeTab: "terminal", tabCycleOrder: "sequential" });
+  const zoom = () => assert.fail("tab switching changed zoom");
+  for (const [patch, expected] of [
+    [{}, "b.py"], [{ repeat: true }, "c.py"], [{}, "a.py"], [{ shiftKey: true }, "c.py"],
+  ] as const) {
+    const event = key("Tab", { ctrlKey: true, ...patch });
+    assert.equal(handleAppKeyDown(event, zoom, { area: "editor" }), true);
+    assert.equal(useAppStore.getState().activeFile, expected);
+    assert.equal(useTerminalStore.getState().activeTab, "terminal");
+    assert.equal(useCommandUiStore.getState().focus, "editor");
+    assert.deepEqual(event.counts(), { prevented: 1, stopped: 1 });
+    assert.equal(useAppStore.getState().openTabs, tabs, "switching must retain unsaved edits and document identity");
+  }
+  handleAppKeyDown(key("Tab", { ctrlKey: true }), zoom, { area: "run", terminal: true });
+  assert.equal(useTerminalStore.getState().activeTab, "run");
+  assert.equal(useAppStore.getState().activeFile, "c.py");
+});
+
+test("editor MRU stays stable until Control release and commits the final choice on window blur", t => {
+  reset(t);
+  useAppStore.setState({ openTabs: [file("a"), file("b"), file("c")], activeFile: "a" });
+  const select = useAppStore.getState().activateFile;
+  select("c"); select("b"); // Most recent: b, c, a; visual order differs.
+  useTerminalStore.setState({ tabCycleOrder: "mru" });
+  const cycle = (reverse = false) => handleAppKeyDown(key("Tab", { ctrlKey: true, shiftKey: reverse }), () => {}, { area: "editor" });
+  cycle(); assert.equal(useAppStore.getState().activeFile, "c");
+  cycle(); assert.equal(useAppStore.getState().activeFile, "a");
+  cycle(true); assert.equal(useAppStore.getState().activeFile, "c");
+  assert.equal(handleAppKeyUp(key("Tab")), false);
+  assert.equal(handleAppKeyUp(key("Control")), true); // Commit c, b, a.
+  cycle(); assert.equal(useAppStore.getState().activeFile, "b");
+  endAppTabCycle(); // Same path as window blur; commit b, c, a.
+  cycle(); assert.equal(useAppStore.getState().activeFile, "c");
+});
+
+test("editor cycles filter closed tabs, include new tabs and reset MRU when the workspace changes", t => {
+  reset(t);
+  const tabs = [file("a"), file("b"), file("c")];
+  useAppStore.setState({ openTabs: tabs, activeFile: "a" });
+  useAppStore.getState().activateFile("c"); useAppStore.getState().activateFile("b");
+  useTerminalStore.setState({ tabCycleOrder: "mru" });
+  const cycle = () => handleAppKeyDown(key("Tab", { ctrlKey: true }), () => {}, { area: "editor" });
+  cycle(); assert.equal(useAppStore.getState().activeFile, "c");
+  useAppStore.setState({ openTabs: [tabs[1], tabs[2], file("d")] });
+  cycle(); assert.equal(useAppStore.getState().activeFile, "d");
+  useAppStore.setState({ workspace: localWorkspace("/other"), openTabs: tabs, activeFile: "b" });
+  cycle(); assert.equal(useAppStore.getState().activeFile, "a", "old workspace history must not leak");
+});
+
+test("empty, single-file and guarded editors never fall through to terminal switching", t => {
+  reset(t);
+  useTerminalStore.setState({ tabs: [{ id: "terminal", deviceId: "default", deviceName: "default", busy: false }] });
+  for (const patch of [
+    { openTabs: [], activeFile: null }, { openTabs: [file("a")], activeFile: "a" },
+    { openTabs: [file("a"), file("b")], activeFile: "a", guarding: true },
+  ]) {
+    useAppStore.setState(patch);
+    const event = key("Tab", { ctrlKey: true });
+    assert.equal(handleAppKeyDown(event, () => {}, { area: "editor" }), true);
+    assert.equal(useAppStore.getState().activeFile, patch.activeFile);
+    assert.equal(useTerminalStore.getState().activeTab, "run");
+  }
+});
+
+test("editor tab switching respects dialogs, composition and exact modifiers", t => {
+  reset(t);
+  useAppStore.setState({ openTabs: [file("a"), file("b")], activeFile: "a" });
+  for (const patch of [{ ctrlKey: false }, { altKey: true }, { metaKey: true }, { isComposing: true },
+    { keyCode: 229 }, { defaultPrevented: true }, { getModifierState: () => true }]) {
+    const event = key("Tab", { ctrlKey: true, ...patch });
+    assert.equal(handleAppKeyDown(event, () => {}, { area: "editor" }), false);
+    assert.deepEqual(event.counts(), { prevented: 0, stopped: 0 });
+  }
+  assert.equal(handleAppKeyDown(key("Tab", { ctrlKey: true }), () => {}, { area: "editor", modal: true }), false);
+  assert.equal(useAppStore.getState().activeFile, "a");
+});
+
+test("cycling to a restored file loads it through the existing file path without saving drafts", async t => {
+  reset(t);
+  const draft = restoredTab({ name: "draft.py", language: "python", draft: {
+    content: "unsaved", saved_content: "disk", revision: "v1", eol: "lf", bom: false,
+  } });
+  useAppStore.setState({ openTabs: [file("a"), draft], activeFile: "a" });
+  useTerminalStore.setState({ tabCycleOrder: "sequential" });
+  const read = t.mock.method(api, "readWorkspaceFile", async () => ({ content: "disk", revision: "v1", eol: "lf" as const, bom: false }));
+  t.mock.method(api, "writeWorkspaceFile", async () => assert.fail("switching saved a draft"));
+  handleAppKeyDown(key("Tab", { ctrlKey: true }), () => {}, { area: "editor" });
+  await new Promise(resolve => setImmediate(resolve));
+  const state = useAppStore.getState();
+  assert.equal(read.mock.callCount(), 1);
+  assert.equal(state.activeFile, "draft.py");
+  assert.equal(state.openTabs[1].loaded, true);
+  assert.equal(state.openTabs[1].fileContent, "unsaved");
+  assert.equal(state.openTabs[1].savedContent, "disk");
+});
+
+test("cycling past a loading restored file cancels its stale activation", async t => {
+  reset(t);
+  useAppStore.setState({ openTabs: [file("a"), restoredTab({ name: "b", language: "text" }), file("c")], activeFile: "a" });
+  useTerminalStore.setState({ tabCycleOrder: "sequential" });
+  let complete!: (doc: { content: string; revision: string; eol: "lf"; bom: boolean }) => void;
+  t.mock.method(api, "readWorkspaceFile", () => new Promise(resolve => { complete = resolve; }));
+  const cycle = () => handleAppKeyDown(key("Tab", { ctrlKey: true }), () => {}, { area: "editor" });
+  cycle(); assert.equal(useAppStore.getState().activeFile, "b");
+  cycle(); assert.equal(useAppStore.getState().activeFile, "c");
+  complete({ content: "disk", revision: "v1", eol: "lf", bom: false });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(useAppStore.getState().activeFile, "c");
+  assert.equal(useAppStore.getState().loading, false);
 });
 
 test("terminal allowlist only dispatches the explicit focus and new-terminal combinations", () => {

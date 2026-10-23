@@ -1,7 +1,8 @@
 import { useAppStore } from "./store";
 import { executeAppCommand } from "./appCommands";
 import { matchAppShortcut, shortcutApplies, type AppCommandId, type ShortcutContext } from "./shortcuts";
-import { handleConsoleTabKeyDown } from "./consoleTabs";
+import { endConsoleTabCycle, handleConsoleTabKeyDown } from "./consoleTabs";
+import { endEditorTabCycle, handleEditorTabKeyDown } from "./editorTabCycle";
 import { uiZoomShortcut, type UiZoomAction } from "./uiZoom";
 
 export function shortcutContext(target: EventTarget | null): ShortcutContext {
@@ -43,7 +44,18 @@ export function handleAppShortcut(event: KeyboardEvent, context: ShortcutContext
   return true;
 }
 
-/** The sole capture-stage route, including the pre-existing zoom and console tab bindings. */
+export function endAppTabCycle(): void {
+  endEditorTabCycle();
+  endConsoleTabCycle();
+}
+
+export function handleAppKeyUp(event: KeyboardEvent): boolean {
+  if (event.key !== "Control") return false;
+  endAppTabCycle();
+  return true;
+}
+
+/** The sole capture-stage route, including zoom and focus-scoped tab switching. */
 export function handleAppKeyDown(event: KeyboardEvent, updateUiZoom: (action: UiZoomAction) => void,
   context = shortcutContext(event.target)): boolean {
   if (shortcutInputBlocked(event)) return false;
@@ -56,5 +68,10 @@ export function handleAppKeyDown(event: KeyboardEvent, updateUiZoom: (action: Ui
     updateUiZoom(zoom);
     return true;
   }
+  if (context.area === "editor") {
+    endConsoleTabCycle();
+    return handleEditorTabKeyDown(event);
+  }
+  endEditorTabCycle();
   return handleConsoleTabKeyDown(event);
 }
