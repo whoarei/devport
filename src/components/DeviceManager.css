@@ -1,12 +1,13 @@
 .device-dialog.device-manager {
   width: min(900px, calc(100vw / var(--browser-ui-zoom, 1) - 32px));
-  height: min(720px, calc(100vh / var(--browser-ui-zoom, 1) - 48px));
+  height: min(680px, calc(100vh / var(--browser-ui-zoom, 1) - 48px));
   max-height: calc(100vh / var(--browser-ui-zoom, 1) - 32px);
 }
-.device-manager .device-dialog-header { padding: 18px 22px; }
-.device-manager .device-heading h3 { font-weight: 500; }
-.device-manager-body { display: grid; grid-template-columns: 236px minmax(0, 1fr); flex: 1; min-height: 0; }
-.device-manager-sidebar { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-width: 0; padding: 18px 12px 12px; background: var(--surface-panel, #1b1c21); border-right: 1px solid var(--border, #34363f); }
+.device-manager .device-dialog-header { padding: 14px 18px; gap: 10px; }
+.device-manager .device-heading-icon { width: 32px; height: 32px; border-radius: 8px; }
+.device-manager .device-heading h3 { font-size: 16px; font-weight: 500; }
+.device-manager-body { display: grid; grid-template-columns: 202px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; flex: 1; min-height: 0; }
+.device-manager-sidebar { grid-area: 1 / 1; display: flex; flex-direction: column; gap: 10px; min-height: 0; min-width: 0; padding: 14px 10px 10px; background: var(--surface-panel, #1b1c21); border-right: 1px solid var(--border, #34363f); }
 .device-manager-list-heading { display: flex; align-items: center; gap: 8px; padding: 0 5px; font-size: 12px; }
 .device-manager-list-heading span { color: var(--text-muted, #888); }
 .device-manager-add { width: 100%; flex-shrink: 0; }
@@ -30,16 +31,19 @@
 .device-manager-row-name > span { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .device-manager-row-name small { flex-shrink: 0; font-size: 11px; color: var(--accent, #aac4ff); }
 .device-manager-row-detail { display: block; margin-top: 4px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-size: 11px; color: var(--text-muted, #888); }
-.device-manager-list-footer { color: var(--text-muted, #888); font-size: 11px; }
-.device-manager-list-footer > span { display: flex; gap: 4px; align-items: center; }
+.device-manager-list-footer { display: flex; gap: 8px; align-items: center; color: var(--text-muted, #888); font-size: 11px; }
+.device-manager-list-footer > span { display: flex; gap: 4px; align-items: center; flex: 1; min-width: 0; }
 .device-manager-list-footer > span > svg { width: 13px; height: 13px; }
-.device-manager-list-footer > div { display: flex; gap: 6px; margin-top: 8px; }
-.device-manager .device-manager-list-footer .device-icon-button { border: 1px solid var(--border, #34363f); }
-.device-editor { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.device-editor-header { display: flex; gap: 10px; align-items: flex-start; padding: 20px 22px 4px; flex-shrink: 0; }
-.device-editor-header h4 { font-size: 16px; font-weight: 500; margin: 0; overflow-wrap: anywhere; }
-.device-manager .device-editor > .device-dialog-body { padding: 16px 22px; flex: 1; }
+.device-manager-list-footer > div { display: flex; gap: 4px; }
+.device-manager .device-manager-list-footer .device-icon-button { width: 22px; min-height: 26px; border: 1px solid var(--border, #34363f); }
+.device-editor { grid-area: 1 / 2; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.device-manager .device-editor > .device-dialog-body { padding: 16px 20px; flex: 1; }
 .device-editor-fields { min-width: 0; border: 0; padding: 0; margin: 0; }
+.device-name-heading { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.device-name-actions { display: flex; gap: 4px; align-items: center; }
+.device-dialog.device-manager .device-name-reset { min-height: 24px; padding: 2px 5px; border: 0; background: transparent; color: var(--text-secondary, #959ba9); font-size: 11px; }
+.device-dialog.device-manager .device-name-reset:hover:not(:disabled) { background: var(--surface-hover, #30323b); color: var(--text-primary, #ddd); }
+.device-manager .device-name-actions .device-icon-button { width: 24px; min-height: 24px; }
 .device-manager .device-section h4 { margin-bottom: 8px; font-weight: 400; color: var(--text-secondary, #959ba9); }
 .device-manager .device-section + .device-section { margin-top: 12px; }
 .device-manager .device-fields { gap: 12px; }
@@ -54,31 +58,32 @@
 .device-dialog.device-manager .device-transport[aria-pressed="true"] { background: var(--surface-raised, #262830); }
 .device-manager .device-host-fields { grid-template-columns: minmax(0, 1fr) 80px; gap: 12px; }
 .device-manager .device-notice { padding: 8px 10px; }
-.device-manager .device-dialog-footer { padding: 14px 22px; border-top: 0; gap: 8px; }
+.device-settings { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.device-settings-options { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--border, #34363f); }
+.device-settings-options .device-option { flex: 1; min-width: min(240px, 100%); }
+.device-manager .device-dialog-footer { grid-area: 2 / 1 / 3 / -1; padding: 12px 20px 12px 222px; gap: 8px; }
 .device-dirty-label { color: var(--text-muted, #888); font-size: 11px; }
 .device-dirty-label.dirty { color: var(--warning, #d8b878); }
 .device-manager .device-delete.device-icon-button { color: var(--text-muted, #888); }
 .device-manager .device-delete.device-icon-button:hover { color: var(--danger, #e59c9c); }
-.device-manager-footer { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--border, #34363f); }
-.device-manager-footer > span { display: flex; align-items: center; gap: 6px; color: var(--text-muted, #888); font-size: 11px; }
-.device-manager-footer svg { color: var(--success, #83c095); width: 14px; height: 14px; }
 .device-manager-error { padding: 8px 18px; flex-shrink: 0; max-height: 100px; overflow-y: auto; overflow-wrap: anywhere; color: var(--danger, #fca5a5); background: var(--danger-surface, #351f27); font-size: 12px; }
 .device-manager-empty { text-align: center; color: var(--text-muted, #888); font-size: 12px; padding: 20px 0; }
-.device-manager-empty-editor { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; gap: 12px; padding: 24px; text-align: center; color: var(--text-muted, #888); }
+.device-manager-empty-editor { grid-area: 1 / 2; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; gap: 12px; padding: 24px; text-align: center; color: var(--text-muted, #888); }
 .device-manager-empty-editor p { margin: 0; }
 .device-changes-dialog .dialog-actions { flex-wrap: wrap; }
 @media (max-width: 740px) {
-  .device-manager-body { grid-template-columns: 200px minmax(0, 1fr); }
-  .device-editor-header { padding: 18px 16px 4px; }
+  .device-manager-body { grid-template-columns: 180px minmax(0, 1fr); }
   .device-manager .device-editor > .device-dialog-body { padding: 14px 16px; }
-  .device-manager .device-dialog-footer { padding: 12px 16px; }
+  .device-manager .device-dialog-footer { padding: 12px 16px 12px 196px; }
   .device-dialog.device-manager .device-transport > svg { display: none; }
   .device-dirty-label { display: none; }
 }
 @media (max-width: 540px) {
-  .device-manager-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 180px) minmax(0, 1fr); }
+  .device-manager-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 180px) minmax(0, 1fr) auto; }
   .device-manager-sidebar { border-right: 0; border-bottom: 1px solid var(--border, #34363f); gap: 8px; padding: 10px 12px; }
   .device-manager-list-heading { display: none; }
+  .device-editor, .device-manager-empty-editor { grid-area: 2 / 1; }
+  .device-manager .device-dialog-footer { grid-area: 3 / 1; padding: 12px 16px; }
   .device-manager .device-manager-add { min-height: 30px; padding: 3px 12px; }
   .device-manager-list-footer { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
   .device-manager-list-footer > div { margin: 0; }

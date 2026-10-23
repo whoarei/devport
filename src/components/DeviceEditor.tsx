@@ -54,10 +54,11 @@ interface DeviceEditorProps {
   busy: boolean;
   testing: boolean;
   onTesting: (value: boolean) => void;
+  status: string | null;
 }
 
 /** Attribute form; the manager owns the draft, persistence and navigation guards. */
-export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange: update, onSave, onDelete, dirty, busy, testing, onTesting }: DeviceEditorProps) {
+export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange: update, onSave, onDelete, dirty, busy, testing, onTesting, status }: DeviceEditorProps) {
   const { t } = useTranslation();
   const [testResult, setTestResult] = useState<string | null>(null);
   const [ports, setPorts] = useState<string[]>([]);
@@ -117,25 +118,21 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
     { value: "local", label: t("device.local"), hint: t("device.localHint") },
   ] as const;
 
-  return (
+  return <>
     <section className="device-editor" aria-label={t("device.connectionSettings")}>
-      <header className="device-editor-header">
-        <div className="device-heading">
-          <h4>{editing.id ? editing.name : t("device.addTitle")}</h4>
-          <p>{t(editing.id ? "device.editDescription" : "device.addDescription")}</p>
-        </div>
-        {editing.id && <button type="button" className="device-icon-button device-delete" disabled={busy} aria-label={t("device.delete")} onClick={onDelete}><DeviceIcon name="delete" /></button>}
-      </header>
       <div className="device-dialog-body">
         <fieldset className="device-editor-fields" disabled={busy}>
         <section className="device-section device-name-section">
-          <label htmlFor="device-name">{t("device.name")}</label>
-          <div className="device-input-action">
-            <input ref={nameInput} id="device-name" value={device.name} placeholder={t("device.namePlaceholder")}
-              onChange={(e) => { onAutomaticName(false); update({ name: e.target.value }); }}
-              onBlur={(e) => { if (!e.target.value.trim()) onAutomaticName(true); }} />
-            <button type="button" disabled={automaticName} onClick={() => onAutomaticName(true)}>{t("device.restoreAutomaticName")}</button>
+          <div className="device-name-heading">
+            <label htmlFor="device-name">{t("device.name")}</label>
+            <div className="device-name-actions">
+              <button type="button" className="device-name-reset" disabled={automaticName} onClick={() => onAutomaticName(true)}>{t("device.restoreAutomaticName")}</button>
+              {editing.id && <button type="button" className="device-icon-button device-delete" disabled={busy} aria-label={t("device.delete")} title={t("device.delete")} onClick={onDelete}><DeviceIcon name="delete" /></button>}
+            </div>
           </div>
+          <input ref={nameInput} id="device-name" value={device.name} placeholder={t("device.namePlaceholder")}
+            onChange={(e) => { onAutomaticName(false); update({ name: e.target.value }); }}
+            onBlur={(e) => { if (!e.target.value.trim()) onAutomaticName(true); }} />
         </section>
         <section className="device-section" aria-labelledby="device-transport-title">
           <h4 id="device-transport-title">{t("device.transport")}</h4>
@@ -250,13 +247,12 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
             <p>{t(editing.transport === "wsl" ? "device.wslDescription" : editing.transport === "local" ? "device.localDescription" : "device.serialDescription")}</p>
           </div>}
         </section>
-        <details className="device-advanced" key={editing.transport}>
-          <summary>{t("device.advancedSettings")}</summary>
-          <div className="device-advanced-body">
-            {editing.transport !== "local" && <label>
-              {editing.transport === "wsl" ? t("device.workspaceRootWsl") : t("device.workspaceRootRemote")}
-              <input value={editing.workspace_root} onChange={(e) => update({ workspace_root: e.target.value })} />
-            </label>}
+        <section className="device-settings">
+          {editing.transport !== "local" && <label>
+            {editing.transport === "wsl" ? t("device.workspaceRootWsl") : t("device.workspaceRootRemote")}
+            <input value={editing.workspace_root} onChange={(e) => update({ workspace_root: e.target.value })} />
+          </label>}
+          <div className="device-settings-options">
             <div className="device-option">
               <label className="device-checkbox">
                 <input type="checkbox" checked={editing.is_default} disabled={editing.is_default} aria-describedby="device-default-hint"
@@ -268,23 +264,23 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
             {editing.transport === "wsl" && <button type="button" className="device-usb-button" onClick={() => useUsbStore.getState().show(editing.wsl ?? undefined)}>{t("usb.title")}</button>}
             {editing.transport === "ssh" && editing.id && <button type="button" className="device-usb-button" onClick={() => useUsbStore.getState().showRemote(editing.id)}>{t("usb.title")}</button>}
           </div>
-        </details>
+        </section>
         </fieldset>
         {testResult && <pre className="device-test-result" role="status" aria-live="polite">{testResult}</pre>}
       </div>
-      <footer className="device-dialog-footer">
-        <div className="device-footer-secondary">
-          <button type="button" disabled={busy} onClick={() => test(device)}>
-            {testing && <span className="device-spinner" />}{t(testing ? "device.connecting" : "device.testConnection")}
-          </button>
-        </div>
-        <div className="device-footer-primary">
-          <span className={`device-dirty-label${dirty ? " dirty" : ""}`}>{t(dirty ? "device.unsavedChanges" : "device.unchanged")}</span>
-          <button type="button" className="primary"
-            disabled={busy || !dirty || !device.name.trim() || (editing.transport === "wsl" ? !editing.wsl?.distribution.trim() : editing.transport === "serial" ? !editing.serial?.port || !editing.serial?.baud_rate : editing.transport === "local" ? !editing.local?.shell : !editing.host)}
-            onClick={onSave}>{t(editing.id ? "device.saveChanges" : "device.addTitle")}</button>
-        </div>
-      </footer>
     </section>
-  );
+    <footer className="device-dialog-footer">
+      <div className="device-footer-secondary">
+        <button type="button" disabled={busy} onClick={() => test(device)}>
+          {testing && <span className="device-spinner" />}{t(testing ? "device.connecting" : "device.testConnection")}
+        </button>
+      </div>
+      <div className="device-footer-primary">
+        <span className={`device-dirty-label${dirty ? " dirty" : ""}`} role="status" aria-live="polite">{status ?? (dirty ? t("device.unsavedChanges") : "")}</span>
+        <button type="button" className="primary"
+          disabled={busy || !dirty || !device.name.trim() || (editing.transport === "wsl" ? !editing.wsl?.distribution.trim() : editing.transport === "serial" ? !editing.serial?.port || !editing.serial?.baud_rate : editing.transport === "local" ? !editing.local?.shell : !editing.host)}
+          onClick={onSave}>{t(editing.id ? "device.saveChanges" : "device.addTitle")}</button>
+      </div>
+    </footer>
+  </>;
 }

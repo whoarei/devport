@@ -38,7 +38,7 @@ function DeviceManagerDialog() {
   const [operation, setOperation] = useState<"save" | "order" | "delete" | null>(null);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<"orderSaved" | "saved">("orderSaved");
+  const [notice, setNotice] = useState<"orderSaved" | "saved" | null>(null);
   const [pending, setPending] = useState<(() => void) | null>(null);
   const [previewIds, setPreviewIds] = useState<string[] | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -60,6 +60,7 @@ function DeviceManagerDialog() {
     setBaseline(next ? draftKey(next) : "");
     setAutomaticName(!!next && !next.id && !next.name.trim());
     setEditorSession((session) => session + 1);
+    setNotice(null);
   };
 
   useEffect(() => {
@@ -229,9 +230,10 @@ function DeviceManagerDialog() {
       onKeyDown={(event) => { if (event.key === "Escape" && drag.current) { event.preventDefault(); event.stopPropagation(); stopDrag(); } }}>
       <header className="device-dialog-header">
         <div className="device-heading-icon"><DeviceIcon name="ssh" /></div>
-        <div className="device-heading"><h3 id="device-manager-title">{t("device.manageTitle")}</h3><p>Remote Runner</p></div>
+        <div className="device-heading"><h3 id="device-manager-title">{t("device.manageTitle")}</h3></div>
         <button type="button" className="device-icon-button" disabled={busy} aria-label={t("device.closeManager")} onClick={close}><DeviceIcon name="close" /></button>
       </header>
+      {error && <div className="device-manager-error" role="alert">{error}</div>}
       <div className="device-manager-body">
         <aside className="device-manager-sidebar" aria-label={t("device.deviceList")}>
           <div className="device-manager-list-heading">{t("device.deviceList")}<span>{devices.length}</span></div>
@@ -250,18 +252,17 @@ function DeviceManagerDialog() {
             </div>)}
             {!devices.length && <p className="device-manager-empty">{t("device.emptyList")}</p>}
           </div>
-          <div className="device-manager-list-footer"><span><DeviceIcon name="grip" />{t("device.dragHint")}</span><div>
+          <div className="device-manager-list-footer"><span>{t("device.dragHint")}</span><div>
             <button type="button" className="device-icon-button" disabled={busy || selectedIndex <= 0} aria-label={t("device.moveUp")} title={t("device.moveUp")} onClick={() => move(-1)}><DeviceIcon name="up" /></button>
             <button type="button" className="device-icon-button" disabled={busy || selectedIndex < 0 || selectedIndex >= ordered.length - 1} aria-label={t("device.moveDown")} title={t("device.moveDown")} onClick={() => move(1)}><DeviceIcon name="down" /></button>
           </div></div>
         </aside>
         {editing ? <DeviceEditor key={`${editing.id || "new"}:${editorSession}`} editing={editing} automaticName={automaticName} onAutomaticName={setAutomaticName}
           onChange={(patch) => setEditing((current) => current ? { ...current, ...patch } : current)} onSave={() => { void save(); }} onDelete={remove}
-          dirty={dirty} busy={busy} testing={testing} onTesting={setTesting} />
+          dirty={dirty} busy={busy} testing={testing} onTesting={setTesting}
+          status={operation ? t(operation === "order" ? "device.orderSaving" : "device.saving") : !dirty && notice ? t(`device.${notice}`) : null} />
           : <div className="device-manager-empty-editor"><DeviceIcon name="ssh" /><p>{t("device.emptyDescription")}</p><button type="button" onClick={add}>{t("device.addTitle")}</button></div>}
       </div>
-      {error && <div className="device-manager-error" role="alert">{error}</div>}
-      <footer className="device-manager-footer"><span role="status" aria-live="polite">{operation ? <span className="device-spinner" /> : <DeviceIcon name="check" />}{t(operation === "order" ? "device.orderSaving" : operation ? "device.saving" : `device.${notice}`)}</span><button type="button" disabled={busy} onClick={close}>{t("device.done")}</button></footer>
     </dialog>
     <dialog ref={prompt} className="unsaved-dialog device-changes-dialog" aria-labelledby="device-changes-title" onCancel={(event) => { event.preventDefault(); if (!busy) setPending(null); }}>
       <h3 id="device-changes-title">{t("device.savePrompt")}</h3><p>{t("device.savePromptMessage", { name: device?.name || t("device.addTitle") })}</p>

@@ -1213,10 +1213,6 @@ button:disabled {
 .device-notice { display: flex; align-items: flex-start; gap: 9px; margin-top: 16px; padding: 11px 12px; color: var(--text-secondary, #9daac4); background: var(--surface-control, #272d3a); border: 1px solid var(--accent-border, #384152); border-radius: 7px; }
 .device-notice svg { width: 15px; height: 15px; margin-top: 2px; }
 .device-notice p { margin: 0; font-size: 11px; line-height: 1.7; }
-.device-advanced { margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border, #343741); }
-.device-advanced summary { width: fit-content; color: var(--text-secondary, #a7afbf); cursor: pointer; font-size: 12px; }
-.device-advanced summary:hover { color: var(--accent, #dce6ff); }
-.device-advanced-body { display: flex; flex-direction: column; gap: 16px; padding-top: 15px; }
 .device-usb-button { align-self: flex-start; }
 .device-test-result { margin: 16px 0 0; padding: 12px; max-height: 140px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--accent, #b7c8e7); background: var(--surface-panel, #191c24); border: 1px solid var(--border-strong, #394252); border-radius: 7px; font-size: 12px; }
 .device-dialog-footer { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; flex-wrap: wrap; gap: 12px; padding: 16px 24px; background: var(--surface-raised, #1e2027); border-top: 1px solid var(--border, #34363f); }
