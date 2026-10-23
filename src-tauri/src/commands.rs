@@ -132,8 +132,24 @@ pub fn list_devices(
 pub fn save_device(
     state: tauri::State<'_, AppState>,
     device: DeviceProfile,
-) -> Result<DeviceProfile> {
-    state.device_store.save(device)
+) -> Result<crate::workspace_commands::DeviceSnapshot> {
+    state
+        .device_store
+        .save(device)
+        .map(crate::workspace_commands::device_snapshot)
+}
+
+#[tauri::command]
+pub fn reorder_devices(
+    state: tauri::State<'_, AppState>,
+    ids: Vec<String>,
+) -> Result<Vec<crate::workspace_commands::DeviceSnapshot>> {
+    Ok(state
+        .device_store
+        .reorder(&ids)?
+        .into_iter()
+        .map(crate::workspace_commands::device_snapshot)
+        .collect())
 }
 
 #[tauri::command]

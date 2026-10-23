@@ -2,7 +2,7 @@ import { Fragment, Suspense, useCallback, useEffect, useRef, useState, type CSSP
 import { useTranslation } from "react-i18next";
 import { onRunEvents, api } from "./api";
 import { useAppStore } from "./store";
-import { DeviceDialog } from "./components/DeviceDialog";
+import { DeviceManager } from "./components/DeviceManager";
 import { UsbDialog } from "./components/UsbDialog";
 import { RemoteWorkspaceDialog } from "./components/RemoteWorkspaceDialog";
 import { UnsavedDialog } from "./components/UnsavedDialog";
@@ -247,7 +247,7 @@ export default function App() {
       <WorkspaceRunDialogs />
       <RunHistoryDialogs />
       <AboutDialog dialogRef={aboutDialog} autoCheckNonce={aboutAutoCheck} />
-      <DeviceDialog />
+      <DeviceManager />
       <UsbDialog />
       <RemoteWorkspaceDialog />
       <TitleBar

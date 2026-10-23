@@ -14,7 +14,7 @@ import { openWorkspace } from "../workspacePicker";
 import { joinPath, WORKSPACE_ROOT, WorkspacePath, WorkspaceTree } from "../workspaceTree";
 import { ConfirmDialog, ConfirmRequest } from "./ConfirmDialog";
 import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
-import { deviceLabel } from "./DeviceDialog";
+import { deviceLabel } from "./DeviceEditor";
 import { PanelTitle } from "./PanelTitle";
 import { workspaceRunMenu } from "../workspaceRunMenu";
 import { useWorkspaceRunStore } from "../workspaceRunStore";

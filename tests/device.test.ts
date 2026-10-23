@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { deviceLabel, emptyDevice } from "../src/components/DeviceDialog";
+import { deviceLabel, emptyDevice } from "../src/components/DeviceEditor";
 import { api, DeviceProfile } from "../src/api";
 import { selectedDeviceAfterLoad, useAppStore } from "../src/store";
 import { automaticDeviceName } from "../src/deviceNaming";
-import { deleteDevice, loadDeletedDeviceEvents } from "../src/deviceActions";
+import { deleteDevice, loadDeletedDeviceEvents, reorderDevices, saveDevice } from "../src/deviceActions";
 import { eventText, useEventStore } from "../src/eventStore";
 import i18n from "../src/i18n";
 
@@ -15,7 +15,7 @@ function resetDeviceActions(t: test.TestContext) {
   useEventStore.setState({ events: [], running: [] });
   const first = { ...emptyDevice(), id: "first", name: "first", host: "example.com", is_default: true };
   const second = { ...emptyDevice(), id: "second", name: "second", host: "second.example.com" };
-  useAppStore.setState({ devices: [first, second], selectedDeviceId: first.id, editingDevice: first });
+  useAppStore.setState({ devices: [first, second], selectedDeviceId: first.id, deviceManagerOpen: true });
   return { first, second };
 }
 
@@ -28,7 +28,7 @@ test("device deletion skips confirmation and its event can restore the original 
   t.mock.method(api, "restoreDevice", async (id: string) => { assert.equal(id, first.id); active = [first, second]; return first; });
   assert.equal(await deleteDevice(first), true);
   assert.equal(deletion.mock.callCount(), 1);
-  assert.equal(useAppStore.getState().editingDevice, null);
+  assert.equal(useAppStore.getState().deviceManagerOpen, true);
   assert.equal(useAppStore.getState().selectedDeviceId, second.id);
   const event = useEventStore.getState().events[0];
   assert.equal(event.timestamp, Date.parse(deleted_at));
@@ -190,4 +190,86 @@ test("device loading prefers the default but preserves a valid explicit selectio
   assert.equal(selectedDeviceAfterLoad([first, preferred], "first"), "first");
   assert.equal(selectedDeviceAfterLoad([first, preferred], "deleted"), "preferred");
   assert.equal(selectedDeviceAfterLoad([], null), null);
+});
+
+test("reordering uses confirmed snapshots and preserves the selected and default device", async (t) => {
+  const { first, second } = resetDeviceActions(t);
+  let finish!: (devices: DeviceProfile[]) => void;
+  const reorder = t.mock.method(api, "reorderDevices", () => new Promise<DeviceProfile[]>((resolve) => { finish = resolve; }));
+  const pending = reorderDevices([second.id, first.id]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(useAppStore.getState().devices.map((device) => device.id), [first.id, second.id]);
+  finish([second, first]);
+  await pending;
+  assert.deepEqual(reorder.mock.calls[0].arguments, [[second.id, first.id]]);
+  assert.deepEqual(useAppStore.getState().devices.map((device) => device.id), [second.id, first.id]);
+  assert.equal(useAppStore.getState().selectedDeviceId, first.id);
+  assert.equal(useAppStore.getState().devices.find((device) => device.is_default)?.id, first.id);
+});
+
+test("a failed reorder refreshes the roster and does not revive a concurrently deleted device", async (t) => {
+  const { first, second } = resetDeviceActions(t);
+  t.mock.method(api, "reorderDevices", async () => { throw new Error("device list changed"); });
+  t.mock.method(api, "listDevices", async () => [{ ...second, is_default: true }]);
+  await assert.rejects(reorderDevices([second.id, first.id]), /device list changed/);
+  assert.deepEqual(useAppStore.getState().devices.map((device) => device.id), [second.id]);
+  assert.equal(useAppStore.getState().selectedDeviceId, second.id);
+});
+
+test("a failed reorder and failed refresh keep the saved list intact", async (t) => {
+  const { first, second } = resetDeviceActions(t);
+  t.mock.method(api, "reorderDevices", async () => { throw new Error("disk full"); });
+  t.mock.method(api, "listDevices", async () => { throw new Error("unavailable"); });
+  await assert.rejects(reorderDevices([second.id, first.id]), /disk full/);
+  assert.deepEqual(useAppStore.getState().devices, [first, second]);
+  assert.equal(useAppStore.getState().selectedDeviceId, first.id);
+});
+
+test("old list responses cannot overwrite a confirmed reorder", async (t) => {
+  const { first, second } = resetDeviceActions(t);
+  let finish!: (devices: DeviceProfile[]) => void;
+  t.mock.method(api, "listDevices", () => new Promise<DeviceProfile[]>((resolve) => { finish = resolve; }));
+  const oldLoad = useAppStore.getState().loadDevices();
+  t.mock.method(api, "reorderDevices", async () => [second, first]);
+  await reorderDevices([second.id, first.id]);
+  finish([first, second]);
+  await oldLoad;
+  assert.deepEqual(useAppStore.getState().devices.map((device) => device.id), [second.id, first.id]);
+});
+
+test("a confirmed new device stays saved if refreshing fails", async (t) => {
+  const { first, second } = resetDeviceActions(t);
+  const saved = { ...emptyDevice(), id: "new", name: "new device", host: "new.example.com", revision: "confirmed" };
+  t.mock.method(api, "saveDevice", async () => saved);
+  t.mock.method(api, "listDevices", async () => { throw new Error("refresh failed"); });
+  assert.equal((await saveDevice({ ...saved, id: "" })).id, saved.id);
+  assert.deepEqual(useAppStore.getState().devices.map((device) => device.id), [first.id, second.id, saved.id]);
+  assert.equal(useAppStore.getState().devices[2].revision, "confirmed");
+  assert.ok(useEventStore.getState().events.some((event) => event.level === "error"));
+});
+
+test("device save, reorder and deletion serialize and recover after a failed operation", async (t) => {
+  const { first, second } = resetDeviceActions(t);
+  const calls: string[] = [];
+  let release!: (device: DeviceProfile) => void;
+  let active = [first, second];
+  t.mock.method(api, "saveDevice", () => { calls.push("save"); return new Promise<DeviceProfile[]>((resolve) => {
+    release = (device) => { active = [device, second]; resolve(active); };
+  }).then((devices) => devices[0]); });
+  t.mock.method(api, "listDevices", async () => active);
+  t.mock.method(api, "reorderDevices", async () => { calls.push("order"); throw new Error("write failed"); });
+  t.mock.method(api, "deleteDevice", async () => { calls.push("delete"); active = [active[0]]; return { id: second.id, name: second.name, deleted_at: new Date().toISOString() }; });
+  const edited = { ...first, name: "updated", revision: "new revision" };
+  const saving = saveDevice(edited);
+  const ordering = reorderDevices([second.id, first.id]);
+  const rejection = assert.rejects(ordering, /write failed/);
+  const deleting = deleteDevice(second);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["save"]);
+  release(edited);
+  assert.equal((await saving).revision, edited.revision);
+  await rejection;
+  await deleting;
+  assert.deepEqual(calls, ["save", "order", "delete"]);
+  assert.equal(useAppStore.getState().devices[0].name, "updated");
 });

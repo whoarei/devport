@@ -144,6 +144,7 @@ pub fn run() {
             commands::transfer_cleanup,
             commands::list_devices,
             commands::save_device,
+            commands::reorder_devices,
             commands::delete_device,
             commands::list_deleted_devices,
             commands::restore_device,

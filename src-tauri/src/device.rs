@@ -323,6 +323,133 @@ mod tests {
         assert_eq!(devices.len(), 8);
         assert_eq!(devices.iter().filter(|device| device.is_default).count(), 1);
     }
+
+    #[test]
+    fn reordering_persists_and_preserves_credentials_defaults_and_deleted_slots() {
+        let fixture = TestStore::new();
+        let store = fixture.store();
+        let first = store.save(profile("first")).unwrap();
+        store.save(profile("deleted")).unwrap();
+        let third = store.save(profile("third")).unwrap();
+        store.delete("deleted").unwrap();
+        let deleted = serde_json::to_value(&store.read_all().unwrap()[1]).unwrap();
+        let reordered = store.reorder(&["third".into(), "first".into()]).unwrap();
+        assert_eq!(
+            serde_json::to_value(&reordered).unwrap(),
+            serde_json::to_value(vec![third, first]).unwrap()
+        );
+        let restarted = fixture.store();
+        let stored = restarted.read_all().unwrap();
+        assert_eq!(serde_json::to_value(&stored[1]).unwrap(), deleted);
+        assert_eq!(
+            restarted
+                .list()
+                .unwrap()
+                .iter()
+                .map(|d| d.id.as_str())
+                .collect::<Vec<_>>(),
+            ["third", "first"]
+        );
+        let mut edited = restarted.get("first").unwrap();
+        edited.name = "updated".into();
+        restarted.save(edited).unwrap();
+        restarted.save(profile("new")).unwrap();
+        restarted.restore("deleted").unwrap();
+        let active = restarted.list().unwrap();
+        assert_eq!(
+            active.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(),
+            ["third", "deleted", "first", "new"]
+        );
+        assert_eq!(active[2].name, "updated");
+        assert!(active[2].is_default);
+    }
+
+    #[test]
+    fn invalid_or_stale_orders_and_corrupt_files_are_never_written() {
+        let fixture = TestStore::new();
+        let store = fixture.store();
+        for id in ["first", "second", "deleted"] {
+            store.save(profile(id)).unwrap();
+        }
+        store.delete("deleted").unwrap();
+        let before = std::fs::read(&store.path).unwrap();
+        for ids in [
+            vec![],
+            vec!["first"],
+            vec!["first", "first"],
+            vec!["first", "missing"],
+            vec!["first", "deleted"],
+            vec!["first", "second", "deleted"],
+        ] {
+            assert!(store
+                .reorder(&ids.into_iter().map(String::from).collect::<Vec<_>>())
+                .is_err());
+            assert_eq!(std::fs::read(&store.path).unwrap(), before);
+        }
+        store.save(profile("new")).unwrap();
+        let before = std::fs::read(&store.path).unwrap();
+        assert!(store.reorder(&["second".into(), "first".into()]).is_err());
+        assert_eq!(std::fs::read(&store.path).unwrap(), before);
+        std::fs::write(&store.path, b"invalid devices").unwrap();
+        assert!(store.reorder(&["second".into(), "first".into()]).is_err());
+        assert_eq!(std::fs::read(&store.path).unwrap(), b"invalid devices");
+    }
+
+    #[test]
+    fn reordering_legacy_profiles_keeps_the_original_default_and_noop_does_not_write() {
+        let fixture = TestStore::new();
+        let store = fixture.store();
+        assert!(store.reorder(&[]).unwrap().is_empty());
+        assert!(!store.path.exists());
+        std::fs::create_dir_all(&fixture.0).unwrap();
+        let legacy = serde_json::json!([
+            {"id": "first", "name": "first", "host": "example.com", "username": "root"},
+            {"id": "second", "name": "second", "host": "example.com", "username": "root"}
+        ]);
+        let before = serde_json::to_vec(&legacy).unwrap();
+        std::fs::write(&store.path, &before).unwrap();
+        store.reorder(&["first".into(), "second".into()]).unwrap();
+        assert_eq!(std::fs::read(&store.path).unwrap(), before);
+        store.reorder(&["second".into(), "first".into()]).unwrap();
+        let active = fixture.store().list().unwrap();
+        assert!(!active[0].is_default);
+        assert_eq!(active[1].id, "first");
+        assert!(active[1].is_default);
+    }
+
+    #[test]
+    fn concurrent_reorder_and_edit_keep_both_changes() {
+        let fixture = TestStore::new();
+        let store = fixture.store();
+        store.save(profile("first")).unwrap();
+        let mut edited = store.save(profile("second")).unwrap();
+        edited.auth = AuthMethod::Password {
+            password: "new-secret".into(),
+        };
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                barrier.wait();
+                fixture.store().save(edited).unwrap();
+            });
+            scope.spawn(|| {
+                barrier.wait();
+                fixture
+                    .store()
+                    .reorder(&["second".into(), "first".into()])
+                    .unwrap();
+            });
+        });
+        let active = fixture.store().list().unwrap();
+        assert_eq!(
+            active.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(),
+            ["second", "first"]
+        );
+        assert!(
+            matches!(&active[0].auth, AuthMethod::Password { password } if password == "new-secret")
+        );
+        assert!(active[1].is_default);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -582,6 +709,53 @@ impl DeviceStore {
             .into_iter()
             .find(|d| d.id == id)
             .ok_or_else(|| RunnerError::DeviceNotFound(id.to_string()))
+    }
+
+    pub fn reorder(&self, ids: &[String]) -> Result<Vec<DeviceProfile>> {
+        use std::collections::{HashMap, HashSet};
+        let _guard = DEVICE_OPERATIONS.lock();
+        let mut devices = self.read_all()?;
+        let active_ids: Vec<&str> = devices
+            .iter()
+            .filter(|entry| entry.deleted_at.is_none())
+            .map(|entry| entry.device.id.as_str())
+            .collect();
+        let requested: HashSet<&str> = ids.iter().map(String::as_str).collect();
+        if ids.len() != active_ids.len()
+            || requested.len() != ids.len()
+            || active_ids.iter().copied().collect::<HashSet<_>>() != requested
+        {
+            return Err(RunnerError::InvalidInput(
+                "device list changed or invalid order; refresh devices and retry".into(),
+            ));
+        }
+        let changed = active_ids
+            .iter()
+            .copied()
+            .ne(ids.iter().map(String::as_str));
+        // Normalize before moving anything so legacy profiles retain their default.
+        normalize_active_defaults(&mut devices);
+        if changed {
+            let mut active: HashMap<String, DeviceProfile> = devices
+                .iter()
+                .filter(|entry| entry.deleted_at.is_none())
+                .map(|entry| (entry.device.id.clone(), entry.device.clone()))
+                .collect();
+            let mut order = ids.iter();
+            // Deleted entries retain their slots and full recovery metadata.
+            for entry in devices
+                .iter_mut()
+                .filter(|entry| entry.deleted_at.is_none())
+            {
+                entry.device = active.remove(order.next().unwrap()).unwrap();
+            }
+            self.write_all(&devices)?;
+        }
+        Ok(devices
+            .into_iter()
+            .filter(|entry| entry.deleted_at.is_none())
+            .map(|entry| entry.device)
+            .collect())
     }
 
     pub fn save(&self, mut device: DeviceProfile) -> Result<DeviceProfile> {

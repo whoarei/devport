@@ -15,8 +15,7 @@ interface AppState {
   availableUpdate: AppUpdateInfo | null;
   devices: DeviceProfile[];
   selectedDeviceId: string | null;
-  /** 正在添加 / 编辑的设备（驱动设备对话框）；null 表示对话框关闭 */
-  editingDevice: DeviceProfile | null;
+  deviceManagerOpen: boolean;
   /** 「打开设备工作区」对话框开关 */
   remoteWorkspaceDialogOpen: boolean;
 
@@ -62,10 +61,10 @@ interface AppState {
   resetLayout: () => void;
 
   loadDevices: () => Promise<void>;
+  setDevices: (devices: DeviceProfile[]) => void;
   selectDevice: (id: string | null) => void;
-  /** 打开设备对话框：传入空模板表示添加新设备，传入已有设备表示编辑 */
-  openDeviceDialog: (device: DeviceProfile) => void;
-  closeDeviceDialog: () => void;
+  openDeviceManager: () => void;
+  closeDeviceManager: () => void;
   openRemoteWorkspaceDialog: () => void;
   closeRemoteWorkspaceDialog: () => void;
   setWorkspace: (workspace: WorkspaceRef | null) => Promise<void>;
@@ -199,13 +198,14 @@ function pruneRuns(state: Pick<AppState, "runs" | "history" | "outputBuffers" | 
 
 // Work-environment restoration reveals the editor only after restoring its tabs.
 const initialLayout = loadLayout();
+let deviceListEpoch = 0;
 
 export const useAppStore = create<AppState>((set, get) => ({
   updating: false,
   availableUpdate: null,
   devices: [],
   selectedDeviceId: null,
-  editingDevice: null,
+  deviceManagerOpen: false,
   remoteWorkspaceDialogOpen: false,
 
   workspace: null,
@@ -252,7 +252,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   loadDevices: async () => {
+    const epoch = ++deviceListEpoch;
     const devices = await api.listDevices();
+    if (epoch === deviceListEpoch) get().setDevices(devices);
+  },
+  setDevices: (devices) => {
+    ++deviceListEpoch;
     set((s) => ({
       devices,
       selectedDeviceId: selectedDeviceAfterLoad(devices, s.selectedDeviceId),
@@ -261,8 +266,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   selectDevice: (id) => set({ selectedDeviceId: id }),
 
-  openDeviceDialog: (device) => set({ editingDevice: device }),
-  closeDeviceDialog: () => set({ editingDevice: null }),
+  openDeviceManager: () => set({ deviceManagerOpen: true }),
+  closeDeviceManager: () => set({ deviceManagerOpen: false }),
   openRemoteWorkspaceDialog: () => set({ remoteWorkspaceDialogOpen: true }),
   closeRemoteWorkspaceDialog: () => set({ remoteWorkspaceDialogOpen: false }),
 

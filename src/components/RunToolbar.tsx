@@ -4,7 +4,7 @@ import { api } from "../api";
 import { presetRunSessions, useAppStore } from "../store";
 import { useWorkspaceRunStore } from "../workspaceRunStore";
 import { runPhaseLabel, runStateLabel } from "../runState";
-import { deviceLabel } from "./DeviceDialog";
+import { deviceLabel } from "./DeviceEditor";
 import { RunReplayButton } from "./RunReplayButton";
 import { appCommandEnabled, executeAppCommand } from "../appCommands";
 import { shortcutTitle } from "../shortcuts";

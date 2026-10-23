@@ -11,11 +11,10 @@ import { revealTransferPanel, useTransferStore } from "../transferStore";
 import { useTerminalStore } from "../terminalStore";
 import { panelVisibilityPatch } from "../layoutState";
 import { panelsInDock } from "../panels/registry";
-import { emptyDevice, deviceLabel } from "./DeviceDialog";
+import { deviceLabel } from "./DeviceEditor";
 import { openWorkspace } from "../workspacePicker";
 import { UI_ZOOM_LEVELS, type UiZoomAction } from "../uiZoom";
 import { useThemeStore } from "../theme";
-import { deleteDevice } from "../deviceActions";
 import { useShallow } from "zustand/react/shallow";
 import { useRunHistoryStore } from "../runHistoryStore";
 import { appCommandEnabled, executeAppCommand } from "../appCommands";
@@ -201,27 +200,7 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
     {
       label: t("menu.devices"),
       entries: [
-        { label: t("menu.addDevice"), onSelect: () => useAppStore.getState().openDeviceDialog({ ...emptyDevice(), is_default: devices.length === 0 }) },
-        {
-          label: t("menu.editDevice"),
-          disabled: devices.length === 0,
-          children: devices.length > 0
-            ? devices.map((device) => ({
-                label: `${deviceLabel(device)}${device.is_default ? t("device.defaultSuffix") : ""}`,
-                onSelect: () => useAppStore.getState().openDeviceDialog({ ...device }),
-              }))
-            : [{ label: t("menu.noDevices"), disabled: true }],
-        },
-        {
-          label: t("menu.deleteDevice"),
-          disabled: devices.length === 0,
-          children: devices.length > 0
-            ? devices.map((device) => ({
-                label: `${deviceLabel(device)}${device.is_default ? t("device.defaultSuffix") : ""}`,
-                onSelect: () => { void deleteDevice(device); },
-              }))
-            : [{ label: t("menu.noDevices"), disabled: true }],
-        },
+        { label: t("menu.manageDevices"), onSelect: () => useAppStore.getState().openDeviceManager() },
         { type: "separator" },
         { type: "checkbox", label: t("transfer.title"), checked: layout.panelVisible.transfer, onSelect: () => {
           const state = useAppStore.getState();

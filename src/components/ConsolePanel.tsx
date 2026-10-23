@@ -8,7 +8,7 @@ import { terminalCloseTargets, type TerminalCloseScope } from "../terminalTabAct
 import { terminalTabLabel } from "../terminalTitle";
 import { errorMessage } from "../api";
 import { ContextMenu, contextMenuPosition, type MenuEntry, type MenuState } from "./ContextMenu";
-import { deviceLabel } from "./DeviceDialog";
+import { deviceLabel } from "./DeviceEditor";
 import { RunToolbar } from "./RunToolbar";
 import { RunConsole } from "./RunConsole";
 import { TerminalPage } from "./TerminalPage";

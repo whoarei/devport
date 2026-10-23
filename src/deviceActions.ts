@@ -1,5 +1,5 @@
 import { api, errorMessage, type DeletedDevice, type DeviceProfile } from "./api";
-import { useAppStore, selectedDeviceAfterLoad } from "./store";
+import { useAppStore } from "./store";
 import { useEventStore } from "./eventStore";
 import i18n from "./i18n";
 
@@ -60,14 +60,8 @@ export function deleteDevice(device: Pick<DeviceProfile, "id">): Promise<boolean
     try {
       const deleted = await api.deleteDevice(device.id);
       addDeletedEvent(deleted);
-      useAppStore.setState((state) => {
-        const devices = withDefault(state.devices.filter((item) => item.id !== device.id));
-        return {
-          devices,
-          selectedDeviceId: selectedDeviceAfterLoad(devices, state.selectedDeviceId),
-          editingDevice: state.editingDevice?.id === device.id ? null : state.editingDevice,
-        };
-      });
+      const state = useAppStore.getState();
+      state.setDevices(withDefault(state.devices.filter((item) => item.id !== device.id)));
       await refreshDevices();
       return true;
     } catch (error) {
@@ -80,10 +74,34 @@ export function deleteDevice(device: Pick<DeviceProfile, "id">): Promise<boolean
 export function restoreDeletedDevice(id: string): Promise<void> {
   return serialize(async () => {
     const restored = await api.restoreDevice(id);
-    useAppStore.setState((state) => {
-      const devices = withDefault([...state.devices.filter((device) => device.id !== id), restored]);
-      return { devices, selectedDeviceId: selectedDeviceAfterLoad(devices, state.selectedDeviceId) };
-    });
+    const state = useAppStore.getState();
+    state.setDevices(withDefault([...state.devices.filter((device) => device.id !== id), restored]));
     await refreshDevices();
+  });
+}
+
+export function saveDevice(device: DeviceProfile): Promise<DeviceProfile> {
+  return serialize(async () => {
+    const saved = await api.saveDevice(device);
+    const state = useAppStore.getState();
+    let devices = state.devices.some((item) => item.id === saved.id)
+      ? state.devices.map((item) => item.id === saved.id ? saved : item)
+      : [...state.devices, saved];
+    if (saved.is_default) devices = devices.map((item) => ({ ...item, is_default: item.id === saved.id }));
+    state.setDevices(withDefault(devices));
+    await refreshDevices();
+    return useAppStore.getState().devices.find((item) => item.id === saved.id) ?? saved;
+  });
+}
+
+export function reorderDevices(ids: string[]): Promise<void> {
+  return serialize(async () => {
+    try {
+      const devices = await api.reorderDevices(ids);
+      useAppStore.getState().setDevices(devices);
+    } catch (error) {
+      await refreshDevices();
+      throw error;
+    }
   });
 }

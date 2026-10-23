@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, DeviceProfile, LocalShellInfo } from "../api";
-import { useAppStore } from "../store";
 import { useUsbStore } from "../usbStore";
 import { automaticDeviceName } from "../deviceNaming";
-import { deleteDevice } from "../deviceActions";
 
-function DeviceIcon({ name }: { name: "ssh" | "serial" | "wsl" | "local" | "close" | "refresh" | "info" }) {
+export function DeviceIcon({ name }: { name: "ssh" | "serial" | "wsl" | "local" | "close" | "refresh" | "info" | "grip" | "plus" | "up" | "down" | "delete" | "check" }) {
   const paths = {
     ssh: <><rect x="4" y="3" width="16" height="7" rx="2" /><rect x="4" y="14" width="16" height="7" rx="2" /><path d="M8 6.5h.01M8 17.5h.01M12 6.5h5M12 17.5h5" /></>,
     serial: <><path d="M8 3v4m8-4v4M6 7h12v5a6 6 0 0 1-12 0V7Zm6 11v3" /></>,
@@ -15,6 +13,12 @@ function DeviceIcon({ name }: { name: "ssh" | "serial" | "wsl" | "local" | "clos
     close: <path d="m6 6 12 12M18 6 6 18" />,
     refresh: <><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6.5 7A7 7 0 0 1 19 9M5 15a7 7 0 0 0 12.5 2" /></>,
     info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v6m0-10v1" /></>,
+    grip: <path d="M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01" strokeWidth="3" />,
+    plus: <path d="M12 5v14M5 12h14" />,
+    up: <path d="m6 11 6-6 6 6M12 5v14" />,
+    down: <path d="m6 13 6 6 6-6M12 5v14" />,
+    delete: <><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7" /></>,
+    check: <path d="m5 12 4 4L19 6" />,
   };
   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -39,33 +43,33 @@ export const emptyDevice = (): DeviceProfile => ({
 export const deviceLabel = (d: DeviceProfile) =>
   `${d.name} (${d.transport === "wsl" ? `WSL · ${d.wsl?.distribution}` : d.transport === "serial" ? `${d.serial?.port} · ${d.serial?.baud_rate}` : d.transport === "local" ? `Local · ${d.local?.shell}` : `${d.username}@${d.host}`})`;
 
-export function DeviceDialog() {
-  const editing = useAppStore((s) => s.editingDevice);
-  return editing ? <DeviceDialogForm key={editing.id || "new"} editing={editing} /> : null;
+interface DeviceEditorProps {
+  editing: DeviceProfile;
+  automaticName: boolean;
+  onAutomaticName: (value: boolean) => void;
+  onChange: (patch: Partial<DeviceProfile>) => void;
+  onSave: () => void;
+  onDelete: () => void;
+  dirty: boolean;
+  busy: boolean;
+  testing: boolean;
+  onTesting: (value: boolean) => void;
 }
 
-function DeviceDialogForm({ editing }: { editing: DeviceProfile }) {
+/** Attribute form; the manager owns the draft, persistence and navigation guards. */
+export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange: update, onSave, onDelete, dirty, busy, testing, onTesting }: DeviceEditorProps) {
   const { t } = useTranslation();
-  const loadDevices = useAppStore((s) => s.loadDevices);
-  const selectDevice = useAppStore((s) => s.selectDevice);
-  const closeDeviceDialog = useAppStore((s) => s.closeDeviceDialog);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [ports, setPorts] = useState<string[]>([]);
   const [distributions, setDistributions] = useState<string[]>([]);
   const [shells, setShells] = useState<LocalShellInfo[]>([]);
-  const [testing, setTesting] = useState(false);
-  const [automaticName, setAutomaticName] = useState(() => !editing.id && !editing.name.trim());
-  const dialog = useRef<HTMLDialogElement>(null);
   const nameInput = useRef<HTMLInputElement>(null);
   const connectionInput = useRef<HTMLInputElement>(null);
   const previousTransport = useRef(editing.transport);
   const device = { ...editing, name: automaticName ? automaticDeviceName(editing) : editing.name };
 
   useEffect(() => {
-    const element = dialog.current;
-    element?.showModal();
     (editing.id ? nameInput.current : connectionInput.current)?.focus();
-    return () => element?.close();
   }, []);
 
   useEffect(() => {
@@ -96,26 +100,14 @@ function DeviceDialogForm({ editing }: { editing: DeviceProfile }) {
     if (editing.transport === "local") void refreshShells();
   }, [editing.transport]);
 
-  const update = (patch: Partial<DeviceProfile>) =>
-    useAppStore.setState({ editingDevice: { ...editing, ...patch } });
-
-  const save = async (d: DeviceProfile) => {
-    try {
-      const saved = await api.saveDevice(d);
-      await loadDevices();
-      if (saved.is_default) selectDevice(saved.id);
-      closeDeviceDialog();
-    } catch (e) { setTestResult(t("device.saveFailed", { message: String(e) })); }
-  };
-
   const test = async (d: DeviceProfile) => {
     setTestResult(t("device.connecting"));
-    setTesting(true);
+    onTesting(true);
     try {
       setTestResult(await api.testDevice(d));
     } catch (e) {
       setTestResult(t("device.testFailed", { message: String(e) }));
-    } finally { setTesting(false); }
+    } finally { onTesting(false); }
   };
 
   const transports = [
@@ -126,19 +118,25 @@ function DeviceDialogForm({ editing }: { editing: DeviceProfile }) {
   ] as const;
 
   return (
-    <dialog ref={dialog} className="device-dialog" aria-labelledby="device-dialog-title"
-      onCancel={(e) => { e.preventDefault(); closeDeviceDialog(); }}>
-      <header className="device-dialog-header">
-        <div className="device-heading-icon"><DeviceIcon name={editing.transport} /></div>
+    <section className="device-editor" aria-label={t("device.connectionSettings")}>
+      <header className="device-editor-header">
         <div className="device-heading">
-          <h3 id="device-dialog-title">{editing.id ? t("device.editTitle") : t("device.addTitle")}</h3>
-          <p>{t("device.subtitle")}</p>
+          <h4>{editing.id ? editing.name : t("device.addTitle")}</h4>
+          <p>{t(editing.id ? "device.editDescription" : "device.addDescription")}</p>
         </div>
-        <button type="button" className="device-icon-button" aria-label={t("device.close")} onClick={closeDeviceDialog}>
-          <DeviceIcon name="close" />
-        </button>
+        {editing.id && <button type="button" className="device-icon-button device-delete" disabled={busy} aria-label={t("device.delete")} onClick={onDelete}><DeviceIcon name="delete" /></button>}
       </header>
       <div className="device-dialog-body">
+        <fieldset className="device-editor-fields" disabled={busy}>
+        <section className="device-section device-name-section">
+          <label htmlFor="device-name">{t("device.name")}</label>
+          <div className="device-input-action">
+            <input ref={nameInput} id="device-name" value={device.name} placeholder={t("device.namePlaceholder")}
+              onChange={(e) => { onAutomaticName(false); update({ name: e.target.value }); }}
+              onBlur={(e) => { if (!e.target.value.trim()) onAutomaticName(true); }} />
+            <button type="button" disabled={automaticName} onClick={() => onAutomaticName(true)}>{t("device.restoreAutomaticName")}</button>
+          </div>
+        </section>
         <section className="device-section" aria-labelledby="device-transport-title">
           <h4 id="device-transport-title">{t("device.transport")}</h4>
           <div className="device-transports" role="group" aria-labelledby="device-transport-title">
@@ -153,8 +151,7 @@ function DeviceDialogForm({ editing }: { editing: DeviceProfile }) {
             </button>)}
           </div>
         </section>
-        <section className="device-section" aria-labelledby="device-settings-title">
-          <h4 id="device-settings-title">{t("device.connectionSettings")}</h4>
+        <section className="device-section" aria-label={t("device.connectionSettings")}>
           <div className="device-fields">
             {editing.transport === "wsl" ? <>
               <div className="device-field-wide">
@@ -247,18 +244,6 @@ function DeviceDialogForm({ editing }: { editing: DeviceProfile }) {
                   onChange={(e) => update({ auth: { type: "key", key_path: e.target.value || null } })} />
               </label>}
             </>}
-            <div className="device-field-wide">
-              <label htmlFor="device-name">{t("device.name")}</label>
-              <div className="device-input-action">
-                <input ref={nameInput} id="device-name" value={device.name} placeholder={t("device.namePlaceholder")}
-                  onChange={(e) => {
-                    setAutomaticName(false);
-                    update({ name: e.target.value });
-                  }}
-                  onBlur={(e) => { if (!e.target.value.trim()) setAutomaticName(true); }} />
-                <button type="button" disabled={automaticName} onClick={() => setAutomaticName(true)}>{t("device.restoreAutomaticName")}</button>
-              </div>
-            </div>
           </div>
           {editing.transport !== "ssh" && <div className="device-notice">
             <DeviceIcon name="info" />
@@ -284,22 +269,22 @@ function DeviceDialogForm({ editing }: { editing: DeviceProfile }) {
             {editing.transport === "ssh" && editing.id && <button type="button" className="device-usb-button" onClick={() => useUsbStore.getState().showRemote(editing.id)}>{t("usb.title")}</button>}
           </div>
         </details>
+        </fieldset>
         {testResult && <pre className="device-test-result" role="status" aria-live="polite">{testResult}</pre>}
       </div>
       <footer className="device-dialog-footer">
         <div className="device-footer-secondary">
-          <button type="button" disabled={testing} onClick={() => test(device)}>
+          <button type="button" disabled={busy} onClick={() => test(device)}>
             {testing && <span className="device-spinner" />}{t(testing ? "device.connecting" : "device.testConnection")}
           </button>
-          {editing.id && <button type="button" className="device-delete" onClick={() => void deleteDevice(editing)}>{t("device.delete")}</button>}
         </div>
         <div className="device-footer-primary">
-          <button type="button" onClick={closeDeviceDialog}>{t("dialog.cancel")}</button>
+          <span className={`device-dirty-label${dirty ? " dirty" : ""}`}>{t(dirty ? "device.unsavedChanges" : "device.unchanged")}</span>
           <button type="button" className="primary"
-            disabled={testing || !device.name.trim() || (editing.transport === "wsl" ? !editing.wsl?.distribution.trim() : editing.transport === "serial" ? !editing.serial?.port || !editing.serial?.baud_rate : editing.transport === "local" ? !editing.local?.shell : !editing.host)}
-            onClick={() => save(device)}>{t("device.save")}</button>
+            disabled={busy || !dirty || !device.name.trim() || (editing.transport === "wsl" ? !editing.wsl?.distribution.trim() : editing.transport === "serial" ? !editing.serial?.port || !editing.serial?.baud_rate : editing.transport === "local" ? !editing.local?.shell : !editing.host)}
+            onClick={onSave}>{t(editing.id ? "device.saveChanges" : "device.addTitle")}</button>
         </div>
       </footer>
-    </dialog>
+    </section>
   );
 }

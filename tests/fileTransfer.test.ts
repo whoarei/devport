@@ -11,7 +11,7 @@ import { FileTransferPanel } from "../src/components/FileTransferPanel";
 import { TransferDetailsDialog, TransferQueue } from "../src/components/TransferQueue";
 import { canRetryTransfer, splitTransferQueue, transferPercent, transferQueueState, transferTaskName } from "../src/transferQueue";
 import { loadTransferDirectories, rememberedDeviceDirectory, TRANSFER_DIRECTORIES_KEY } from "../src/transferDirectories";
-import { emptyDevice } from "../src/components/DeviceDialog";
+import { emptyDevice } from "../src/components/DeviceEditor";
 import { workspaceTransferMenuEntry } from "../src/components/WorkspacePanel";
 import { deviceFileContext, mutateDeviceFile } from "../src/transferFileActions";
 import { TransferFileDialog } from "../src/components/TransferFileDialog";

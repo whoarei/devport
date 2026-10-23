@@ -3,7 +3,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { api, type WorkspaceRef } from "../src/api";
 import { FileTransferPanel } from "../src/components/FileTransferPanel";
-import { emptyDevice } from "../src/components/DeviceDialog";
+import { emptyDevice } from "../src/components/DeviceEditor";
 import { useAppStore } from "../src/store";
 import { endpointPath, transferApi } from "../src/transferApi";
 import { useTransferStore } from "../src/transferStore";

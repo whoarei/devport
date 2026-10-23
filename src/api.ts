@@ -339,6 +339,7 @@ export const api = {
   listDevices: () => invoke<DeviceProfile[]>("list_devices"),
   saveDevice: (device: DeviceProfile) =>
     invoke<DeviceProfile>("save_device", { device }),
+  reorderDevices: (ids: string[]) => invoke<DeviceProfile[]>("reorder_devices", { ids }),
   deleteDevice: (id: string) => invoke<DeletedDevice>("delete_device", { id }),
   listDeletedDevices: () => invoke<DeletedDevice[]>("list_deleted_devices"),
   restoreDevice: (id: string) => invoke<DeviceProfile>("restore_device", { id }),

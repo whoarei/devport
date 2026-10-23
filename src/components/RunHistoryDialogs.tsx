@@ -8,7 +8,7 @@ import { workspaceSourceRevision } from "../workspaceRun";
 import { isActiveRun } from "../runState";
 import { RunHistorySummary } from "./RunHistoryPreview";
 import { RunReplayButton } from "./RunReplayButton";
-import { deviceLabel } from "./DeviceDialog";
+import { deviceLabel } from "./DeviceEditor";
 import { handleRunShortcut, parseRunArguments } from "../runArguments";
 import { ArgumentsEditor } from "./ArgumentsEditor";
 
