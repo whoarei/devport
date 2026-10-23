@@ -574,8 +574,8 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 }
 
 .editor-tabs { display: flex; align-items: stretch; gap: 0; padding: 0; border-bottom: 1px solid var(--border, #2a2b30); overflow-x: auto; flex-shrink: 0; }
-.editor-tab { display: flex; align-items: center; border-radius: 4px 4px 0 0; color: var(--text-secondary, #9fa2b0); font-size: inherit; white-space: nowrap; }
-.editor-tab.active { background: var(--surface-base, #17181c); color: var(--text-primary, #e5eafa); box-shadow: inset 0 1px 0 var(--accent-border, #4a6b9a); }
+.editor-tab { display: flex; align-items: center; border-radius: 8px 8px 0 0; color: var(--text-secondary, #9fa2b0); font-size: inherit; white-space: nowrap; }
+.editor-tab.active { background: var(--accent-surface, #2c3346); color: var(--text-primary, #e5eafa); box-shadow: inset 0 0 0 1px var(--line-subtle, #ffffff14); }
 .editor-tab-label { border: 0; background: transparent; color: inherit; padding: 5px 4px 5px var(--center-label-inset); font: inherit; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 .editor-tab-label:hover { background: transparent; color: var(--text-primary, #ddd); }
 .editor-tab-close { border: 0; background: transparent; color: var(--text-muted, #777); padding: 2px 6px; margin-right: 2px; border-radius: 3px; font-size: 12px; line-height: 1.4; }
