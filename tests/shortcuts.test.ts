@@ -68,7 +68,8 @@ test("fixed bindings match exact modifiers, Mac primary keys and physical termin
   assert.equal(matchAppShortcut(key("F5", { ctrlKey: true, shiftKey: true }), false), null);
   assert.equal(matchAppShortcut(key("s", { ctrlKey: true, altKey: true }), false), null);
   assert.equal(matchAppShortcut(key("Enter", { ctrlKey: true }), false), null);
-  assert.equal(matchAppShortcut(key("²", { ctrlKey: true, code: "Backquote" }), false), "focusConsole");
+  assert.equal(matchAppShortcut(key("²", { ctrlKey: true, code: "Backquote" }), false), "toggleConsole");
+  assert.equal(matchAppShortcut(key("`", { metaKey: true, code: "Backquote" }), true), "toggleConsole");
   assert.equal(shortcutLabel("saveAll", true), "⌘+Shift+S");
   assert.equal(shortcutLabel("rerun", true), "Ctrl+F5");
 });
@@ -245,13 +246,13 @@ test("cycling past a loading restored file cancels its stale activation", async 
   assert.equal(useAppStore.getState().loading, false);
 });
 
-test("terminal allowlist only dispatches the explicit focus and new-terminal combinations", () => {
+test("terminal allowlist only dispatches the explicit focus, panel toggle and new-terminal combinations", () => {
   const executed: string[] = [];
   for (const event of [key("1", { ctrlKey: true }), key("`", { ctrlKey: true }), key("T", { ctrlKey: true, shiftKey: true })]) {
     assert.equal(handleAppShortcut(event, { area: "run", terminal: true }, id => executed.push(id), false), true);
     assert.deepEqual(event.counts(), { prevented: 1, stopped: 1 });
   }
-  assert.deepEqual(executed, ["focusEditor", "focusConsole", "newTerminal"]);
+  assert.deepEqual(executed, ["focusEditor", "toggleConsole", "newTerminal"]);
 });
 
 test("DOM context distinguishes the xterm textarea and CodeMirror content from ordinary form fields", t => {
@@ -271,8 +272,11 @@ test("DOM context distinguishes the xterm textarea and CodeMirror content from o
     if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument); else Reflect.deleteProperty(globalThis, "document");
   });
   const context = (regions: string[]) => shortcutContext(new Target(regions) as unknown as EventTarget);
-  const terminal = context([".xterm", ".run-page", "form"]);
+  const terminal = context([".xterm", ".run-page", ".console-panel", "form"]);
   assert.equal(terminal.terminal, true);
+  assert.equal(terminal.console, true);
+  assert.equal(context([".console-panel"]).console, true, "console tab headers also return focus when hidden");
+  assert.equal(context([".editor"]).console, false);
   assert.equal(terminal.input, false, "xterm's textarea must not block the application navigation allowlist");
   let focused = false;
   handleAppShortcut(key("`", { ctrlKey: true }), terminal, () => { focused = true; }, false);
@@ -428,7 +432,7 @@ test("focus commands reveal a collapsed panel and request focus without changing
   useAppStore.setState({ layout: { ...structuredClone(DEFAULT_LAYOUT), panelVisible: { ...DEFAULT_LAYOUT.panelVisible, console: false, editor: false },
     panelCollapsed: { ...DEFAULT_LAYOUT.panelCollapsed, console: true, editor: true } } });
   useTerminalStore.setState({ activeTab: "keep-this-terminal" });
-  await executeAppCommand("focusConsole");
+  await executeAppCommand("toggleConsole");
   assert.equal(useAppStore.getState().layout.panelVisible.console, true);
   assert.equal(useAppStore.getState().layout.panelCollapsed.console, false);
   assert.equal(useTerminalStore.getState().activeTab, "keep-this-terminal");
@@ -437,6 +441,95 @@ test("focus commands reveal a collapsed panel and request focus without changing
   assert.equal(useAppStore.getState().layout.panelVisible.editor, true);
   assert.equal(useAppStore.getState().layout.panelCollapsed.editor, false);
   assert.equal(useCommandUiStore.getState().focus, "editor");
+});
+
+test("console toggle expands hidden or collapsed panels without switching their tab or resetting the split", async t => {
+  reset(t);
+  for (const [visible, collapsed] of [[false, false], [false, true], [true, true]]) {
+    const layout = structuredClone(DEFAULT_LAYOUT);
+    layout.panelVisible.console = visible;
+    layout.panelCollapsed.console = collapsed;
+    layout.splits.center = 0.73;
+    useAppStore.setState({ layout });
+    useTerminalStore.setState({ activeTab: "keep-this-terminal" });
+    await executeAppCommand("toggleConsole");
+    const next = useAppStore.getState().layout;
+    assert.equal(next.panelVisible.console, true);
+    assert.equal(next.panelCollapsed.console, false);
+    assert.equal(next.splits.center, 0.73);
+    assert.equal(useTerminalStore.getState().activeTab, "keep-this-terminal");
+    assert.equal(useCommandUiStore.getState().focus, "console");
+  }
+});
+
+test("hiding the focused console restores the editor and preserves terminal sessions, running tasks and layout sizes", async t => {
+  reset(t);
+  const layout = structuredClone(DEFAULT_LAYOUT);
+  layout.panelVisible.editor = false;
+  layout.panelCollapsed.editor = true;
+  layout.splits.center = 0.73;
+  useAppStore.setState({ layout, runs: { running: run("running") }, activeRunId: "running" });
+  useTerminalStore.setState({ tabs: [{ id: "terminal", deviceId: "default", deviceName: "default", sessionId: "live-session", busy: false }], activeTab: "terminal" });
+  useCommandUiStore.setState({ focus: "console" });
+  const before = useAppStore.getState(), terminals = useTerminalStore.getState();
+  await executeAppCommand("toggleConsole", { area: "other", console: true, terminal: true });
+  const after = useAppStore.getState();
+  assert.equal(after.layout.panelVisible.console, false);
+  assert.equal(after.layout.panelCollapsed.console, false);
+  assert.equal(after.layout.panelVisible.editor, true);
+  assert.equal(after.layout.panelCollapsed.editor, false);
+  assert.equal(useCommandUiStore.getState().focus, "editor");
+  assert.equal(after.layout.splits.center, 0.73);
+  assert.equal(after.layout.sidebarWidth, before.layout.sidebarWidth);
+  assert.equal(after.openTabs, before.openTabs);
+  assert.equal(after.activeFile, before.activeFile);
+  assert.equal(after.runs, before.runs);
+  assert.equal(after.activeRunId, "running");
+  assert.equal(useTerminalStore.getState(), terminals);
+});
+
+test("hiding the console without an editor reveals and focuses the workspace instead of opening an empty editor", async t => {
+  reset(t);
+  const layout = structuredClone(DEFAULT_LAYOUT);
+  layout.sidebarVisible = false;
+  layout.panelVisible.workspace = false;
+  layout.panelCollapsed.workspace = true;
+  useAppStore.setState({ layout, openTabs: [], activeFile: null });
+  await executeAppCommand("toggleConsole", { area: "run", console: true });
+  const after = useAppStore.getState();
+  assert.equal(after.layout.panelVisible.console, false);
+  assert.equal(after.layout.sidebarVisible, true);
+  assert.equal(after.layout.panelVisible.workspace, true);
+  assert.equal(after.layout.panelCollapsed.workspace, false);
+  assert.equal(after.layout.panelVisible.editor, false);
+  assert.equal(after.openTabs.length, 0);
+  assert.equal(useCommandUiStore.getState().focus, "workspace");
+});
+
+test("hiding the console from outside it preserves focus and clears a pending console focus request", async t => {
+  reset(t);
+  for (const focus of [null, "editor", "console"] as const) {
+    useAppStore.getState().setLayout({ panelVisible: { ...DEFAULT_LAYOUT.panelVisible, console: true } });
+    useCommandUiStore.setState({ focus });
+    await executeAppCommand("toggleConsole", { area: "editor" });
+    assert.equal(useAppStore.getState().layout.panelVisible.console, false);
+    assert.equal(useCommandUiStore.getState().focus, focus === "console" ? null : focus);
+  }
+});
+
+test("console toggle ignores dialogs, form inputs, IME and key repeat", () => {
+  const executed: string[] = [];
+  const execute = (id: AppCommandId) => executed.push(id);
+  for (const context of [{ area: "run", console: true, modal: true }, { area: "run", console: true, input: true }] as ShortcutContext[]) {
+    assert.equal(handleAppShortcut(key("`", { ctrlKey: true }), context, execute, false), false);
+  }
+  for (const patch of [{ isComposing: true }, { keyCode: 229 }, { getModifierState: () => true }]) {
+    assert.equal(handleAppShortcut(key("`", { ctrlKey: true, ...patch }), { area: "editor" }, execute, false), false);
+  }
+  const repeated = key("`", { ctrlKey: true, repeat: true });
+  assert.equal(handleAppShortcut(repeated, { area: "other", console: true, terminal: true }, execute, false), true);
+  assert.deepEqual(repeated.counts(), { prevented: 1, stopped: 1 });
+  assert.deepEqual(executed, []);
 });
 
 test("shortcut overview includes all registered commands with translated labels and scope in both languages", async () => {

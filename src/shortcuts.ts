@@ -10,7 +10,7 @@ export const APP_SHORTCUTS = {
   rerun: { key: "F5", ctrl: true, scope: "run" },
   stop: { key: "F5", shift: true, scope: "run" },
   newTerminal: { key: "t", mod: true, shift: true, scope: "app", terminal: true },
-  focusConsole: { key: "`", mod: true, scope: "app", terminal: true },
+  toggleConsole: { key: "`", mod: true, scope: "app", terminal: true },
   focusEditor: { key: "1", mod: true, scope: "app", terminal: true },
   toggleSidebar: { key: "b", mod: true, scope: "app" },
 } satisfies Record<string, ShortcutBinding>;
@@ -28,6 +28,7 @@ export type AppCommandId = keyof typeof APP_SHORTCUTS;
 export type ShortcutArea = "editor" | "workspace" | "run" | "history" | "other";
 export interface ShortcutContext {
   area: ShortcutArea;
+  console?: boolean;
   terminal?: boolean;
   input?: boolean;
   modal?: boolean;

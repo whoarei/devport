@@ -7,6 +7,8 @@ import { anyDirty } from "../editorDocument";
 import i18n from "../i18n";
 import { panelVisibilityPatch, toggleSidePanel } from "../layoutState";
 import { panelsInDock } from "../panels/registry";
+import { executeAppCommand } from "../appCommands";
+import { shortcutTitle } from "../shortcuts";
 import { useAppStore, workspaceLabel } from "../store";
 import { startOneClickUpdate } from "../updateFlow";
 import { updateButtonLabel, type UpdateButtonPhase } from "../updateStatus";
@@ -33,6 +35,7 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
   const devices = useAppStore((state) => state.devices);
   const availableUpdate = useAppStore((state) => state.availableUpdate);
   const layout = useAppStore((state) => state.layout);
+  const guarding = useAppStore((state) => state.guarding);
   const setLayout = useAppStore((state) => state.setLayout);
   const dirty = useAppStore(anyDirty);
   const [maximized, setMaximized] = useState(false);
@@ -113,11 +116,12 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
           <button
             key={panel.id}
             type="button"
-            className={`titlebar-button${layout.panelVisible[panel.id] ? " active" : ""}`}
+            className={`titlebar-button${layout.panelVisible[panel.id] && (!panel.toggleCommand || !layout.panelCollapsed[panel.id]) ? " active" : ""}`}
             aria-label={t(panel.toggleKey ?? panel.titleKey)}
-            aria-pressed={layout.panelVisible[panel.id]}
-            title={t(panel.toggleKey ?? panel.titleKey)}
-            onClick={() => setLayout(panelVisibilityPatch(layout, panel.id, !layout.panelVisible[panel.id]))}
+            aria-pressed={layout.panelVisible[panel.id] && (!panel.toggleCommand || !layout.panelCollapsed[panel.id])}
+            title={panel.toggleCommand ? shortcutTitle(t(panel.toggleKey ?? panel.titleKey), panel.toggleCommand) : t(panel.toggleKey ?? panel.titleKey)}
+            disabled={!!panel.toggleCommand && guarding}
+            onClick={() => panel.toggleCommand ? void executeAppCommand(panel.toggleCommand) : setLayout(panelVisibilityPatch(layout, panel.id, !layout.panelVisible[panel.id]))}
           >
             {panel.icon}
           </button>

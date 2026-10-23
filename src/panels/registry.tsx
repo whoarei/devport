@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { AppCommandId } from "../shortcuts";
 
 /**
  * 面板注册表：界面所有功能模块（侧栏面板 + 中间区面板）的元数据。
@@ -22,6 +23,8 @@ export interface PanelDef {
   manualVisibility?: boolean;
   /** 标题栏切换按钮的 i18n key（center 面板使用） */
   toggleKey?: string;
+  /** 显隐入口共用的应用命令（包含快捷键与焦点处理）。 */
+  toggleCommand?: AppCommandId;
   /** 标题栏切换按钮图标（center 面板使用） */
   icon?: ReactNode;
   defaultVisible: boolean;
@@ -35,7 +38,7 @@ export const PANELS: PanelDef[] = [
   { id: "history", dock: "sidebar", titleKey: "runHistory.title", defaultVisible: true },
   { id: "editor", dock: "center", titleKey: "menu.editorPanel", manualVisibility: false, defaultVisible: false },
   {
-    id: "console", dock: "center", titleKey: "menu.consolePanel", toggleKey: "titlebar.toggleConsole", defaultVisible: true,
+    id: "console", dock: "center", titleKey: "menu.consolePanel", toggleKey: "titlebar.toggleConsole", toggleCommand: "toggleConsole", defaultVisible: true,
     icon: (
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
         <rect x="1" y="1.5" width="10" height="9" rx="1.5" stroke="currentColor" />

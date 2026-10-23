@@ -261,7 +261,11 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
               onSelect: () => setLayout({ ...panelVisibilityPatch(layout, panel.id, !layout.panelVisible[panel.id]), sidebarVisible: true }),
             })),
             { type: "separator" },
-            ...panelsInDock("center").filter((panel) => panel.manualVisibility !== false).map((panel): MenuEntry => ({
+            ...panelsInDock("center").filter((panel) => panel.manualVisibility !== false).map((panel): MenuEntry => panel.toggleCommand ? {
+              ...commandEntry(panel.toggleCommand, t(`shortcuts.${panel.toggleCommand}`)),
+              type: "checkbox",
+              checked: layout.panelVisible[panel.id] && !layout.panelCollapsed[panel.id],
+            } : ({
               type: "checkbox",
               label: t(panel.titleKey),
               checked: layout.panelVisible[panel.id],
@@ -271,7 +275,7 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
         },
         { ...commandEntry("toggleSidebar", t("menu.sidebar")), type: "checkbox", checked: layout.sidebarVisible },
         commandEntry("focusEditor", t("shortcuts.focusEditor")),
-        commandEntry("focusConsole", t("shortcuts.focusConsole")),
+        commandEntry("toggleConsole", t("shortcuts.toggleConsole")),
         commandEntry("newTerminal", t("shortcuts.newTerminal")),
         {
           label: t("menu.sidebarPosition"),

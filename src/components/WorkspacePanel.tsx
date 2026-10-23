@@ -7,6 +7,7 @@ import { useShallow } from "zustand/react/shallow";
 import { api, errorMessage, type DeviceProfile, type WorkspaceEntry, type WorkspaceRef } from "../api";
 import { useAppStore, workspaceLabel } from "../store";
 import { useTerminalStore } from "../terminalStore";
+import { useCommandUiStore } from "../commandUiStore";
 import { revealConsolePanel } from "../consoleTabs";
 import { useTransferStore } from "../transferStore";
 import { openWorkspace } from "../workspacePicker";
@@ -260,6 +261,12 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const label = workspaceLabel(workspace, devices);
   const panel = useRef<HTMLDivElement>(null);
+  const focus = useCommandUiStore((state) => state.focus);
+  useEffect(() => {
+    if (focus !== "workspace" || collapsed || !panel.current) return;
+    panel.current.focus({ preventScroll: true });
+    useCommandUiStore.setState({ focus: null });
+  }, [focus, collapsed]);
   const scrolling = useRef(false);
   useEffect(() => {
     if (!panel.current || collapsed) return;
@@ -355,6 +362,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     <div
       className="workspace-panel"
       ref={panel}
+      tabIndex={-1}
       onScroll={(event) => {
         if (!scrolling.current) useAppStore.setState({ workspaceScroll: Math.max(0, event.currentTarget.scrollTop) });
       }}

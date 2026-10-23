@@ -15,6 +15,7 @@ export function shortcutContext(target: EventTarget | null): ShortcutContext {
   const form = !!element?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
   return {
     area: editor ? "editor" : element?.closest(".workspace-panel") ? "workspace" : runPage ? "run" : element?.closest(".run-history-panel") ? "history" : "other",
+    console: !!element?.closest(".console-panel"),
     terminal,
     input: form && !terminal && !element?.closest(".cm-content"),
     modal: !!document.querySelector("dialog[open], [aria-modal='true']"),

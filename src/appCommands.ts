@@ -42,7 +42,7 @@ export function appCommandEnabled(id: AppCommandId, context: ShortcutContext = {
     case "newTerminal": return !app.updating && !app.guarding && !terminals.shuttingDown && terminals.tabs.length < 8
       && !!defaultDevice && defaultDevice.transport !== "serial";
     case "focusEditor": return !app.guarding && !!tab;
-    case "focusConsole": case "toggleSidebar": return !app.guarding;
+    case "toggleConsole": case "toggleSidebar": return !app.guarding;
   }
 }
 
@@ -72,7 +72,24 @@ const actions: Record<AppCommandId, (context: ShortcutContext) => unknown> = {
     useCommandUiStore.setState({ focus: "console" });
     return useTerminalStore.getState().open(device.id, device.name);
   },
-  focusConsole: () => { revealConsolePanel(); useCommandUiStore.setState({ focus: "console" }); },
+  toggleConsole: context => {
+    const app = useAppStore.getState();
+    if (!app.layout.panelVisible.console || app.layout.panelCollapsed.console) {
+      revealConsolePanel();
+      useCommandUiStore.setState({ focus: "console" });
+      return;
+    }
+    app.setLayout(panelVisibilityPatch(app.layout, "console", false));
+    if (useCommandUiStore.getState().focus === "console") useCommandUiStore.setState({ focus: null });
+    if (!context.console) return;
+    if (app.openTabs.some(tab => tab.name === app.activeFile)) {
+      actions.focusEditor(context);
+    } else {
+      const { layout, setLayout } = useAppStore.getState();
+      setLayout({ ...panelVisibilityPatch(layout, "workspace", true), ...panelCollapsePatch(layout, "workspace", false), sidebarVisible: true });
+      useCommandUiStore.setState({ focus: "workspace" });
+    }
+  },
   focusEditor: () => {
     const { layout, setLayout } = useAppStore.getState();
     setLayout({ ...panelVisibilityPatch(layout, "editor", true), ...panelCollapsePatch(layout, "editor", false) });
