@@ -10,6 +10,8 @@ import { commandLabel, commandsFor, inferModule, workspaceKey } from "../src/wor
 import { workspaceRunMenu } from "../src/workspaceRunMenu";
 import { RunToolbar } from "../src/components/RunToolbar";
 import { WorkspaceRunDialogs } from "../src/components/WorkspaceRunDialogs";
+import { ArgumentsEditor } from "../src/components/ArgumentsEditor";
+import { handleRunShortcut, parseRunArguments } from "../src/runArguments";
 import i18n from "../src/i18n";
 
 const device = (id: string): DeviceProfile => ({ id, revision: `rev-${id}`, name: id, transport: "ssh", host: "example", port: 22, username: "user", auth: { type: "key", key_path: null }, workspace_root: "/tmp/runs", is_default: id === "a" });
@@ -34,6 +36,47 @@ function receive(events: RunEvent[]) {
 }
 
 test.before(async () => { await i18n.changeLanguage("zh"); });
+test("multiline arguments preserve spaces, quotes and shell syntax while ignoring only empty lines", () => {
+  const expected = ["--input", "C:\\data\\test file.bin", "  汉字  ", '"literal quotes"', "$(touch x)", "--mode encrypt", " \t "];
+  for (const newline of ["\n", "\r\n", "\r"]) {
+    assert.deepEqual(parseRunArguments(newline + expected.join(newline + newline) + newline), expected);
+    assert.deepEqual(parseRunArguments(newline.repeat(3)), []);
+  }
+  assert.deepEqual(parseRunArguments(""), []);
+  assert.deepEqual(parseRunArguments("first\r\n\nsecond\rlast\n"), ["first", "second", "last"]);
+});
+
+test("argument editor shows a multiline field and a collapsed literal preview", () => {
+  const value = "--input\ndata/test file.bin\n\n  汉字  \n";
+  const html = renderToStaticMarkup(createElement(ArgumentsEditor, { value, onChange() {}, preview: ["test.py", ...parseRunArguments(value)] }));
+  assert.match(html, /<textarea[^>]+rows="6"/);
+  assert.match(html, /--input\ndata\/test file.bin\n\n  汉字  \n<\/textarea>/);
+  assert.match(html, /<details class="runner-args-preview"><summary>参数预览<\/summary>/);
+  assert.doesNotMatch(html, /<details[^>]*\bopen\b|添加参数|删除参数/);
+  assert.match(html, /<pre[^>]*>[\s\S]*  汉字  /);
+});
+
+test("Ctrl+Enter runs once while ordinary Enter, composition and other modifiers remain editing input", () => {
+  let runs = 0;
+  const press = (patch: Partial<React.KeyboardEvent<HTMLElement>> = {}) => {
+    let prevented = false;
+    const event = { key: "Enter", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, repeat: false,
+      defaultPrevented: false, nativeEvent: { isComposing: false, keyCode: 13 },
+      preventDefault() { prevented = true; }, ...patch } as React.KeyboardEvent<HTMLElement>;
+    handleRunShortcut(event, () => runs++);
+    return prevented;
+  };
+  assert.equal(press(), true);
+  assert.equal(runs, 1);
+  assert.equal(press({ repeat: true }), true);
+  for (const patch of [
+    { ctrlKey: false }, { altKey: true }, { metaKey: true }, { shiftKey: true }, { key: "a" }, { defaultPrevented: true },
+    { nativeEvent: { isComposing: true, keyCode: 13 } as KeyboardEvent },
+    { nativeEvent: { isComposing: false, keyCode: 229 } as KeyboardEvent },
+  ]) assert.equal(press(patch), false);
+  assert.equal(runs, 1);
+});
+
 test("module inference requires an unambiguous import root and valid identifiers", () => {
   assert.equal(inferModule("src/app/cli.py", false, ".", ["src"]), null);
   assert.equal(inferModule("src/app/cli.py", false, "src", ["src"]), "app.cli");

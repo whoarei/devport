@@ -1007,9 +1007,9 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .runner-preparation-progress { overflow-wrap: anywhere; }
 .runner-preparation-details pre { max-height: 180px; overflow: auto; padding: 8px; background: var(--surface-panel, #191b21); border-radius: 4px; font: 11px/1.5 Consolas, monospace; }
 .runner-preparation .runner-inline-actions { align-items: center; }
-.runner-arguments { max-height: 35vh; overflow-y: auto; }
-.runner-argument { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
-.runner-argument input { flex: 1; min-width: 0; font-family: Consolas, monospace; }
+.runner-arguments { line-height: 1.6; white-space: pre; overflow: auto; }
+.runner-args-preview { margin: 12px 0; }
+.runner-args-preview summary { cursor: pointer; color: var(--text-secondary, #aaa); font-size: 12px; }
 .runner-preview { border: 1px solid var(--border, #3a3b42); border-radius: 4px; padding: 10px; max-height: 24vh; overflow: auto; font-size: 12px; }
 .runner-history article { padding: 12px 0; border-bottom: 1px solid var(--border, #3a3b42); }
 .runner-history pre { font-size: 12px; }

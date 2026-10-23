@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEventHandler, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { api, errorMessage, type LocalShellInfo, type PythonProbe } from "../api";
 import { useAppStore, workspaceLabel } from "../store";
@@ -8,33 +8,38 @@ import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
 import { missingCommandIds } from "../workspaceRunMenu";
 import { runPhaseLabel, runStateLabel } from "../runState";
 import type { OutputBuffer } from "../outputBuffer";
+import { handleRunShortcut, parseRunArguments } from "../runArguments";
+import { ArgumentsEditor } from "./ArgumentsEditor";
 
-function Modal({ open, title, close, children }: { open: boolean; title: string; close: () => void; children: ReactNode }) {
+function Modal({ open, title, close, children, onKeyDown }: { open: boolean; title: string; close: () => void; children: ReactNode; onKeyDown?: KeyboardEventHandler<HTMLDialogElement> }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { const d = ref.current; if (open && d && !d.open) d.showModal(); if (!open && d?.open) d.close(); }, [open]);
-  return <dialog className="runner-dialog" ref={ref} aria-label={title} onCancel={(e) => { e.preventDefault(); close(); }}><h3>{title}</h3>{children}</dialog>;
+  return <dialog className="runner-dialog" ref={ref} aria-label={title} onKeyDown={onKeyDown} onCancel={(e) => { e.preventDefault(); close(); }}><h3>{title}</h3>{children}</dialog>;
 }
 
 function ArgsDialog() {
   const { t } = useTranslation(), state = useWorkspaceRunStore(), draft = state.args;
   const { devices, selectedDeviceId } = useAppStore();
-  const [args, setArgs] = useState<string[]>([]), [name, setName] = useState(""), [error, setError] = useState<string | null>(null);
-  useEffect(() => { setArgs(draft?.command.args.slice() ?? []); setName(draft ? draft.command.entry.type === "python_module" ? draft.command.entry.name : draft.command.entry.path : ""); setError(null); }, [draft]);
+  const [argsText, setArgsText] = useState(""), [name, setName] = useState(""), [error, setError] = useState<string | null>(null);
+  useEffect(() => { setArgsText(draft?.command.args.join("\n") ?? ""); setName(draft ? draft.command.entry.type === "python_module" ? draft.command.entry.name : draft.command.entry.path : ""); setError(null); }, [draft]);
   const close = () => useWorkspaceRunStore.setState({ args: null });
   const entry = draft?.module ? { type: "python_module" as const, name } : draft?.editingId && draft.command.entry.type !== "python_module" ? { ...draft.command.entry, path: name } : draft?.command.entry;
-  return <Modal open={!!draft} title={t("workspaceRun.withArgs")} close={close}>
+  const args = draft?.editingId ? draft.command.args : parseRunArguments(argsText);
+  const canSubmit = !!entry && (!draft?.module || validModule(name));
+  const submit = () => {
+    if (!draft || !entry || !canSubmit) return;
+    if (draft.editingId && state.commands) void api.editWorkspaceCommandEntry(draft.workspace, draft.editingId, entry, state.commands.revision).then((commands) => { if (workspaceSourceCurrent(draft.workspace, state.sourceRevision)) { useWorkspaceRunStore.setState({ commands }); if (useWorkspaceRunStore.getState().args === draft) close(); } }).catch((e) => { if (workspaceSourceCurrent(draft.workspace, state.sourceRevision)) { setError(errorMessage(e)); void state.refreshCommands(); } });
+    else if (workspaceSourceCurrent(draft.workspace, state.sourceRevision)) { state.run({ entry, args }, draft.source, draft.workspace); close(); }
+  };
+  return <Modal open={!!draft} title={t("workspaceRun.withArgs")} close={close} onKeyDown={e => { if (!draft?.editingId) handleRunShortcut(e, submit); }}>
+    {draft && <>
     <div className="secondary-text">{workspaceLabel(draft?.workspace ?? null, devices)} · {devices.find((d) => d.id === selectedDeviceId)?.name} · {selectedDeviceId && state.preferences.python[selectedDeviceId] === "project" ? t("workspaceRun.project") : t("workspaceRun.system")}</div>
     {draft?.module || draft?.editingId ? <label>{t(draft.module ? "workspaceRun.moduleName" : "runnerEntry.entryPath")}<input autoFocus value={name} onChange={(e) => setName(e.target.value)} /></label> : <code>{draft ? commandLabel(draft.command) : ""}</code>}
-    <p className="secondary-text">{t("workspaceRun.argsHelp")}</p>
-    <div className="runner-arguments">{args.map((value, index) => <div className="runner-argument" key={index}><span>{index + 1}</span><input disabled={!!draft?.editingId} aria-label={t("workspaceRun.argument", { index: index + 1 })} value={value} onChange={(e) => setArgs(args.map((v, i) => i === index ? e.target.value : v))} /><button disabled={!!draft?.editingId} aria-label={t("workspaceRun.removeArgument")} onClick={() => setArgs(args.filter((_, i) => i !== index))}>×</button></div>)}</div>
-    {!draft?.editingId && <button onClick={() => setArgs([...args, ""])}>{t("workspaceRun.addArgument")}</button>}
-    <pre className="runner-preview">{JSON.stringify([...(entry?.type === "python_module" ? ["-m", name] : [entry?.path]), ...args], null, 2)}</pre>
+    <ArgumentsEditor value={argsText} onChange={setArgsText} disabled={!!draft.editingId} autoFocus={!draft.module && !draft.editingId}
+      preview={[...(entry?.type === "python_module" ? ["-m", name] : [entry?.path ?? ""]), ...args]} />
     {error && <div className="runtime-error">{error}</div>}
-    <div className="dialog-actions"><button onClick={close}>{t("dialog.cancel")}</button><button className="primary" disabled={!entry || !!draft?.module && !validModule(name)} onClick={() => {
-      if (!draft || !entry) return;
-      if (draft.editingId && state.commands) void api.editWorkspaceCommandEntry(draft.workspace, draft.editingId, entry, state.commands.revision).then((commands) => { if (workspaceSourceCurrent(draft.workspace, state.sourceRevision)) { useWorkspaceRunStore.setState({ commands }); if (useWorkspaceRunStore.getState().args === draft) close(); } }).catch((e) => { if (workspaceSourceCurrent(draft.workspace, state.sourceRevision)) { setError(errorMessage(e)); void state.refreshCommands(); } });
-      else if (workspaceSourceCurrent(draft.workspace, state.sourceRevision)) { state.run({ entry, args }, draft.source, draft.workspace); close(); }
-    }}>{t(draft?.editingId ? "workspaceRun.save" : "run.run")}</button></div>
+    <div className="dialog-actions"><button onClick={close}>{t("dialog.cancel")}</button><button className="primary" disabled={!canSubmit} onClick={submit} title={draft.editingId ? undefined : t("workspaceRun.runShortcut")}>{t(draft.editingId ? "workspaceRun.save" : "run.run")}</button></div>
+    </>}
   </Modal>;
 }
 
