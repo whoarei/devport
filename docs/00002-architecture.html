@@ -223,7 +223,7 @@ pre{background:#eee;color:#111}
 phase = 环境准备子阶段
 waiting_workspace = 等待目录
 workspace_sync = 路径与同步统计</code></pre>
-<p>非零正常退出仍为 exited 并保留 exit_code。Ctrl+C 无选区时为单次 Interrupt，不启动停止倒计时；Stop 取消准备或执行通道升级；超时最终失败。SSH/WSL/Local 一般为 INT→TERM→KILL，Windows Local pipe 无温和中断，停止强制结束树。Serial 等 nonce 结束标记，不能确认则报告未知状态。</p>
+<p>非零正常退出仍为 exited 并保留 exit_code。独立终端和运行控制台由 terminalClipboard.ts 统一处理 Ctrl+C / Ctrl+V，两个全局开关默认开启并即时生效；默认有选区时 Ctrl+C 复制，关闭复制开关或无选区时只发送一次中断，不启动停止倒计时。Ctrl+Shift+C / V 始终复制粘贴，异步粘贴核对原会话或任务。Stop 取消准备或执行通道升级；超时最终失败。SSH/WSL/Local 一般为 INT→TERM→KILL，Windows Local pipe 无温和中断，停止强制结束树。Serial 等 nonce 结束标记，不能确认则报告未知状态。</p>
 <div class="table">
 <table>
 <thead>

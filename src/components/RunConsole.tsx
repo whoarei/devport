@@ -11,7 +11,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useTranslation } from "react-i18next";
 import { createConsoleReplay } from "../consoleReplay";
 import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
-import { handleRunConsoleKey } from "../runConsoleInput";
+import { createTerminalClipboard, type TerminalClipboardAction } from "../terminalClipboard";
 import { terminalTheme, useThemeStore } from "../theme";
 import { useCommandUiStore } from "../commandUiStore";
 import { useTerminalStore } from "../terminalStore";
@@ -29,9 +29,10 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const replayRef = useRef<ReturnType<typeof createConsoleReplay> | null>(null);
+  const clipboardRef = useRef<ReturnType<typeof createTerminalClipboard>>();
   const current = useRef({ collapsed });
   current.current = { collapsed };
-  const [copyError, setCopyError] = useState<string | null>(null);
+  const [clipboardError, setClipboardError] = useState<{ action: TerminalClipboardAction; message: string } | null>(null);
   const [inputError, setInputError] = useState<{ runId: string; message: string } | null>(null);
 
   const { activeRunId, buffer, activeRun } = useAppStore(useShallow((s) => ({
@@ -65,15 +66,25 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
     };
     const input = term.onData(sendInput);
 
-    term.attachCustomKeyEventHandler((ev) => handleRunConsoleKey(ev, term.getSelection(), sendInput,
-      (text) => { void navigator.clipboard.writeText(text).catch(() => {}); }));
-
     termRef.current = term;
+    const clipboard = createTerminalClipboard(term, {
+      preferences: () => useTerminalStore.getState(),
+      enabled: () => !current.current.collapsed && termRef.current === term,
+      context: () => {
+        const { activeRunId: runId, runs } = useAppStore.getState();
+        return runId && runs[runId]?.state === "running" ? runId : undefined;
+      },
+      send: sendInput,
+      clipboard: navigator.clipboard,
+      onResult: (action, error) => setClipboardError(error === null ? null : { action, message: errorMessage(error) }),
+    });
+    clipboardRef.current = clipboard;
+    term.attachCustomKeyEventHandler(clipboard.handleKey);
     const copyOnSelect = attachTerminalCopyOnSelect(term, {
       enabled: () => useTerminalStore.getState().copyOnSelect && !current.current.collapsed && termRef.current === term,
       context: () => useAppStore.getState().activeRunId,
       copy: (text) => navigator.clipboard.writeText(text),
-      onResult: (error) => setCopyError(error === null ? null : errorMessage(error)),
+      onResult: (error) => setClipboardError(error === null ? null : { action: "copy", message: errorMessage(error) }),
     });
     fitRef.current = fit;
     const replay = createConsoleReplay(term, () => {
@@ -95,6 +106,8 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
     });
     observer.observe(containerRef.current);
     return () => {
+      clipboard.dispose();
+      clipboardRef.current = undefined;
       copyOnSelect.dispose();
       observer.disconnect();
       input.dispose();
@@ -144,22 +157,13 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
       {
         label: t("ctxmenu.copy"),
         disabled: !term.getSelection(),
-        onSelect: () => void navigator.clipboard.writeText(term.getSelection()).catch(() => {}),
+        onSelect: () => clipboardRef.current?.copy(),
       },
       {
         // 粘贴写入远程进程 stdin（pty 模式下由远端回显）
         label: t("ctxmenu.paste"),
         disabled: !(activeRun && isActiveRun(activeRun)),
-        onSelect: () => {
-          term.focus();
-          const runId = activeRunId;
-          void navigator.clipboard.readText().then((text) => {
-            const state = useAppStore.getState();
-            if (text && termRef.current === term && runId && state.activeRunId === runId && state.runs[runId]?.state === "running") {
-              void api.sendRunInput(runId, text).catch(() => {});
-            }
-          }).catch(() => {});
-        },
+        onSelect: () => clipboardRef.current?.paste(),
       },
       { label: t("ctxmenu.selectAll"), onSelect: () => term.selectAll() },
       { label: t("ctxmenu.clearTerminal"), onSelect: () => term.clear() },
@@ -189,7 +193,7 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
         <code>{activeRun.workspace_sync.destination}</code>
       </div>}
       {inputError?.runId === activeRunId && <div className="terminal-error" role="alert">{t("console.inputFailed", { error: inputError.message })}</div>}
-      {copyError && <div className="terminal-error" role="status">{t("terminal.copyFailed", { message: copyError })}</div>}
+      {clipboardError && <div className="terminal-error" role="status">{t(clipboardError.action === "copy" ? "terminal.copyFailed" : "terminal.pasteFailed", { message: clipboardError.message })}</div>}
       <div ref={containerRef} className={`console-body${collapsed ? " collapsed" : ""}`} onContextMenu={openMenu}
         onPasteCapture={() => { if (!collapsed) termRef.current?.focus(); }} />
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />

@@ -15,6 +15,7 @@ import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./Contex
 import { terminalTheme, useThemeStore } from "../theme";
 import { useCommandUiStore } from "../commandUiStore";
 import { attachTerminalCopyOnSelect } from "../terminalCopyOnSelect";
+import { createTerminalClipboard, type TerminalClipboardAction } from "../terminalClipboard";
 
 interface Session {
   id: string;
@@ -26,14 +27,14 @@ interface View {
   display: ReturnType<typeof createTerminalDisplay>;
   session?: Session;
   previousSession?: string;
-  paste: () => void;
+  clipboard: ReturnType<typeof createTerminalClipboard>;
 }
 
 export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: boolean }) {
   const { t } = useTranslation();
   const theme = useThemeStore((state) => state.theme);
   const focus = useCommandUiStore((state) => state.focus);
-  const [copyError, setCopyError] = useState<string | null>(null);
+  const [clipboardError, setClipboardError] = useState<{ action: TerminalClipboardAction; message: string } | null>(null);
   const container = useRef<HTMLDivElement>(null);
   const view = useRef<View>();
   const fit = useRef<() => void>();
@@ -59,26 +60,21 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
       const live = liveTab();
       return !!session && live?.status?.session_id === session.id && live.status.state === "connected" && !live.busy;
     };
-    const report = (error: unknown) => {
-      const id = liveTab()?.status?.session_id;
-      if (id) useTerminalStore.getState().report(tab.id, id, error);
-    };
-    const instance: View = { term, display, paste: () => {
-      if (view.current !== instance || !current.current.visible) return;
-      // Focus while handling the user action, before the asynchronous clipboard read.
-      term.focus();
-      const session = instance.session;
-      if (!connected(session)) return;
-      void navigator.clipboard.readText().then(text => {
-        if (view.current === instance && instance.session === session && connected(session)) term.paste(text);
-      }).catch(error => { if (instance.session === session) report(error); });
-    } };
+    const clipboard = createTerminalClipboard(term, {
+      preferences: () => useTerminalStore.getState(),
+      enabled: () => view.current === instance && current.current.visible,
+      context: () => connected(instance.session) ? instance.session : undefined,
+      send: data => { if (connected(instance.session)) instance.session?.input.send(data); },
+      clipboard: navigator.clipboard,
+      onResult: (action, error) => setClipboardError(error === null ? null : { action, message: errorMessage(error) }),
+    });
+    const instance: View = { term, display, clipboard };
     view.current = instance;
     const copyOnSelect = attachTerminalCopyOnSelect(term, {
       enabled: () => useTerminalStore.getState().copyOnSelect && current.current.visible && view.current === instance,
       context: () => instance.session?.id,
       copy: (text) => navigator.clipboard.writeText(text),
-      onResult: (error) => setCopyError(error === null ? null : errorMessage(error)),
+      onResult: (error) => setClipboardError(error === null ? null : { action: "copy", message: errorMessage(error) }),
     });
     fit.current = () => {
       if (!current.current.visible || !container.current?.clientWidth || !container.current.clientHeight) return;
@@ -102,15 +98,10 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
     }, reconnect);
     term.attachCustomKeyEventHandler(event => {
       if (!reconnectKey(event)) return false;
-      if (!event.ctrlKey || !event.shiftKey || !["c", "v"].includes(event.key.toLowerCase())) return true;
-      if (event.type === "keydown") {
-        event.preventDefault();
-        if (event.key.toLowerCase() === "c") void navigator.clipboard.writeText(term.getSelection()).catch(report);
-        else instance.paste();
-      }
-      return false;
+      return clipboard.handleKey(event);
     });
     return () => {
+      clipboard.dispose();
       copyOnSelect.dispose();
       display.dispose(); subscription.dispose(); titleSubscription.dispose(); observer.disconnect(); term.dispose();
       view.current = undefined; fit.current = undefined;
@@ -178,9 +169,9 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
       {
         label: t("ctxmenu.copy"),
         disabled: !term.getSelection(),
-        onSelect: () => void navigator.clipboard.writeText(term.getSelection()).catch(() => {}),
+        onSelect: () => view.current?.clipboard.copy(),
       },
-      { label: t("ctxmenu.paste"), disabled: !connected, onSelect: () => view.current?.paste() },
+      { label: t("ctxmenu.paste"), disabled: !connected, onSelect: () => view.current?.clipboard.paste() },
       { label: t("ctxmenu.selectAll"), onSelect: () => term.selectAll() },
       { label: t("ctxmenu.clearTerminal"), onSelect: () => term.clear() },
       "separator",
@@ -200,7 +191,7 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
   const error = tab.error || (!tab.busy ? tab.status?.error : null);
 
   return <section className="terminal-page" role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} hidden={!visible}>
-    {copyError && <div className="terminal-error" role="status">{t("terminal.copyFailed", { message: copyError })}</div>}
+    {clipboardError && <div className="terminal-error" role="status">{t(clipboardError.action === "copy" ? "terminal.copyFailed" : "terminal.pasteFailed", { message: clipboardError.message })}</div>}
     {error && <div className="terminal-error" role="alert">{error}</div>}
     <div className="console-body" ref={container} onContextMenu={openMenu}
       onPasteCapture={() => { if (visible) view.current?.term.focus(); }} />

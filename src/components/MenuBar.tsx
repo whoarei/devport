@@ -122,6 +122,10 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
   const setTabCycleOrder = useTerminalStore((state) => state.setTabCycleOrder);
   const copyOnSelect = useTerminalStore((state) => state.copyOnSelect);
   const setCopyOnSelect = useTerminalStore((state) => state.setCopyOnSelect);
+  const clipboardPreferences = useTerminalStore(useShallow(state => ({
+    copyOnCtrlC: state.copyOnCtrlC, pasteOnCtrlV: state.pasteOnCtrlV,
+    setCopyOnCtrlC: state.setCopyOnCtrlC, setPasteOnCtrlV: state.setPasteOnCtrlV,
+  })));
   const terminalState = useTerminalStore(useShallow(state => ({ count: state.tabs.length, shuttingDown: state.shuttingDown, activeTab: state.activeTab })));
   useRunHistoryStore(state => state.busy);
   // Re-evaluate shared command guards when file or run state changes.
@@ -300,7 +304,14 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
             { type: "checkbox", label: t("menu.tabCycleMru"), checked: tabCycleOrder === "mru", onSelect: () => setTabCycleOrder("mru") },
           ],
         },
-        { type: "checkbox", label: t("menu.copyOnSelect"), title: t("menu.copyOnSelectHint"), checked: copyOnSelect, onSelect: () => setCopyOnSelect(!copyOnSelect) },
+        {
+          label: t("menu.terminalSettings"),
+          children: [
+            { type: "checkbox", label: t("menu.copyOnCtrlC"), title: t("menu.copyOnCtrlCHint"), checked: clipboardPreferences.copyOnCtrlC, onSelect: () => clipboardPreferences.setCopyOnCtrlC(!clipboardPreferences.copyOnCtrlC) },
+            { type: "checkbox", label: t("menu.pasteOnCtrlV"), title: t("menu.pasteOnCtrlVHint"), checked: clipboardPreferences.pasteOnCtrlV, onSelect: () => clipboardPreferences.setPasteOnCtrlV(!clipboardPreferences.pasteOnCtrlV) },
+            { type: "checkbox", label: t("menu.copyOnSelect"), title: t("menu.copyOnSelectHint"), checked: copyOnSelect, onSelect: () => setCopyOnSelect(!copyOnSelect) },
+          ],
+        },
         { type: "separator" },
         { type: "checkbox", label: t("menu.autostart"), disabled: !isTauri(), checked: autostart, onSelect: toggleAutostart },
       ],

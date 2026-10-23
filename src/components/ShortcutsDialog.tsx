@@ -2,12 +2,15 @@ import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { APP_SHORTCUTS, isMacPlatform, shortcutLabel, shortcutScopeKey, type AppCommandId } from "../shortcuts";
 import { useCommandUiStore } from "../commandUiStore";
+import { useTerminalStore } from "../terminalStore";
 
 export function ShortcutsDialog() {
   const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const open = useCommandUiStore(state => state.shortcutsOpen);
+  const copyOnCtrlC = useTerminalStore(state => state.copyOnCtrlC);
+  const pasteOnCtrlV = useTerminalStore(state => state.pasteOnCtrlV);
   const close = () => useCommandUiStore.setState({ shortcutsOpen: false });
   const mod = isMacPlatform() ? "⌘" : "Ctrl";
   useEffect(() => {
@@ -29,6 +32,8 @@ export function ShortcutsDialog() {
         <tr><td>{t("shortcuts.cycleTabs")}</td><td><kbd>Ctrl+Tab / Ctrl+Shift+Tab</kbd></td><td>{t("shortcuts.scope_tabs")}</td></tr>
         <tr><td>{t("shortcuts.zoom")}</td><td><kbd>{mod}++ / {mod}+- / {mod}+0</kbd></td><td>{t("shortcuts.scope_navigation")}</td></tr>
         <tr><td>{t("shortcuts.find")}</td><td><kbd>{mod}+F</kbd></td><td>{t("shortcuts.scope_editor")}</td></tr>
+        <tr><td>{t(copyOnCtrlC ? "shortcuts.copyOrInterrupt" : "shortcuts.interrupt")}</td><td><kbd>Ctrl+C</kbd></td><td>{t("shortcuts.scope_terminal")}</td></tr>
+        <tr><td>{t(pasteOnCtrlV ? "shortcuts.paste" : "shortcuts.passThrough")}</td><td><kbd>Ctrl+V</kbd></td><td>{t("shortcuts.scope_terminal")}</td></tr>
         <tr><td>{t("shortcuts.clipboard")}</td><td><kbd>Ctrl+Shift+C / Ctrl+Shift+V</kbd></td><td>{t("shortcuts.scope_terminal")}</td></tr>
       </tbody></table>
     <p className="secondary-text">{t("shortcuts.terminalHint")}</p>

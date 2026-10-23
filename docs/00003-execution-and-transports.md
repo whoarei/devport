@@ -48,13 +48,17 @@ preparing → syncing → starting → running → exited
 | 操作 | 行为 |
 | --- | --- |
 | 普通输入 | Base64 解码后转为会话字节输入；只向对应任务传递 |
-| Ctrl+C，有选区 | 复制选择内容 |
+| Ctrl+C，有选区 | 默认复制选择内容；关闭“Ctrl+C 复制选区”后发送一次中断 |
 | Ctrl+C，无选区 | 一次 `SessionControl::Interrupt`；键盘长按重复事件忽略，不触发停止升级 |
+| Ctrl+V | 默认粘贴；关闭“Ctrl+V 粘贴”后交给终端程序 |
+| Ctrl+Shift+C / Ctrl+Shift+V | 始终复制 / 粘贴；空选区复制不操作 |
 | 停止按钮 | `stop_run`，取消准备或进入传输自身的停止流程，清理排队输入 |
 | 超时 | 进入停止处理，终态以 `failed` 和超时原因表示 |
 | resize | SSH / WSL / Local 支持，Serial 启动后明确拒绝 |
 
 SSH / WSL / Local 运行阶段采用 INT → TERM → KILL 升级；具体计时和退出排空由会话实现管理。Windows Local pipe 不支持温和单次中断：Ctrl+C 明确报错且任务继续；停止依靠 `taskkill /T /F`。用户程序可以捕获单次 Ctrl+C 后继续运行，因此不能以“发送成功”推断退出。
+
+剪贴板开关位于“设置 → 终端”，默认均开启，独立终端与运行控制台统一即时生效；详见 [客户端状态与恢复](00007-state-and-recovery.md)。
 
 ## 4. SSH
 

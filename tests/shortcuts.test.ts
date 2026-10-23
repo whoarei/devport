@@ -14,7 +14,7 @@ import { useCommandUiStore } from "../src/commandUiStore";
 import { DEFAULT_LAYOUT } from "../src/layoutState";
 import { type EditorTab } from "../src/editorDocument";
 import { ShortcutsDialog } from "../src/components/ShortcutsDialog";
-import { handleRunConsoleKey } from "../src/runConsoleInput";
+import { createTerminalClipboard } from "../src/terminalClipboard";
 import { endConsoleTabCycle } from "../src/consoleTabs";
 import { trackEditorTabUsage } from "../src/editorTabCycle";
 import { restoredTab } from "../src/environmentState";
@@ -288,12 +288,19 @@ test("DOM context distinguishes the xterm textarea and CodeMirror content from o
 
 test("Ctrl+C keeps selection-copy and single interrupt semantics after application dispatch", () => {
   const sent: string[] = [], copied: string[] = [];
+  let selected = "";
+  const clipboard = createTerminalClipboard({ getSelection: () => selected, focus() {}, paste() {} }, {
+    preferences: () => ({ copyOnCtrlC: true, pasteOnCtrlV: true }), enabled: () => true, context: () => "run",
+    send: data => sent.push(data), clipboard: { readText: async () => "", writeText: async text => { copied.push(text); } },
+  });
   for (const [selection, repeat] of [["", false], ["", true], ["text", false]] as const) {
+    selected = selection;
     const event = key("c", { ctrlKey: true, repeat });
     assert.equal(handleAppShortcut(event, { area: "run", terminal: true }, () => assert.fail(), false), false);
-    assert.equal(handleRunConsoleKey(event, selection, data => sent.push(data), text => copied.push(text)), false);
+    assert.equal(clipboard.handleKey(event), false);
   }
   assert.deepEqual(sent, ["\x03"]); assert.deepEqual(copied, ["text"]);
+  clipboard.dispose();
 });
 
 test("IME, AltGraph, dialogs, forms and handled events never dispatch background actions", () => {
@@ -540,6 +547,25 @@ test("shortcut overview includes all registered commands with translated labels 
     assert.doesNotMatch(markup, />shortcuts\./);
     assert.ok(markup.includes("Ctrl+Tab"));
     assert.ok(markup.includes("Ctrl+Shift+C"));
+  }
+  await i18n.changeLanguage("zh");
+});
+
+test("shortcut overview describes the current terminal clipboard switches", async t => {
+  // React's server renderer reads Zustand's initial snapshot rather than its live state.
+  const initial = useTerminalStore.getInitialState();
+  const original = { copyOnCtrlC: initial.copyOnCtrlC, pasteOnCtrlV: initial.pasteOnCtrlV };
+  t.after(() => Object.assign(initial, original));
+  for (const language of ["zh", "en"]) {
+    await i18n.changeLanguage(language);
+    for (const enabled of [true, false]) {
+      Object.assign(initial, { copyOnCtrlC: enabled, pasteOnCtrlV: enabled });
+      const markup = renderToStaticMarkup(createElement(ShortcutsDialog));
+      assert.ok(markup.includes(i18n.t(enabled ? "shortcuts.copyOrInterrupt" : "shortcuts.interrupt")));
+      assert.ok(markup.includes(i18n.t(enabled ? "shortcuts.paste" : "shortcuts.passThrough")));
+      assert.ok(markup.includes(i18n.t("shortcuts.scope_terminal")));
+      assert.ok(markup.includes("Ctrl+Shift+C / Ctrl+Shift+V"));
+    }
   }
   await i18n.changeLanguage("zh");
 });

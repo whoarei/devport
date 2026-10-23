@@ -45,34 +45,64 @@ useAppStore.getState().handleRunEvent({ type: "output", run_id: "run-1", stream:
 // Add read latency without changing native paste events, to check focus and stale-session races.
 let clipboardDelay = false;
 let clipboardFailure = false;
+let mockClipboard = false;
+let clipboardText = "paste-check";
+const useClipboardLog = create<{ copied: string[] }>(() => ({ copied: [] }));
 const readClipboard = navigator.clipboard.readText.bind(navigator.clipboard);
+const writeClipboard = navigator.clipboard.writeText.bind(navigator.clipboard);
 navigator.clipboard.readText = async () => {
-  const text = await readClipboard();
+  const text = mockClipboard ? clipboardText : await readClipboard();
   if (clipboardDelay) await new Promise(resolve => setTimeout(resolve, 1500));
   if (clipboardFailure) throw new Error("模拟剪贴板读取失败");
   return text;
 };
+navigator.clipboard.writeText = async text => {
+  if (!mockClipboard) await writeClipboard(text);
+  clipboardText = text;
+  useClipboardLog.setState(state => ({ copied: [...state.copied, text] }));
+};
+
+// Browser automation can intercept OS clipboard shortcuts before the page sees
+// them. These buttons exercise real xterm DOM handlers with explicit key events.
+function KeyButtons({ target }: { target: number }) {
+  const press = (key: string, shiftKey: boolean) => {
+    const input = document.querySelectorAll<HTMLTextAreaElement>(".xterm-helper-textarea")[target];
+    input?.focus();
+    for (const type of ["keydown", "keypress", "keyup"]) input?.dispatchEvent(new KeyboardEvent(type, {
+      key, code: `Key${key.toUpperCase()}`, keyCode: key.toUpperCase().charCodeAt(0),
+      ctrlKey: true, shiftKey, bubbles: true, cancelable: true,
+    }));
+  };
+  return <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+    {[false, true].flatMap(shift => ["c", "v"].map(key => <button key={`${shift}-${key}`} onClick={() => press(key, shift)}>
+      触发 Ctrl+{shift ? "Shift+" : ""}{key.toUpperCase()}
+    </button>))}
+  </div>;
+}
 
 function Fixture() {
   const tab = useTerminalStore(state => state.tabs[0]);
   const entries = useInputLog(state => state.entries);
+  const copied = useClipboardLog(state => state.copied);
   return <main style={{ height: "100vh", display: "flex", flexDirection: "column", padding: 16, gap: 12 }}>
     <header className="titlebar"><MenuBar uiZoom={100} onUiZoom={() => {}} onAbout={() => {}} onCheckUpdate={() => {}} /></header>
     <header>终端选择与粘贴交互验收（模拟接口）</header>
     <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-      <input aria-label="粘贴样本文本" defaultValue="paste-check" />
+      <input aria-label="粘贴样本文本" defaultValue="paste-check" onChange={event => { clipboardText = event.target.value; }} />
       <button onClick={() => void navigator.clipboard.writeText("paste-check")}>复制测试文本</button>
       <input aria-label="其他输入框" placeholder="检查异步粘贴不抢焦点" />
       <label><input type="checkbox" onChange={event => { clipboardDelay = event.target.checked; }} />延迟读取剪贴板</label>
       <label><input type="checkbox" onChange={event => { clipboardFailure = event.target.checked; }} />模拟剪贴板失败</label>
+      <label><input type="checkbox" onChange={event => { mockClipboard = event.target.checked; }} />使用模拟剪贴板</label>
       <button onClick={() => useTerminalStore.setState(state => ({ tabs: state.tabs.map(tab => ({ ...tab, status: status("session-2") })) }))}>替换终端会话</button>
       <button onClick={() => replaceRun("run-2")}>替换运行任务</button>
     </div>
     <section style={{ display: "flex", flex: 1, minHeight: 0, gap: 16 }}>
-      <div style={{ display: "flex", flex: 1, minWidth: 0, flexDirection: "column" }}><h3>独立终端</h3><TerminalPage tab={tab} visible /></div>
-      <div style={{ display: "flex", flex: 1, minWidth: 0, flexDirection: "column" }}><h3>运行控制台</h3><RunConsole collapsed={false} onToggleCollapse={() => {}} /></div>
+      <div style={{ display: "flex", flex: 1, minWidth: 0, flexDirection: "column" }}><h3>独立终端</h3><KeyButtons target={0} /><TerminalPage tab={tab} visible /></div>
+      <div style={{ display: "flex", flex: 1, minWidth: 0, flexDirection: "column" }}><h3>运行控制台</h3><KeyButtons target={1} /><RunConsole collapsed={false} onToggleCollapse={() => {}} /></div>
     </section>
     <pre aria-label="收到的输入" style={{ height: 150, overflow: "auto", flexShrink: 0 }}>{JSON.stringify(entries, null, 2)}</pre>
+    <pre aria-label="复制记录" style={{ maxHeight: 80, overflow: "auto", flexShrink: 0 }}>{JSON.stringify(copied)}</pre>
   </main>;
 }
 createRoot(document.getElementById("root")!).render(<React.StrictMode><Fixture /></React.StrictMode>);

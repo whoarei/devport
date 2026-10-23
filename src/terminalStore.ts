@@ -4,6 +4,7 @@ import i18n from "./i18n";
 import { useAppStore } from "./store";
 import { loadTabCycleOrder, saveTabCycleOrder, type TabCycleOrder } from "./tabCycle";
 import { loadCopyOnSelect, saveCopyOnSelect } from "./terminalCopyOnSelect";
+import { loadTerminalClipboardPreference, saveTerminalClipboardPreference, type TerminalClipboardPreferences } from "./terminalClipboard";
 
 /** 最近使用栈：把 id 移到栈顶 */
 const touchMru = (mru: string[], id: string) => [id, ...mru.filter((x) => x !== id)];
@@ -31,7 +32,7 @@ function track<T>(work: Promise<T>): Promise<T> {
   return work;
 }
 
-interface TerminalStore {
+interface TerminalStore extends TerminalClipboardPreferences {
   tabs: TerminalTab[];
   activeTab: string;
   shuttingDown: boolean;
@@ -42,6 +43,8 @@ interface TerminalStore {
   setTabCycleOrder: (order: TabCycleOrder) => void;
   copyOnSelect: boolean;
   setCopyOnSelect: (enabled: boolean) => void;
+  setCopyOnCtrlC: (enabled: boolean) => void;
+  setPasteOnCtrlV: (enabled: boolean) => void;
   select: (id: string) => void;
   /** MRU 会话中的预览选择：只切换活动标签，松开 Ctrl 后再由 select 提交。 */
   previewSelect: (id: string) => void;
@@ -68,6 +71,10 @@ export const useTerminalStore = create<TerminalStore>((set, get) => {
     setTabCycleOrder: (order) => { saveTabCycleOrder(order); set({ tabCycleOrder: order }); },
     copyOnSelect: loadCopyOnSelect(),
     setCopyOnSelect: (enabled) => { saveCopyOnSelect(enabled); set({ copyOnSelect: enabled }); },
+    copyOnCtrlC: loadTerminalClipboardPreference("copyOnCtrlC"),
+    pasteOnCtrlV: loadTerminalClipboardPreference("pasteOnCtrlV"),
+    setCopyOnCtrlC: (enabled) => { saveTerminalClipboardPreference("copyOnCtrlC", enabled); set({ copyOnCtrlC: enabled }); },
+    setPasteOnCtrlV: (enabled) => { saveTerminalClipboardPreference("pasteOnCtrlV", enabled); set({ pasteOnCtrlV: enabled }); },
     select: (id) => {
       if (id === "run" || get().tabs.some((t) => t.id === id)) set((s) => ({ activeTab: id, mru: touchMru(s.mru, id) }));
     },
