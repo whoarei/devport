@@ -32,7 +32,6 @@ function addDeletedEvent(device: DeletedDevice) {
     id: deletedEventId(device.id),
     timestamp: Date.parse(device.deleted_at),
     title: () => i18n.t("device.deleted", { name: device.name }),
-    message: () => i18n.t("device.deletedHint"),
     dismissible: false,
     action: { label: () => i18n.t("device.undoDelete"), run: () => restoreDeletedDevice(device.id) },
   });

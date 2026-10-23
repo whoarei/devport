@@ -50,9 +50,9 @@ test("deleted device events are rebuilt without duplicates and remain translatab
   const event = useEventStore.getState().events[0];
   assert.equal(event.timestamp, Date.parse("2026-10-20T02:00:00Z"));
   await i18n.changeLanguage("zh");
-  assert.equal(eventText(event.action!.label), "撤销删除");
+  assert.equal(eventText(event.action!.label), "撤销");
   await i18n.changeLanguage("en");
-  assert.equal(eventText(event.action!.label), "Undo deletion");
+  assert.equal(eventText(event.action!.label), "Undo");
 });
 
 test("deletion failure keeps the device and reports an event; restoration failure remains retryable", async (t) => {

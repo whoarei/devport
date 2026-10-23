@@ -42,19 +42,22 @@ export function EventCenter() {
       </header>
       {events.length === 0 ? <p className="event-empty">{t("events.empty")}</p> : <ol>
         {events.map((event) => <li key={event.id} className={`event-item${event.level === "error" ? " event-error" : ""}`}>
-          <div className="event-item-heading"><strong>{eventText(event.title)}</strong>
+          <div className="event-item-heading">
+            <div className="event-item-summary">
+              <strong>{eventText(event.title)}</strong>
+              <time dateTime={new Date(event.timestamp).toISOString()}>{new Date(event.timestamp).toLocaleString(i18n.language === "zh" ? "zh-CN" : "en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time>
+            </div>
+            {event.action && <button type="button" className="event-action" disabled={running.includes(event.id)}
+              onClick={async (click) => {
+                const actionButton = click.currentTarget;
+                await useEventStore.getState().runAction(event.id);
+                if (!actionButton.isConnected && document.activeElement === document.body) button.current?.focus();
+              }}>{eventText(event.action.label)}</button>}
             {event.dismissible !== false && <button type="button" disabled={running.includes(event.id)}
               aria-label={t("events.dismiss")} onClick={() => useEventStore.getState().dismiss(event.id)}>×</button>}
           </div>
-          <time dateTime={new Date(event.timestamp).toISOString()}>{new Date(event.timestamp).toLocaleString(i18n.language === "zh" ? "zh-CN" : "en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time>
           {event.message && <p>{eventText(event.message)}</p>}
           {event.actionError && <p className="event-action-error" role="alert">{event.actionError}</p>}
-          {event.action && <button type="button" className="event-action" disabled={running.includes(event.id)}
-            onClick={async (click) => {
-              const actionButton = click.currentTarget;
-              await useEventStore.getState().runAction(event.id);
-              if (!actionButton.isConnected && document.activeElement === document.body) button.current?.focus();
-            }}>{eventText(event.action.label)}</button>}
         </li>)}
       </ol>}
     </section>}
