@@ -462,7 +462,10 @@ export const en: Messages = {
   },
   update: {
     confirmTitle: "Install Update",
-    closeTerminalsConfirm: "Installing the update will close all terminals and may interrupt commands running in them. Close terminals and continue updating?",
+    restartAfterInstall: "The app will restart after installation.",
+    versionChange: "Update from {{current}} to {{latest}}",
+    activeTerminals: "Active terminals: {{count}}",
+    closeTerminalsConfirm: "Updating will close all terminals and may interrupt running commands. Finish your terminal work before continuing.",
     closeTerminalsAndInstall: "Close Terminals and Update",
     closingTerminals: "Closing terminals…",
     blockerBusy: "Wait for the current file or task operation to finish.",

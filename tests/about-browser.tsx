@@ -1,5 +1,5 @@
 // Manual fixture: npm run dev -> /tests/about-browser.html.
-// Query params: state=idle|checking|uptodate|available|manual|blocked|error|downloading|verifying|installing,
+// Query params: state=idle|checking|uptodate|available|manual|blocked|error|downloading|verifying|installing|confirm,
 // lang=zh|en, theme=light|dark, zoom=100|150|200, width=320|360|420.
 // No network, downloads, or installations.
 import React, { useEffect, useRef, useState } from "react";
@@ -7,6 +7,9 @@ import { createRoot } from "react-dom/client";
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { AboutDialog } from "../src/components/AboutDialog";
+import { UpdateConfirmDialog } from "../src/components/UpdateConfirmDialog";
+import { startOneClickUpdate } from "../src/updateFlow";
+import { useTerminalStore } from "../src/terminalStore";
 import { api, type AppUpdateInfo } from "../src/api";
 import { transferApi } from "../src/transferApi";
 import { useAppStore } from "../src/store";
@@ -40,7 +43,7 @@ mockIPC((command, args) => {
 
 const update: AppUpdateInfo = {
   current_version: version,
-  latest_version: "0.17.0",
+  latest_version: "0.24.0",
   notes: "更新内容示例 / Sample release notes\n\n改善界面布局与可读性。\nImprove layout and readability.\n\n".repeat(12),
   published_at: null,
   download_url: "https://github.com/whoarei/remote-runner/releases/latest",
@@ -53,8 +56,9 @@ api.checkAppUpdate = async () => {
 };
 transferApi.snapshot = async () => [];
 api.saveWorkEnvironment = async () => {};
-api.closeAllTerminals = async () => {};
+api.closeAllTerminals = async () => { document.documentElement.dataset.terminalsClosed = "true"; };
 api.installAppUpdate = async () => {
+  document.documentElement.dataset.installStarted = "true";
   await emit("app-update://progress", {
     phase: scenario === "verifying" || scenario === "installing" ? scenario : "downloading",
     downloaded: 12 * 1024 * 1024,
@@ -63,19 +67,24 @@ api.installAppUpdate = async () => {
   return new Promise<void>(() => {});
 };
 if (scenario === "blocked") useAppStore.setState({ runs: { fixture: { state: "running" } } as ReturnType<typeof useAppStore.getState>["runs"] });
+if (scenario === "confirm") useTerminalStore.setState({ tabs: [{ id: "terminal", deviceId: "local", deviceName: "Local", busy: false,
+  status: { session_id: "session", device_name: "Local", state: "connected", exit_code: null, error: null } }] });
 
 function Fixture() {
   const dialog = useRef<HTMLDialogElement>(null);
   const [nonce, setNonce] = useState(scenario === "idle" ? 0 : 1);
-  useEffect(() => { if (!dialog.current?.open) dialog.current?.showModal(); }, []);
+  const oneClick = params.get("entry") === "titlebar";
+  useEffect(() => { if (!oneClick && !dialog.current?.open) dialog.current?.showModal(); }, []);
   return <>
     <main style={{ padding: 24 }}>
       <p>关于对话框交互验收（模拟更新，不下载或安装）</p>
       <button onClick={() => dialog.current?.showModal()}>打开对话框</button>
       <button onClick={() => { setNonce((value) => value + 1); dialog.current?.showModal(); }}>检查更新入口</button>
+      <button onClick={() => void startOneClickUpdate(update, () => {})}>标题栏更新入口</button>
       <p id="opened-url" />
     </main>
     <AboutDialog dialogRef={dialog} autoCheckNonce={nonce} />
+    <UpdateConfirmDialog />
   </>;
 }
 createRoot(document.getElementById("root")!).render(<React.StrictMode><Fixture /></React.StrictMode>);

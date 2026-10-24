@@ -1,0 +1,59 @@
+.update-confirm-dialog {
+  width: min(460px, calc(100vw / var(--browser-ui-zoom, 1) - 32px));
+  max-width: none;
+  max-height: calc(100vh / var(--browser-ui-zoom, 1) - 32px);
+  padding: 0;
+  overflow: auto;
+  container: update-confirm / inline-size;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-dialog);
+  box-shadow: 0 24px 80px var(--shadow);
+}
+.update-confirm-dialog::backdrop { background: var(--backdrop); }
+.update-confirm-body { padding: 24px; }
+.update-confirm-heading { display: flex; align-items: flex-start; gap: 12px; }
+.update-confirm-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  color: var(--accent);
+  background: var(--accent-surface);
+  border: 1px solid var(--accent-border);
+  border-radius: 12px;
+}
+.update-confirm-intro { flex: 1; min-width: 0; }
+.update-confirm-intro h2 { margin: 0 0 5px; font-size: 18px; font-weight: 600; line-height: 1.4; }
+.update-confirm-intro p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
+.update-confirm-dialog .update-confirm-close {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin: -4px -6px 0 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+}
+.update-confirm-close:hover { color: var(--text-primary); }
+.update-confirm-versions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 20px; color: var(--text-muted); font-size: 12px; }
+.update-confirm-versions > span { margin-right: auto; }
+.update-confirm-versions code { color: var(--text-secondary); font: 12px Consolas, "Cascadia Mono", monospace; overflow-wrap: anywhere; }
+.update-confirm-versions .update-confirm-latest { padding: 3px 8px; color: var(--accent); background: var(--accent-surface); border-radius: 5px; }
+.update-confirm-warning { display: flex; align-items: flex-start; gap: 10px; margin-top: 16px; padding: 13px 14px; background: var(--warning-surface); border: 1px solid var(--warning-border); border-radius: var(--radius-panel); }
+.update-confirm-warning > svg { margin-top: 2px; color: var(--warning); }
+.update-confirm-warning h3 { margin: 0 0 5px; color: var(--warning); font-size: 13px; font-weight: 600; }
+.update-confirm-warning p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.75; overflow-wrap: anywhere; }
+.update-confirm-actions { padding: 16px 24px; background: var(--surface-panel); border-top: 1px solid var(--border); flex-wrap: wrap; }
+.update-confirm-actions button { min-width: 76px; min-height: 34px; padding: 6px 14px; font-size: 12px; }
+.update-confirm-dialog button:focus-visible { outline: 2px solid var(--accent-border); outline-offset: 3px; }
+@container update-confirm (max-width: 360px) {
+  .update-confirm-body { padding: 20px; }
+  .update-confirm-actions { padding: 14px 20px; }
+  .update-confirm-actions button { flex: 1 1 auto; }
+}

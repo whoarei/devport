@@ -1,7 +1,6 @@
 /** 一键更新编排（Tauri 耦合）：标题栏「更新」按钮与关于对话框共用的安装流程。 */
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { ask } from "@tauri-apps/plugin-dialog";
 import { api, errorMessage, type AppUpdateInfo } from "./api";
 import i18n from "./i18n";
 import { useAppStore } from "./store";
@@ -9,6 +8,7 @@ import { useTerminalStore, terminalActive } from "./terminalStore";
 import { transferActive, transferApi } from "./transferApi";
 import { useTransferStore } from "./transferStore";
 import { flushWorkEnvironment } from "./workEnvironment";
+import { confirmTerminalClose, updateFocusTarget } from "./updateConfirmation";
 import {
   directUpdateAction,
   installWithProgress,
@@ -21,6 +21,7 @@ import {
 export async function installCheckedUpdate(
   info: AppUpdateInfo,
   onPhase: (phase: UpdateButtonPhase) => void,
+  returnFocus = updateFocusTarget(),
 ): Promise<void> {
   if (useAppStore.getState().updating) return;
   const blocker = installBlocker();
@@ -28,12 +29,8 @@ export async function installCheckedUpdate(
   useAppStore.setState({ updating: true });
   try {
     if ((await transferApi.snapshot()).some((task) => transferActive(task.state))) throw new Error(i18n.t("transfer.updateBlocker"));
-    if (useTerminalStore.getState().tabs.some(terminalActive)) {
-      if (!await ask(i18n.t("update.closeTerminalsConfirm"), {
-        title: i18n.t("update.confirmTitle"), kind: "warning",
-        okLabel: i18n.t("update.closeTerminalsAndInstall"), cancelLabel: i18n.t("dialog.cancel"),
-      })) return;
-    }
+    const terminalCount = useTerminalStore.getState().tabs.filter(terminalActive).length;
+    if (terminalCount && !await confirmTerminalClose(info, terminalCount, returnFocus)) return;
     // Recheck after the asynchronous confirmation before closing any terminals.
     const currentBlocker = installBlocker();
     if (currentBlocker) throw new Error(currentBlocker);
@@ -78,6 +75,7 @@ export async function startOneClickUpdate(
     return;
   }
   oneClickRunning = true;
+  const returnFocus = updateFocusTarget();
   onPhase({ kind: "checking" });
   try {
     // Re-pin the exact metadata so install never depends on a stale startup check.
@@ -87,7 +85,7 @@ export async function startOneClickUpdate(
       return;
     }
     useAppStore.setState({ availableUpdate: fresh });
-    await installCheckedUpdate(fresh, onPhase);
+    await installCheckedUpdate(fresh, onPhase, returnFocus);
   } catch (error) {
     useAppStore.setState({ editorError: i18n.t("update.autoFailedManual", { message: errorMessage(error) }) });
   } finally {

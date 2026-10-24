@@ -10,6 +10,7 @@ import { useAppStore } from "../src/store";
 import { useTerminalStore } from "../src/terminalStore";
 import { useTransferStore } from "../src/transferStore";
 import { transferApi } from "../src/transferApi";
+import { useUpdateConfirmationStore } from "../src/updateConfirmation";
 
 // 文案断言基于中文字典，固定测试语言避免随运行环境漂移
 test.before(async () => { await i18n.changeLanguage("zh"); });
@@ -112,27 +113,44 @@ function updateSetup(t: test.TestContext, active = true) {
   useTransferStore.setState({ tasks: [] });
   t.mock.method(transferApi, "snapshot", async () => []);
   t.after(() => {
+    useUpdateConfirmationStore.getState().request?.respond(false);
     useAppStore.setState(app, true); useTerminalStore.setState(terminals, true); useTransferStore.setState(transfers, true);
     if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
     else Reflect.deleteProperty(globalThis, "window");
   });
 }
 
+function nextConfirmation(t: test.TestContext) {
+  return new Promise<NonNullable<ReturnType<typeof useUpdateConfirmationStore.getState>["request"]>>((resolve) => {
+    const unsubscribe = useUpdateConfirmationStore.subscribe(({ request }) => {
+      if (request) { unsubscribe(); resolve(request); }
+    });
+    t.after(unsubscribe);
+  });
+}
+
 test("cancelling update confirmation preserves terminals and never starts installation", async (t) => {
   updateSetup(t);
   const tabs = useTerminalStore.getState().tabs;
-  let prompts = 0;
-  mockIPC((command, args) => {
-    assert.equal(command, "plugin:dialog|message");
-    assert.match(args!.message as string, /关闭所有终端/);
-    prompts++;
-    return i18n.t("dialog.cancel");
-  });
+  const prompted = nextConfirmation(t);
+  mockIPC(() => { assert.fail("must not show a native dialog"); });
   const close = t.mock.method(api, "closeAllTerminals", async () => { assert.fail("must not close"); });
   const install = t.mock.method(api, "installAppUpdate", async () => { assert.fail("must not install"); });
   const phases: string[] = [];
-  await installCheckedUpdate(sampleUpdate, (phase) => phases.push(phase.kind));
-  assert.equal(prompts, 1);
+  const pending = installCheckedUpdate(sampleUpdate, (phase) => phases.push(phase.kind));
+  const prompt = await prompted;
+  assert.equal(prompt.info, sampleUpdate);
+  assert.equal(prompt.terminalCount, 1);
+  assert.equal(useAppStore.getState().updating, true);
+  assert.equal(close.mock.callCount(), 0);
+  assert.equal(install.mock.callCount(), 0);
+  // A second entry point leaves the pending decision intact.
+  await installCheckedUpdate(sampleUpdate, () => assert.fail("already updating"));
+  assert.equal(useUpdateConfirmationStore.getState().request, prompt);
+  prompt.respond(false);
+  await pending;
+  assert.equal(useUpdateConfirmationStore.getState().request, null);
+  prompt.respond(true); // A stale click after cancellation cannot resume installation.
   assert.equal(useTerminalStore.getState().tabs, tabs);
   assert.equal(close.mock.callCount(), 0);
   assert.equal(install.mock.callCount(), 0);
@@ -144,11 +162,8 @@ for (const entry of ["checked", "one-click"] as const) {
   test(`${entry} update waits for confirmed terminal cleanup before installing`, async (t) => {
     updateSetup(t);
     const calls: string[] = [];
-    mockIPC((command) => {
-      assert.equal(command, "plugin:dialog|message");
-      calls.push("confirm");
-      return i18n.t("update.closeTerminalsAndInstall");
-    }, { shouldMockEvents: true });
+    const prompted = nextConfirmation(t);
+    mockIPC(() => { assert.fail("must not show a native dialog"); }, { shouldMockEvents: true });
     t.mock.method(api, "checkAppUpdate", async () => sampleUpdate);
     let finishCleanup!: () => void;
     let cleanupStarted!: () => void;
@@ -167,6 +182,10 @@ for (const entry of ["checked", "one-click"] as const) {
     const pending = entry === "checked"
       ? assert.rejects(installCheckedUpdate(sampleUpdate, (phase) => phases.push(phase.kind)), /installer reached/)
       : startOneClickUpdate(sampleUpdate, (phase) => { if (phase) phases.push(phase.kind); });
+    const prompt = await prompted;
+    assert.deepEqual(calls, []);
+    calls.push("confirm");
+    prompt.respond(true);
     await started;
     assert.deepEqual(calls, ["confirm", "close"]);
     assert.equal(phases.at(-1), "closingTerminals");
@@ -184,10 +203,12 @@ for (const entry of ["checked", "one-click"] as const) {
 
 test("failed terminal cleanup preserves tabs and aborts update before installation", async (t) => {
   updateSetup(t);
-  mockIPC(() => i18n.t("update.closeTerminalsAndInstall"));
+  const prompted = nextConfirmation(t);
   t.mock.method(api, "closeAllTerminals", async () => { throw new Error("cleanup timed out"); });
   const install = t.mock.method(api, "installAppUpdate", async () => { assert.fail("must not install"); });
-  await assert.rejects(installCheckedUpdate(sampleUpdate, () => {}), /cleanup timed out/);
+  const pending = assert.rejects(installCheckedUpdate(sampleUpdate, () => {}), /cleanup timed out/);
+  (await prompted).respond(true);
+  await pending;
   assert.equal(install.mock.callCount(), 0);
   assert.equal(useTerminalStore.getState().tabs.length, 1);
   assert.equal(useTerminalStore.getState().shuttingDown, false);
@@ -200,17 +221,19 @@ test("update without active terminals proceeds without a confirmation", async (t
   t.mock.method(api, "closeAllTerminals", async () => {});
   const install = t.mock.method(api, "installAppUpdate", async () => { throw new Error("installer reached"); });
   await assert.rejects(installCheckedUpdate(sampleUpdate, () => {}), /installer reached/);
+  assert.equal(useUpdateConfirmationStore.getState().request, null);
   assert.equal(install.mock.callCount(), 1);
 });
 
 test("update rechecks blockers after confirmation before closing terminals", async (t) => {
   updateSetup(t);
-  mockIPC(() => {
-    useAppStore.setState({ runs: { run: { state: "running" } } as ReturnType<typeof useAppStore.getState>["runs"] });
-    return i18n.t("update.closeTerminalsAndInstall");
-  });
+  const prompted = nextConfirmation(t);
   const close = t.mock.method(api, "closeAllTerminals", async () => { assert.fail("must not close"); });
-  await assert.rejects(installCheckedUpdate(sampleUpdate, () => {}), /运行任务/);
+  const pending = assert.rejects(installCheckedUpdate(sampleUpdate, () => {}), /运行任务/);
+  const prompt = await prompted;
+  useAppStore.setState({ runs: { run: { state: "running" } } as ReturnType<typeof useAppStore.getState>["runs"] });
+  prompt.respond(true);
+  await pending;
   assert.equal(close.mock.callCount(), 0);
   assert.equal(useAppStore.getState().updating, false);
 });

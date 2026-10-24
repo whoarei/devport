@@ -11,6 +11,7 @@ import { RunHistoryDialogs } from "./components/RunHistoryDialogs";
 import { useWorkspaceRunStore } from "./workspaceRunStore";
 import { TitleBar } from "./components/TitleBar";
 import { AboutDialog } from "./components/AboutDialog";
+import { UpdateConfirmDialog } from "./components/UpdateConfirmDialog";
 import { SplitHandle } from "./components/SplitHandle";
 import { CenterDock } from "./components/CenterDock";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -196,6 +197,7 @@ export default function App() {
       <WorkspaceRunDialogs />
       <RunHistoryDialogs />
       <AboutDialog dialogRef={aboutDialog} autoCheckNonce={aboutAutoCheck} />
+      <UpdateConfirmDialog />
       <DeviceManager />
       <UsbDialog />
       <RemoteWorkspaceDialog />

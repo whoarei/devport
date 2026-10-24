@@ -463,7 +463,10 @@ export const zh = {
   },
   update: {
     confirmTitle: "安装更新",
-    closeTerminalsConfirm: "安装更新将关闭所有终端，其中正在执行的命令可能被中断。是否关闭终端并继续更新？",
+    restartAfterInstall: "安装完成后，应用将重新启动。",
+    versionChange: "从 {{current}} 更新至 {{latest}}",
+    activeTerminals: "当前有 {{count}} 个活动终端",
+    closeTerminalsConfirm: "更新将关闭所有终端，正在执行的命令可能被中断。请确认终端中的工作已完成。",
     closeTerminalsAndInstall: "关闭终端并更新",
     closingTerminals: "正在关闭终端…",
     blockerBusy: "请等待当前文件或任务操作完成。",
