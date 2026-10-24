@@ -111,7 +111,7 @@ CodeMirror 标签保留 content、savedContent、revision、EOL、BOM、语言�
 
 编辑器提供 29 种语法模式及纯文本：Python、Shell、PowerShell、JavaScript / JSX、TypeScript / TSX、HTML、CSS、JSON、YAML、TOML、INI / Properties、XML、Markdown、C / C++、C#、Java、Go、Rust、Lua、Ruby、PHP、SQL、Dockerfile、CMake、Nginx、Diff / Patch。`editorLanguages.ts` 集中维护语言标识、扩展名、特殊文件名及默认缩进；识别只检查文件名，特殊名称优先于扩展名，支持 `Dockerfile.*`、`Containerfile`、`CMakeLists.txt`、`.bashrc`、`.gitconfig`、`Cargo.lock` 等，未知文件回退纯文本。状态栏可手动切换，选择随文件标签保存并在重启后恢复；Rust 快照校验使用对应白名单，前端契约测试防止两侧遗漏。语言选择不改变执行类型或运行入口。
 
-`editorLanguageSupport.ts` 按需加载并缓存语法包；Markdown 代码围栏复用同一组语言描述，嵌入语言也按需加载。语言切换及组件卸载取消旧加载结果，重配置保留正文、选区和撤销历史。加载失败时保留可编辑正文、显示提示并允许重试。原生语法包提供结构折叠，旧版流式语法模式按缩进折叠；Go 默认使用 Tab，Python 等默认 4 空格，Web / 配置 / Shell 等默认 2 空格，既有正文不会自动重排。折叠通过行号旁按钮或 CodeMirror 的折叠快捷键操作。
+`editorLanguageSupport.ts` 按需加载并缓存语法包；Markdown 代码围栏复用同一组语言描述，嵌入语言也按需加载。语言切换及组件卸载取消旧加载结果，重配置保留正文、选区和撤销历史。加载失败时保留可编辑正文、显示提示并允许重试。原生语法包提供结构折叠，旧版流式语法模式按缩进折叠；Go 默认使用 Tab，Python 等默认 4 空格，Web / 配置 / Shell 等默认 2 空格，既有正文不会自动重排。折叠通过行号旁按钮或 CodeMirror 的折叠快捷键操作。折叠栏使用与工作台一致的细线箭头：鼠标靠近行号、折叠栏及右侧预留的 8px 缓冲区时显示整列箭头，移入代码正文后隐藏可折叠箭头，已折叠箭头始终可见；触屏等无精细悬停能力的设备保持常显。触发区宽度固定，不随悬停改变布局；箭头提示随界面语言切换。
 
 基础补全合并语法包提供的关键词、片段或局部符号与当前文档词汇，输入时显示候选，也可用 `Ctrl+Space` 打开；方向键选择、Enter 接受、Esc 先关闭候选，再次 Esc 沿用离开编辑区的行为，Tab 保持缩进和片段导航。候选框和折叠占位符跟随主题，语言名、提示及新增无障碍文案支持中英切换。当前未接入 LSP，不提供跨文件语义跳转、项目级重命名或类型诊断。
 

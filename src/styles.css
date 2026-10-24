@@ -672,6 +672,26 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .tab-editor { display: none; }
 .tab-editor.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .code-editor { flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+/* Keep the reveal buffer inside the gutter so it never intercepts code text. */
+.code-editor .cm-gutters { padding-right: 8px; }
+.code-editor .cm-foldGutter { width: 22px; }
+.code-editor .cm-foldGutter .cm-gutterElement { padding: 0 1px; }
+.code-editor .cm-foldGutter .cm-foldMarker {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 1.5em; padding: 0; vertical-align: top;
+  border-radius: 4px; color: var(--text-muted); cursor: pointer;
+  transition: opacity 120ms, color 120ms, background-color 120ms;
+}
+.code-editor .cm-foldMarker > svg { flex-shrink: 0; pointer-events: none; }
+.code-editor .cm-foldMarker[data-folded="true"] { color: var(--accent); }
+.code-editor .cm-foldGutter .cm-foldMarker:hover { color: var(--text-primary); background: var(--surface-hover); }
+@media (hover: hover) and (pointer: fine) {
+  .code-editor .cm-foldMarker[data-folded="false"] { opacity: 0; }
+  .code-editor .cm-gutters:hover .cm-foldMarker { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .code-editor .cm-foldGutter .cm-foldMarker { transition: none; }
+}
 .editor-status { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 4px 12px; border-top: 1px solid var(--border, #2a2b30); color: var(--text-secondary, #9ba4b4); font-size: 11px; }
 .editor-status-right { display: flex; align-items: center; gap: 8px; }
 .editor-status select { background: transparent; color: var(--text-secondary, #9ba4b4); border: 1px solid var(--border, #2a2b30); border-radius: 3px; padding: 1px 2px; font-size: 11px; }

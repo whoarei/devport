@@ -4,7 +4,7 @@ import { useShallow } from "zustand/react/shallow";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers, drawSelection } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting } from "@codemirror/language";
+import { bracketMatching, defaultHighlightStyle, foldKeymap, indentOnInput, syntaxHighlighting } from "@codemirror/language";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
 import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search";
@@ -23,6 +23,7 @@ import { executeAppCommand } from "../appCommands";
 import { shortcutLabel, shortcutTitle } from "../shortcuts";
 import { EDITOR_LANGUAGES, isEditorLanguage } from "../editorLanguages";
 import { completeDocumentWords, configureEditorLanguage, editorLanguageIndent } from "../editorLanguageSupport";
+import { editorFoldGutter, refreshEditorFoldLabels } from "../editorFolding";
 import { FileIcon, Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { tabNavigationTarget, useRevealActiveTab } from "../tabStrip";
@@ -89,7 +90,7 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
         doc: content,
         selection: initial?.view ? { anchor: Math.min(initial.view.anchor, content.length), head: Math.min(initial.view.head, content.length) } : undefined,
         extensions: [
-          lineNumbers(), foldGutter(), highlightActiveLine(), highlightActiveLineGutter(), drawSelection(),
+          lineNumbers(), editorFoldGutter(), highlightActiveLine(), highlightActiveLineGutter(), drawSelection(),
           history(), indentOnInput(), bracketMatching(), closeBrackets(),
           autocompletion({ defaultKeymap: false }),
           EditorState.languageData.of(() => [{ autocomplete: completeDocumentWords }]),
@@ -175,7 +176,11 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
     if (!view.current) return;
     return configureEditorLanguage(view.current, languageConfig.current, language, () => setLanguageError(language));
   }, [language, languageAttempt]);
-  useEffect(() => { view.current?.dispatch({ effects: phraseConfig.current.reconfigure(editorPhrases()) }); }, [t]);
+  useEffect(() => {
+    if (!view.current) return;
+    view.current.dispatch({ effects: phraseConfig.current.reconfigure(editorPhrases()) });
+    refreshEditorFoldLabels(view.current);
+  }, [t]);
   useEffect(() => { view.current?.dispatch({ effects: readOnlyConfig.current.reconfigure(EditorState.readOnly.of(locked)) }); }, [locked]);
   useEffect(() => { view.current?.dispatch({ effects: themeConfig.current.reconfigure(editorTheme(theme)) }); }, [theme]);
   return <>
