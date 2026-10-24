@@ -422,7 +422,9 @@ export const zh = {
     button: "事件（{{count}}）",
     empty: "暂无事件",
     close: "关闭事件列表",
-    dismiss: "移除事件",
+    dismiss: "删除事件",
+    clear: "清空",
+    clearing: "清空中…",
   },
   about: {
     installFailed: "自动升级失败，可改用手动下载：{{message}}",

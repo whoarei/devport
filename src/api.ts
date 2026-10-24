@@ -343,6 +343,7 @@ export const api = {
   deleteDevice: (id: string) => invoke<DeletedDevice>("delete_device", { id }),
   listDeletedDevices: () => invoke<DeletedDevice[]>("list_deleted_devices"),
   restoreDevice: (id: string) => invoke<DeviceProfile>("restore_device", { id }),
+  purgeDeletedDevice: (id: string, deletedAt: string) => invoke<void>("purge_deleted_device", { id, deletedAt }),
   testDevice: (device: DeviceProfile) =>
     invoke<string>("test_device", { device }),
   listSerialPorts: () => invoke<string[]>("list_serial_ports"),
@@ -391,6 +392,7 @@ export const api = {
   archiveRunHistory: (runIds: string[]) => invoke<DeletedRunHistory | null>("archive_run_history", { runIds }),
   listDeletedRunHistory: () => invoke<DeletedRunHistory[]>("list_deleted_run_history"),
   restoreRunHistory: (batchId: string) => invoke<RunStatus[]>("restore_run_history", { batchId }),
+  purgeDeletedRunHistory: (batchId: string) => invoke<void>("purge_deleted_run_history", { batchId }),
   readRunHistoryOutput: (runId: string) => invoke<string>("read_run_history_output", { runId }),
   drainRunEvents: () => invoke<RunEvent[]>("drain_run_events"),
 

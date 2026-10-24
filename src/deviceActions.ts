@@ -32,7 +32,7 @@ function addDeletedEvent(device: DeletedDevice) {
     id: deletedEventId(device.id),
     timestamp: Date.parse(device.deleted_at),
     title: () => i18n.t("device.deleted", { name: device.name }),
-    dismissible: false,
+    remove: () => serialize(() => api.purgeDeletedDevice(device.id, device.deleted_at)),
     action: { label: () => i18n.t("device.undoDelete"), run: () => restoreDeletedDevice(device.id) },
   });
 }
@@ -50,7 +50,11 @@ export function loadDeletedDeviceEvents(): Promise<void> {
       for (const event of useEventStore.getState().events) {
         if (event.id.startsWith("device-deleted:") && !ids.has(event.id)) useEventStore.getState().dismiss(event.id);
       }
-      deleted.forEach(addDeletedEvent);
+      // Preserve retry errors and identities used by in-flight event operations.
+      for (const device of deleted) {
+        const existing = useEventStore.getState().events.find((event) => event.id === deletedEventId(device.id));
+        if (!existing || existing.timestamp !== Date.parse(device.deleted_at)) addDeletedEvent(device);
+      }
     } catch (error) { reportError("loadDeletedFailed", error); }
   });
 }

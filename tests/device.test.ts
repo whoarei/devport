@@ -12,7 +12,7 @@ function resetDeviceActions(t: test.TestContext) {
   const app = useAppStore.getState();
   const events = useEventStore.getState();
   t.after(() => { useAppStore.setState(app, true); useEventStore.setState(events, true); });
-  useEventStore.setState({ events: [], running: [] });
+  useEventStore.setState({ events: [], running: [], clearing: false });
   const first = { ...emptyDevice(), id: "first", name: "first", host: "example.com", is_default: true };
   const second = { ...emptyDevice(), id: "second", name: "second", host: "second.example.com" };
   useAppStore.setState({ devices: [first, second], selectedDeviceId: first.id, deviceManagerOpen: true });
@@ -32,7 +32,7 @@ test("device deletion skips confirmation and its event can restore the original 
   assert.equal(useAppStore.getState().selectedDeviceId, second.id);
   const event = useEventStore.getState().events[0];
   assert.equal(event.timestamp, Date.parse(deleted_at));
-  assert.equal(event.dismissible, false);
+  assert.equal(typeof event.remove, "function");
   await useEventStore.getState().runAction(event.id);
   assert.deepEqual(useAppStore.getState().devices.map((device) => device.id), [first.id, second.id]);
   assert.equal(useAppStore.getState().selectedDeviceId, second.id);
@@ -53,6 +53,37 @@ test("deleted device events are rebuilt without duplicates and remain translatab
   assert.equal(eventText(event.action!.label), "撤销");
   await i18n.changeLanguage("en");
   assert.equal(eventText(event.action!.label), "Undo");
+});
+
+test("deleting a device event removes its saved configuration and does not reappear on reload", async t => {
+  resetDeviceActions(t);
+  let deleted = [{ id: "old", name: "old box", deleted_at: "2026-01-01T02:00:00Z" }];
+  t.mock.method(api, "listDeletedDevices", async () => deleted);
+  const purge = t.mock.method(api, "purgeDeletedDevice", async (id, deletedAt) => {
+    assert.equal(id, "old"); assert.equal(deletedAt, deleted[0].deleted_at);
+    deleted = [];
+  });
+  await loadDeletedDeviceEvents();
+  await useEventStore.getState().remove("device-deleted:old");
+  assert.equal(purge.mock.callCount(), 1);
+  await loadDeletedDeviceEvents();
+  assert.equal(useEventStore.getState().events.length, 0);
+});
+
+test("a failed device-event deletion survives reload and can be retried", async t => {
+  resetDeviceActions(t);
+  const deleted = { id: "old", name: "old box", deleted_at: "2026-01-01T02:00:00Z" };
+  t.mock.method(api, "listDeletedDevices", async () => [deleted]);
+  const purge = t.mock.method(api, "purgeDeletedDevice", async () => { throw new Error("disk full"); });
+  await loadDeletedDeviceEvents();
+  await useEventStore.getState().remove("device-deleted:old");
+  const event = useEventStore.getState().events[0];
+  await loadDeletedDeviceEvents();
+  assert.equal(useEventStore.getState().events[0], event);
+  assert.equal(event.actionError, "disk full");
+  purge.mock.mockImplementation(async () => {});
+  await useEventStore.getState().remove(event.id);
+  assert.equal(useEventStore.getState().events.length, 0);
 });
 
 test("deletion failure keeps the device and reports an event; restoration failure remains retryable", async (t) => {

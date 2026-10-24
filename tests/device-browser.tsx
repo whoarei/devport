@@ -51,6 +51,11 @@ api.deleteDevice = async (id) => {
   return { id, name: device.name, deleted_at };
 };
 api.listDeletedDevices = async () => [...deleted.values()].map(({ device, deleted_at }) => ({ id: device.id, name: device.name, deleted_at }));
+api.purgeDeletedDevice = async (id, deletedAt) => {
+  const entry = deleted.get(id);
+  if (entry && entry.deleted_at !== deletedAt) throw new Error("设备删除记录已变化");
+  deleted.delete(id);
+};
 api.restoreDevice = async (id) => {
   const entry = deleted.get(id);
   if (!entry) throw new Error("设备不存在");

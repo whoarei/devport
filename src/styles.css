@@ -241,18 +241,23 @@ body,
 .event-panel > header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border, #343741); }
 .event-panel h3 { margin: 0; font-size: 13px; font-weight: 600; }
 .event-panel > header > span { color: var(--text-secondary, #9295a2); }
-.event-panel > header > button { margin-left: auto; }
+.event-header-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.event-header-divider { width: 1px; height: 13px; margin: 0 3px; background: var(--border, #343741); }
+.event-panel .event-clear { color: var(--text-secondary, #9295a2); white-space: nowrap; }
+.event-panel .event-close, .event-panel .event-dismiss { width: 28px; min-height: 28px; padding: 0; color: var(--text-secondary, #9295a2); }
+.event-panel .event-dismiss { opacity: .55; }
+.event-item:hover .event-dismiss, .event-item:focus-within .event-dismiss { opacity: 1; }
 .event-panel button { padding: 3px 7px; min-height: 26px; color: inherit; background: transparent; border: 0; border-radius: 4px; font: inherit; cursor: pointer; }
 .event-panel button:hover:not(:disabled) { background: var(--surface-hover, #33353e); }
 .event-panel button:focus-visible { outline: 2px solid var(--accent-border, #8fa9e8); outline-offset: 1px; }
+.event-panel button:disabled { opacity: .4; cursor: default; }
 .event-panel ol { margin: 0; padding: 0; list-style: none; overflow-y: auto; }
 .event-item { padding: 12px; overflow-wrap: anywhere; }
 .event-item + .event-item { border-top: 1px solid var(--border, #343741); }
 .event-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .event-item-summary { flex: 1; min-width: 0; }
 .event-item-heading strong { display: block; font-weight: 500; line-height: 1.6; }
-.event-item-heading > button { flex-shrink: 0; }
-.event-item-heading > button:not(.event-action) { align-self: flex-start; }
+.event-item-actions { display: flex; align-items: center; align-self: flex-start; gap: 10px; flex-shrink: 0; }
 .event-item time { display: block; margin-top: 3px; color: var(--text-secondary, #9295a2); font-size: 11px; }
 .event-item p { margin: 7px 0 0; color: var(--text-secondary, #9295a2); line-height: 1.6; }
 .event-item .event-action { padding: 4px 8px; color: var(--accent, #8fa9e8); border: 1px solid var(--accent-border, #546b96); white-space: nowrap; }

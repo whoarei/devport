@@ -259,6 +259,50 @@ mod tests {
     }
 
     #[test]
+    fn manual_deleted_device_removal_rejects_stale_events_and_preserves_other_devices() {
+        let fixture = TestStore::new();
+        let store = fixture.store();
+        store.save(profile("first")).unwrap();
+        store.save(profile("second")).unwrap();
+        store.save(profile("third")).unwrap();
+        let first = store.delete("first").unwrap();
+        let third = store.delete("third").unwrap();
+        assert!(store.purge_deleted("second", &first.deleted_at).is_err());
+        assert!(store.purge_deleted("first", "stale deletion").is_err());
+        assert_eq!(store.list_deleted().unwrap().len(), 2);
+        store.restore("first").unwrap();
+        assert!(store.purge_deleted("first", &first.deleted_at).is_err());
+        store.purge_deleted("third", &third.deleted_at).unwrap();
+        store.purge_deleted("third", &third.deleted_at).unwrap();
+        let restarted = fixture.store();
+        assert_eq!(restarted.list().unwrap().len(), 2);
+        assert!(restarted.list_deleted().unwrap().is_empty());
+        assert!(restarted.restore("third").is_err());
+        let stored = std::fs::read_to_string(&store.path).unwrap();
+        assert!(!stored.contains("third"));
+        assert!(restarted.get("second").unwrap().is_default);
+    }
+
+    #[test]
+    fn manual_deleted_device_write_failure_keeps_the_saved_configuration_for_retry() {
+        let fixture = TestStore::new();
+        let store = fixture.store();
+        store.save(profile("saved")).unwrap();
+        let deleted = store.delete("saved").unwrap();
+        let backup = fixture.0.join("devices-backup.json");
+        let original = std::fs::read(&store.path).unwrap();
+        std::fs::rename(&store.path, &backup).unwrap();
+        std::fs::create_dir(&store.path).unwrap();
+        assert!(store.purge_deleted("saved", &deleted.deleted_at).is_err());
+        assert_eq!(std::fs::read(&backup).unwrap(), original);
+        std::fs::remove_dir(&store.path).unwrap();
+        std::fs::rename(&backup, &store.path).unwrap();
+        assert_eq!(store.list_deleted().unwrap().len(), 1);
+        store.purge_deleted("saved", &deleted.deleted_at).unwrap();
+        assert!(store.read_all().unwrap().is_empty());
+    }
+
+    #[test]
     fn deleting_multiple_devices_keeps_other_records_and_restoring_preserves_the_current_default() {
         let fixture = TestStore::new();
         let store = fixture.store();
@@ -817,6 +861,22 @@ impl DeviceStore {
         normalize_active_defaults(&mut devices);
         self.write_all(&devices)?;
         Ok(deleted)
+    }
+
+    pub fn purge_deleted(&self, id: &str, deleted_at: &str) -> Result<()> {
+        let _guard = DEVICE_OPERATIONS.lock();
+        let mut devices = self.read_all()?;
+        let Some(index) = devices.iter().position(|entry| entry.device.id == id) else {
+            return Ok(());
+        };
+        // A stale event must never remove a restored device or a later deletion.
+        if devices[index].deleted_at.as_deref() != Some(deleted_at) {
+            return Err(RunnerError::InvalidInput(
+                "Device deletion has changed; refresh events before deleting".into(),
+            ));
+        }
+        devices.remove(index);
+        self.write_all(&devices)
     }
 
     pub fn restore(&self, id: &str) -> Result<DeviceProfile> {

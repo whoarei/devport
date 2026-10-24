@@ -84,21 +84,16 @@ pub fn run() {
             };
             app.manage(state);
 
-            // Native timer also runs while the window is hidden in the tray.
+            // Retry orphan-log removal, including locked files, while hidden in the tray.
             tauri::async_runtime::spawn(async move {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                     let manager = history_cleanup.clone();
-                    match tauri::async_runtime::spawn_blocking(move || {
-                        manager.cleanup_deleted_history()
-                    })
-                    .await
+                    if let Err(error) =
+                        tauri::async_runtime::spawn_blocking(move || manager.cleanup_orphan_logs())
+                            .await
                     {
-                        Ok(Ok(())) => {}
-                        Ok(Err(error)) => {
-                            tracing::warn!("could not clean up deleted run history: {error}")
-                        }
-                        Err(error) => tracing::warn!("run history cleanup task failed: {error}"),
+                        tracing::warn!("run log cleanup task failed: {error}");
                     }
                 }
             });
@@ -148,6 +143,7 @@ pub fn run() {
             commands::delete_device,
             commands::list_deleted_devices,
             commands::restore_device,
+            commands::purge_deleted_device,
             commands::test_device,
             commands::list_serial_ports,
             commands::list_wsl_distributions,
@@ -181,6 +177,7 @@ pub fn run() {
             commands::archive_run_history,
             commands::list_deleted_run_history,
             commands::restore_run_history,
+            commands::purge_deleted_run_history,
             commands::read_run_history_output,
             commands::drain_run_events,
             commands::inspect_python_project,

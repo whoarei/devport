@@ -421,7 +421,9 @@ export const en: Messages = {
     button: "Events ({{count}})",
     empty: "No events",
     close: "Close events",
-    dismiss: "Dismiss event",
+    dismiss: "Delete event",
+    clear: "Clear",
+    clearing: "Clearing…",
   },
   about: {
     installFailed: "Auto-update failed; you can download it manually: {{message}}",

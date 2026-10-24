@@ -75,8 +75,6 @@ export default function App() {
 
   useEffect(() => {
     void loadDeletedRunHistoryEvents();
-    const timer = setInterval(() => void loadDeletedRunHistoryEvents(), 60_000);
-    return () => clearInterval(timer);
   }, []);
 
   // 启动后静默检查一次更新；发现新版本时点亮标题栏「更新」按钮，失败不打扰用户。

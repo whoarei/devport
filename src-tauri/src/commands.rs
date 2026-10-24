@@ -172,6 +172,15 @@ pub fn restore_device(state: tauri::State<'_, AppState>, id: String) -> Result<D
     state.device_store.restore(&id)
 }
 
+#[tauri::command]
+pub fn purge_deleted_device(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    deleted_at: String,
+) -> Result<()> {
+    state.device_store.purge_deleted(&id, &deleted_at)
+}
+
 /// Test the selected transport without starting a user workload.
 #[tauri::command]
 pub async fn test_device(
@@ -687,7 +696,6 @@ pub fn archive_run_history(
 pub fn list_deleted_run_history(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<crate::runner::DeletedRunHistory>> {
-    state.run_manager.cleanup_deleted_history()?;
     Ok(state.run_manager.deleted_history())
 }
 
@@ -697,6 +705,14 @@ pub fn restore_run_history(
     batch_id: String,
 ) -> Result<Vec<RunStatus>> {
     state.run_manager.restore_history(&batch_id)
+}
+
+#[tauri::command]
+pub fn purge_deleted_run_history(
+    state: tauri::State<'_, AppState>,
+    batch_id: String,
+) -> Result<()> {
+    state.run_manager.purge_deleted_history(&batch_id)
 }
 
 #[tauri::command]

@@ -57,7 +57,8 @@ function hideHistory(ids: string[]) {
 
 function addDeletedHistoryEvent(batch: DeletedRunHistory) {
   useEventStore.getState().add({
-    id: deletedEventId(batch.id), timestamp: Date.parse(batch.deleted_at), dismissible: false,
+    id: deletedEventId(batch.id), timestamp: Date.parse(batch.deleted_at),
+    remove: () => serializeHistory(() => api.purgeDeletedRunHistory(batch.id)),
     title: () => i18n.t("runHistory.deleted", { count: batch.run_ids.length }),
     action: { label: () => i18n.t("runHistory.undoDelete"), run: () => serializeHistory(async () => {
       const restored = await api.restoreRunHistory(batch.id);

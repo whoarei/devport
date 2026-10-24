@@ -27,7 +27,7 @@ function setup(t: test.TestContext) {
   t.after(() => { useAppStore.setState(app, true); useWorkspaceRunStore.setState(feature, true); useRunHistoryStore.setState(history, true); useTerminalStore.setState(terminal, true); useEventStore.setState(events, true); });
   useAppStore.setState({ workspace, devices: [device("a"), device("b")], selectedDeviceId: "b", openTabs: [], loading: false, saving: false, starting: false, guarding: false, updating: false, workspaceMutating: false, runs: { old: record() }, history: [record()], deletedRunIds: new Set(), outputBuffers: {}, activeRunId: "old", saveAllDirty: async () => true, consoleSize: { cols: 80, rows: 24 } });
   useRunHistoryStore.setState({ detailId: null, draft: null, error: null, busy: false, historyBusy: false });
-  useEventStore.setState({ events: [], running: [] });
+  useEventStore.setState({ events: [], running: [], clearing: false });
   useWorkspaceRunStore.setState({ sessions: {}, warnings: {}, preferences: { python: { b: "device_default" }, bash: {}, console_mode: "pty", timeout_secs: 99, env: { X: "current" } } });
   t.mock.method(console, "warn", () => {});
   t.mock.method(React, "useSyncExternalStore", (_subscribe, getSnapshot) => getSnapshot());
@@ -172,7 +172,7 @@ test("clear includes all workspaces, preserves active runs, and its event restor
   assert.equal(useAppStore.getState().activeRunId, "live");
   const event = useEventStore.getState().events[0];
   assert.equal(event.timestamp, Date.parse("2026-10-22T06:00:00Z"));
-  assert.equal(event.dismissible, false);
+  assert.equal(typeof event.remove, "function");
   assert.equal(eventText(event.title), "已移除 2 条历史命令");
   assert.equal(event.message, undefined);
   await useEventStore.getState().runAction(event.id);
@@ -288,7 +288,7 @@ test("persistent deleted-history events rebuild without duplicates and follow la
   assert.ok(!useAppStore.getState().runs.old);
 });
 
-test("deleted-history refresh removes expired events and preserves unrelated events and retry errors", async t => {
+test("deleted-history refresh removes absent batches and preserves unrelated events and retry errors", async t => {
   setup(t);
   let batches = [{ id: "expired", deleted_at: "2026-10-15T06:00:00Z", run_ids: ["old"] },
     { id: "recent", deleted_at: "2026-10-22T06:00:00Z", run_ids: ["another"] }];
@@ -303,6 +303,20 @@ test("deleted-history refresh removes expired events and preserves unrelated eve
   await loadDeletedRunHistoryEvents();
   assert.deepEqual(new Set(useEventStore.getState().events.map(event => event.id)), new Set(["other", "history-deleted:recent"]));
   assert.equal(useEventStore.getState().events.find(event => event.id === "history-deleted:recent"), recent);
+  assert.equal(useAppStore.getState().deletedRunIds.has("old"), true);
+  assert.ok(!useAppStore.getState().runs.old);
+});
+
+test("deleting a history event purges its batch and stays gone after reload", async t => {
+  setup(t);
+  let batches = [{ id: "saved", deleted_at: "2026-01-01T06:00:00Z", run_ids: ["old"] }];
+  t.mock.method(api, "listDeletedRunHistory", async () => batches);
+  const purge = t.mock.method(api, "purgeDeletedRunHistory", async id => { assert.equal(id, "saved"); batches = []; });
+  await loadDeletedRunHistoryEvents();
+  await useEventStore.getState().remove("history-deleted:saved");
+  await loadDeletedRunHistoryEvents();
+  assert.equal(purge.mock.callCount(), 1);
+  assert.equal(useEventStore.getState().events.length, 0);
   assert.equal(useAppStore.getState().deletedRunIds.has("old"), true);
   assert.ok(!useAppStore.getState().runs.old);
 });
