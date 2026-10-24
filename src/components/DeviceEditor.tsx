@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, DeviceProfile, LocalShellInfo } from "../api";
 import { useUsbStore } from "../usbStore";
@@ -64,6 +64,8 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
   const [ports, setPorts] = useState<string[]>([]);
   const [distributions, setDistributions] = useState<string[]>([]);
   const [shells, setShells] = useState<LocalShellInfo[]>([]);
+  const [showWslHelp, setShowWslHelp] = useState(false);
+  const wslHelpId = useId();
   const nameInput = useRef<HTMLInputElement>(null);
   const connectionInput = useRef<HTMLInputElement>(null);
   const previousTransport = useRef(editing.transport);
@@ -134,19 +136,23 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
             onChange={(e) => { onAutomaticName(false); update({ name: e.target.value }); }}
             onBlur={(e) => { if (!e.target.value.trim()) onAutomaticName(true); }} />
         </section>
-        <section className="device-section" aria-labelledby="device-transport-title">
+        <section className="device-section device-transport-section" aria-labelledby="device-transport-title" onMouseLeave={() => setShowWslHelp(false)}
+          onKeyDown={(event) => { if (event.key === "Escape" && showWslHelp) { event.preventDefault(); event.stopPropagation(); setShowWslHelp(false); } }}>
           <h4 id="device-transport-title">{t("device.transport")}</h4>
           <div className="device-transports" role="group" aria-labelledby="device-transport-title">
             {transports.map(({ value, label, hint }) => <button key={value} type="button"
               className="device-transport" aria-pressed={editing.transport === value} disabled={testing}
+              aria-describedby={value === "wsl" ? wslHelpId : undefined}
+              onMouseEnter={() => setShowWslHelp(value === "wsl")} onFocus={() => setShowWslHelp(value === "wsl")} onBlur={() => setShowWslHelp(false)}
               onClick={() => {
                 if (editing.transport === value) return;
                 update({ transport: value, serial: editing.serial ?? { port: "", baud_rate: 115200 }, wsl: editing.wsl ?? { distribution: "", user: "" }, local: editing.local ?? { shell: "", path: null, no_profile: false } });
                 setTestResult(null);
               }}>
-              <DeviceIcon name={value} /><strong>{label}</strong><span>{hint}</span>
+              <DeviceIcon name={value} /><strong>{label}{value === "wsl" && <span className="device-transport-info"><DeviceIcon name="info" /></span>}</strong><span>{hint}</span>
             </button>)}
           </div>
+          <div id={wslHelpId} role="tooltip" className="device-transport-tooltip" hidden={!showWslHelp}>{t("device.wslDescription")}</div>
         </section>
         <section className="device-section" aria-label={t("device.connectionSettings")}>
           <div className="device-fields">
@@ -242,9 +248,9 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
               </label>}
             </>}
           </div>
-          {editing.transport !== "ssh" && <div className="device-notice">
+          {["local", "serial"].includes(editing.transport) && <div className="device-notice">
             <DeviceIcon name="info" />
-            <p>{t(editing.transport === "wsl" ? "device.wslDescription" : editing.transport === "local" ? "device.localDescription" : "device.serialDescription")}</p>
+            <p>{t(editing.transport === "local" ? "device.localDescription" : "device.serialDescription")}</p>
           </div>}
         </section>
         <section className="device-settings">

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 // Full workbench visual fixture. All APIs are in-memory; no devices are contacted.
-// ?theme=light|dark&lang=zh|en&empty=1&transfer=1&error=1&width=900&many=1&collision=1&running=1&commands=1
+// ?theme=light|dark&lang=zh|en&empty=1&transfer=1&local=1&error=1&width=900&many=1&collision=1&running=1&commands=1
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { api, type DeviceProfile, type WorkspaceRef } from "../src/api";
@@ -35,7 +35,8 @@ const base: DeviceProfile = { id: "ubuntu", name: "wsl-dev@Ubuntu-24.04", transp
 const devices: DeviceProfile[] = [base, { ...base, id: "local", name: "PowerShell", transport: "local", is_default: false, local: { shell: "pwsh", no_profile: false } },
   { ...base, id: "ssh", name: "开发服务器", transport: "ssh", is_default: false, host: "192.168.1.100", username: "dev" }];
 if (params.has("collision")) devices.push({ ...base, id: "ubuntu-root", name: "wsl-root@Ubuntu-24.04", is_default: false, wsl: { distribution: "Ubuntu-24.04", user: "root" } });
-const workspace: WorkspaceRef = { type: "device", device_id: "ubuntu", path: "/home/dev/projects/remote-runner-demo" };
+const workspace: WorkspaceRef = params.has("local") ? { type: "local", dir: "C:\\projects\\workspace-source" }
+  : { type: "device", device_id: "ubuntu", path: "/home/dev/projects/remote-runner-demo" };
 const source = '# 数据采集与远程运行\nfrom pathlib import Path\nimport json\n\ndef collect_samples(count: int = 10):\n    """Collect device measurements and write a report."""\n    samples = []\n    for index in range(count):\n        value = 23.5 + index * 0.1\n        samples.append({"index": index, "value": value})\n        print(f"[{index + 1:02d}/{count}] temperature: {value:.1f} °C")\n    return samples\n\nif __name__ == "__main__":\n    report = collect_samples()\n    Path("output").mkdir(exist_ok=True)\n    Path("output/report.json").write_text(json.dumps(report, indent=2))\n    print("Report saved to output/report.json")\n';
 api.listDevices = async () => devices;
 api.listDeletedDevices = async () => [];
@@ -105,7 +106,7 @@ if (params.has("commands")) {
 }
 if (transfer) {
   await useTransferStore.getState().browse("local", { type: "local", dir: "C:\\projects\\remote-runner-demo" });
-  await useTransferStore.getState().browse("device", workspace);
+  await useTransferStore.getState().browse("device", workspace.type === "device" ? workspace : { type: "device", device_id: base.id, path: base.workspace_root });
 }
 useAppStore.setState({ layout: { ...DEFAULT_LAYOUT, panelVisible: { ...DEFAULT_LAYOUT.panelVisible, editor: !empty, transfer }, panelCollapsed: { ...DEFAULT_LAYOUT.panelCollapsed } } });
 const width = Number(params.get("width"));

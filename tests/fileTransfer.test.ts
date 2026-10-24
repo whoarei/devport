@@ -201,7 +201,9 @@ test("device file controls and recursive-delete confirmation are translated", as
   await i18n.changeLanguage("zh");
 });
 
-for (const source of [local, { type: "local", dir: "/home/user/project" } as WorkspaceRef, device, { ...device, device_id: "wsl" }]) {
+for (const source of [local, { type: "local", dir: "\\\\?\\C:\\data" } as WorkspaceRef,
+  { type: "local", dir: "\\\\server\\share\\project" } as WorkspaceRef,
+  { type: "local", dir: "/home/user/project" } as WorkspaceRef, device, { ...device, device_id: "wsl" }]) {
   for (const path of [undefined, "a.bin", "nested/a.bin", "nested/folder"]) {
     test(`File Transfer menu opens ${JSON.stringify(source)} at ${path ?? "workspace root"} without starting a transfer`, async (t) => {
       reset(t);
@@ -233,7 +235,7 @@ for (const source of [local, { type: "local", dir: "/home/user/project" } as Wor
 
         const browser = useTransferStore.getState()[side];
         const expectedEndpoint = path?.includes("/")
-          ? source.type === "local" ? { ...source, dir: `${source.dir}/nested` } : { ...source, path: `${source.path}/nested` }
+          ? source.type === "local" ? { ...source, dir: `${source.dir}${source.dir.includes("\\") ? "\\" : "/"}nested` } : { ...source, path: `${source.path}/nested` }
           : source;
         assert.deepEqual(browser.endpoint, expectedEndpoint);
         assert.deepEqual(browser.selected, path ? [path.split("/").at(-1)] : []);
@@ -247,6 +249,42 @@ for (const source of [local, { type: "local", dir: "/home/user/project" } as Wor
     });
   }
 }
+
+test("workspace transfer establishes the explicit source before panel restoration can read a remembered path", async (t) => {
+  reset(t);
+  memoryStorage(t);
+  useTransferStore.setState({ directories: { local: "C:\\old", devices: {} } });
+  useAppStore.setState({ workspace: local, devices: [], layout: { ...useAppStore.getState().layout,
+    panelVisible: { ...useAppStore.getState().layout.panelVisible, transfer: false } } });
+  const list = t.mock.method(transferApi, "list", async (endpoint) => directory(endpoint));
+  const unsubscribe = useAppStore.subscribe((state, previous) => {
+    if (state.layout !== previous.layout) useTransferStore.getState().restore();
+  });
+  t.after(unsubscribe);
+  useTransferStore.getState().seed(local);
+  await Promise.resolve();
+  assert.deepEqual(list.mock.calls.map((call) => call.arguments[0]), [local]);
+  assert.deepEqual(useTransferStore.getState().local.directory?.endpoint, local);
+  assert.equal(useTransferStore.getState().directories.local, local.dir);
+});
+
+test("workspace transfer replaces an existing source browser and ignores its late directory response", async (t) => {
+  reset(t);
+  memoryStorage(t);
+  let finish!: (directory: TransferDirectory) => void;
+  t.mock.method(transferApi, "list", (endpoint) => endpoint.type === "local" && endpoint.dir === "C:\\old"
+    ? new Promise<TransferDirectory>((resolve) => { finish = resolve; }) : Promise.resolve(directory(endpoint)));
+  useAppStore.setState({ workspace: local, devices: [] });
+  const pending = useTransferStore.getState().browse("local", { type: "local", dir: "C:\\old" });
+  await useTransferStore.getState().browse("device", device, ["a.bin"]);
+  const target = useTransferStore.getState().device;
+  useTransferStore.getState().seed(local, "nested/a.bin");
+  await Promise.resolve();
+  finish(directory({ type: "local", dir: "C:\\old" })); await pending;
+  assert.deepEqual(useTransferStore.getState().local.directory?.endpoint, { type: "local", dir: "C:\\data\\nested" });
+  assert.deepEqual(useTransferStore.getState().local.selected, ["a.bin"]);
+  assert.equal(useTransferStore.getState().device, target);
+});
 
 test("File Transfer menu reports a disconnected workspace host without switching to another device", async (t) => {
   reset(t);
@@ -374,6 +412,44 @@ test("new devices fall back to their workspace root and storage failures do not 
   assert.deepEqual(useTransferStore.getState().device.endpoint, { ...device, path: "/default" });
   assert.equal(useTransferStore.getState().device.error, null);
   assert.equal(useTransferStore.getState().directories.devices.ssh, "/default");
+});
+
+for (const transport of ["ssh", "wsl"] as const) {
+  test(`${transport} root reset bypasses remembered paths and saves the resolved home path`, async (t) => {
+    reset(t);
+    memoryStorage(t);
+    useAppStore.setState({ devices: [{ ...emptyDevice(), id: transport, transport, workspace_root: "~/workspaces" }] });
+    t.mock.method(transferApi, "list", async (endpoint) => directory(endpoint.type === "device" && endpoint.path === "~/workspaces"
+      ? { ...endpoint, path: "/home/dev/workspaces" } : endpoint));
+    await useTransferStore.getState().browse("local", local, ["a.bin"]);
+    const localBrowser = useTransferStore.getState().local;
+    await useTransferStore.getState().browse("device", { ...device, device_id: transport, path: "/remembered/nested" }, ["a.bin"]);
+    await useTransferStore.getState().resetDeviceRoot(transport);
+    assert.deepEqual(useTransferStore.getState().device.directory?.endpoint, { ...device, device_id: transport, path: "/home/dev/workspaces" });
+    assert.deepEqual(useTransferStore.getState().device.selected, []);
+    assert.equal(useTransferStore.getState().directories.devices[transport], "/home/dev/workspaces");
+    assert.equal(useTransferStore.getState().options.device_id, transport);
+    assert.equal(useTransferStore.getState().local, localBrowser);
+  });
+}
+
+test("root reset respects busy browsers and unavailable devices, and recovers from a failed listing", async (t) => {
+  reset(t);
+  useAppStore.setState({ devices: [{ ...emptyDevice(), id: "ssh", workspace_root: "/root" },
+    { ...emptyDevice(), id: "serial", transport: "serial" }] });
+  const list = t.mock.method(transferApi, "list", async (endpoint) => directory(endpoint));
+  useTransferStore.setState({ deviceMutating: true });
+  await useTransferStore.getState().resetDeviceRoot("ssh");
+  useTransferStore.setState({ deviceMutating: false, device: { ...initial.device, loading: true } });
+  await useTransferStore.getState().resetDeviceRoot("ssh");
+  useTransferStore.setState({ device: initial.device });
+  await useTransferStore.getState().resetDeviceRoot("missing");
+  await useTransferStore.getState().resetDeviceRoot("serial");
+  assert.equal(list.mock.callCount(), 0);
+  useTransferStore.setState({ device: { ...initial.device, endpoint: device, error: "not found" } });
+  await useTransferStore.getState().resetDeviceRoot("ssh");
+  assert.equal(useTransferStore.getState().device.error, null);
+  assert.deepEqual(useTransferStore.getState().device.directory?.endpoint, { ...device, path: "/root" });
 });
 
 test("corrupt or incomplete directory preferences are read defensively", (t) => {

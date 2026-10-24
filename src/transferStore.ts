@@ -4,7 +4,7 @@ import { api, errorMessage, workspaceRefEquals, type WorkspaceRef } from "./api"
 import { dirtyTab, withTab } from "./editorDocument";
 import { useAppStore } from "./store";
 import { loadTransferDirectories, rememberTransferDirectory, rememberedDeviceDirectory, type TransferDirectories } from "./transferDirectories";
-import { sameTransferFilename, transferActive, transferApi, workspaceTransferPath, type TransferDirectory, type TransferSummary, type TransferPlan } from "./transferApi";
+import { appendEndpoint, sameTransferFilename, transferActive, transferApi, workspaceTransferPath, type TransferDirectory, type TransferSummary, type TransferPlan } from "./transferApi";
 import type { TransferOptions } from "./environmentState";
 import { workspaceSourceRevision } from "./workspaceRun";
 import i18n from "./i18n";
@@ -21,6 +21,7 @@ interface State {
   completionNotices: Record<string, number>;
   directories: TransferDirectories;
   openDevice: (id: string) => Promise<void>;
+  resetDeviceRoot: (id: string) => Promise<void>;
   restore: () => void;
   register: (id: string) => void;
   browse: (side: Side, endpoint: WorkspaceRef, selection?: string[]) => Promise<void>;
@@ -57,6 +58,11 @@ export const useTransferStore = create<State>((set, get) => ({
     const device = useAppStore.getState().devices.find((d) => d.id === id && ["ssh", "wsl"].includes(d.transport));
     if (device) await get().browse("device", { type: "device", device_id: id, path: rememberedDeviceDirectory(get().directories, id) ?? device.workspace_root });
     else set({ device: { ...emptyBrowser(), generation: get().device.generation + 1 } });
+  },
+  resetDeviceRoot: async (id) => {
+    if (get().deviceMutating || get().device.loading) return;
+    const device = useAppStore.getState().devices.find((d) => d.id === id && ["ssh", "wsl"].includes(d.transport));
+    if (device?.workspace_root.trim()) await get().browse("device", { type: "device", device_id: id, path: device.workspace_root });
   },
   restore: () => {
     const state = useAppStore.getState();
@@ -136,21 +142,16 @@ export const useTransferStore = create<State>((set, get) => ({
     }
   },
   seed: (workspace, path) => {
-    revealTransferPanel();
-    const source = workspace;
-    if (source) {
-      const side = source.type === "local" ? "local" : "device";
+    if (workspace) {
+      const side = workspace.type === "local" ? "local" : "device";
       const slash = path?.lastIndexOf("/") ?? -1;
       const parent = slash >= 0 ? path!.slice(0, slash) : "";
       const selection = path ? [path.slice(slash + 1)] : [];
-      let endpoint = source;
-      if (parent) {
-        const root = source.type === "local" ? source.dir : source.path;
-        const combined = `${root.replace(/[\\/]$/, "")}/${parent}`;
-        endpoint = source.type === "local" ? { type: "local", dir: combined } : { ...source, path: combined };
-      }
+      const endpoint = parent ? parent.split("/").reduce(appendEndpoint, workspace) : workspace;
       void get().browse(side, endpoint, selection);
     }
+    // Set the explicit source before mounting the panel can restore remembered directories.
+    revealTransferPanel();
     get().restore();
   },
 }));

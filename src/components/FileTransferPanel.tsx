@@ -114,6 +114,8 @@ function Browser({ side, hidden, exclude }: { side: "local" | "device"; hidden: 
     </div>
     <form className="transfer-path" onSubmit={(event) => { event.preventDefault(); if (!deviceMutating) submit(); }}>
       <button type="button" aria-label={t("transfer.up")} title={t("transfer.up")} disabled={!browser.directory || browser.loading || deviceMutating} onClick={() => browser.endpoint && browse(parentEndpoint(browser.endpoint))}><Icon name="arrowUp" /></button>
+      {side === "device" && <button type="button" aria-label={t("transfer.resetDeviceRoot")} title={t("transfer.resetDeviceRoot")}
+        disabled={!selectedDevice?.workspace_root.trim() || browser.loading || deviceMutating} onClick={() => void useTransferStore.getState().resetDeviceRoot(deviceId)}><Icon name="folder" /></button>}
       <div className="transfer-address"><DirectoryPathInput label={t("transfer.path")} placeholder={side === "local" ? t("transfer.localPath") : "/home"}
         value={path} onChange={setPath} onNavigate={(value) => { if (!deviceMutating) submit(value); }}
         endpoint={side === "local" ? { type: "local", dir: path } : deviceId ? { type: "device", device_id: deviceId, path } : null}
