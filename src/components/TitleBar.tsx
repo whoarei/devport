@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -23,6 +24,12 @@ import { Icon } from "./Icon";
 
 function reportWindowError(error: unknown) {
   useAppStore.setState({ editorError: i18n.t("app.windowError", { message: errorMessage(error) }) });
+}
+
+function preserveContentFocus(event: MouseEvent<HTMLElement>) {
+  // Window chrome should not take the caret from the terminal, editor or input.
+  // Keep keyboard navigation and activation unchanged.
+  if (event.button === 0) event.preventDefault();
 }
 
 export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
@@ -80,7 +87,7 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
         <img className="titlebar-logo" src={appIcon} srcSet={`${appIcon2x} 2x, ${appIcon3x} 3x`} alt="" width="18" height="18" />
       </div>
       <MenuBar uiZoom={uiZoom} onUiZoom={onUiZoom} onAbout={onAbout} onCheckUpdate={onCheckUpdate} />
-      <div className="titlebar-drag" data-tauri-drag-region>
+      <div className="titlebar-drag" data-tauri-drag-region onMouseDown={preserveContentFocus}>
         <div className="titlebar-workspace" data-tauri-drag-region title={label ?? t("titlebar.noWorkspaceTitle")}>
           {presentation && <Icon name={workspace?.type === "device" ? "server" : "folder"} />}
           <span className="titlebar-workspace-name">{presentation?.name ?? t("titlebar.noWorkspace")}</span>
@@ -142,15 +149,15 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
           </svg>
         </button>
         <EventCenter />
-        <button type="button" className="titlebar-button" aria-label={t("titlebar.minimize")} title={t("titlebar.minimize")} disabled={!desktop} onClick={() => windowAction("minimize")}>
+        <button type="button" className="titlebar-button" aria-label={t("titlebar.minimize")} title={t("titlebar.minimize")} disabled={!desktop} onMouseDown={preserveContentFocus} onClick={() => windowAction("minimize")}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M1 6.5h10" stroke="currentColor" /></svg>
         </button>
-        <button type="button" className="titlebar-button" aria-label={maximized ? t("titlebar.restore") : t("titlebar.maximize")} title={maximized ? t("titlebar.restore") : t("titlebar.maximize")} disabled={!desktop} onClick={() => windowAction("toggleMaximize")}>
+        <button type="button" className="titlebar-button" aria-label={maximized ? t("titlebar.restore") : t("titlebar.maximize")} title={maximized ? t("titlebar.restore") : t("titlebar.maximize")} disabled={!desktop} onMouseDown={preserveContentFocus} onClick={() => windowAction("toggleMaximize")}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
             {maximized ? <path d="M3.5 3.5v-2h7v7h-2m-7-5h7v7h-7z" stroke="currentColor" /> : <rect x="1.5" y="1.5" width="9" height="9" stroke="currentColor" />}
           </svg>
         </button>
-        <button type="button" className="titlebar-button titlebar-close" aria-label={t("titlebar.close")} title={t("titlebar.close")} disabled={!desktop || !closeReady} onClick={() => windowAction("close")}>
+        <button type="button" className="titlebar-button titlebar-close" aria-label={t("titlebar.close")} title={t("titlebar.close")} disabled={!desktop || !closeReady} onMouseDown={preserveContentFocus} onClick={() => windowAction("close")}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m1.5 1.5 9 9m0-9-9 9" stroke="currentColor" /></svg>
         </button>
       </div>
