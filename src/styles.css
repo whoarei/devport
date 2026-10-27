@@ -925,6 +925,8 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 }
 
 .console-body {
+  /* FitAddon reads the computed size as content space; exclude this host's padding. */
+  box-sizing: content-box;
   flex: 1;
   min-height: 0;
   overflow: hidden;
