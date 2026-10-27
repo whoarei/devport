@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -21,15 +20,11 @@ import appIcon3x from "../../src-tauri/icons/54x54.png";
 import type { UiZoomAction } from "../uiZoom";
 import { workspacePresentation } from "../workspacePresentation";
 import { Icon } from "./Icon";
+import { preserveContentFocus, preserveLayoutFocus } from "../focus";
+import { shortcutContext } from "../appShortcuts";
 
 function reportWindowError(error: unknown) {
   useAppStore.setState({ editorError: i18n.t("app.windowError", { message: errorMessage(error) }) });
-}
-
-function preserveContentFocus(event: MouseEvent<HTMLElement>) {
-  // Window chrome should not take the caret from the terminal, editor or input.
-  // Keep keyboard navigation and activation unchanged.
-  if (event.button === 0) event.preventDefault();
 }
 
 export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
@@ -83,7 +78,7 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
 
   return (
     <div className={`titlebar${focused ? "" : " titlebar-inactive"}`}>
-      <div className="titlebar-brand">
+      <div className="titlebar-brand" onMouseDown={preserveContentFocus}>
         <img className="titlebar-logo" src={appIcon} srcSet={`${appIcon2x} 2x, ${appIcon3x} 3x`} alt="" width="18" height="18" />
       </div>
       <MenuBar uiZoom={uiZoom} onUiZoom={onUiZoom} onAbout={onAbout} onCheckUpdate={onCheckUpdate} />
@@ -114,7 +109,8 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
           aria-label={t("titlebar.toggleLeftSidebar")}
           aria-pressed={layout.sidebarVisible && layout.sidebarPosition === "left"}
           title={t("titlebar.toggleLeftSidebar")}
-          onClick={() => setLayout(toggleSidePanel(layout, "left"))}
+          onMouseDown={preserveContentFocus}
+          onClick={() => preserveLayoutFocus(() => setLayout(toggleSidePanel(layout, "left")))}
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
             <rect x="1" y="1.5" width="10" height="9" rx="1.5" stroke="currentColor" />
@@ -130,7 +126,10 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
             aria-pressed={layout.panelVisible[panel.id] && (!panel.toggleCommand || !layout.panelCollapsed[panel.id])}
             title={panel.toggleCommand ? shortcutTitle(t(panel.toggleKey ?? panel.titleKey), panel.toggleCommand) : t(panel.toggleKey ?? panel.titleKey)}
             disabled={!!panel.toggleCommand && guarding}
-            onClick={() => panel.toggleCommand ? void executeAppCommand(panel.toggleCommand) : setLayout(panelVisibilityPatch(layout, panel.id, !layout.panelVisible[panel.id]))}
+            onMouseDown={preserveContentFocus}
+            onClick={(event) => preserveLayoutFocus(() => panel.toggleCommand
+              ? executeAppCommand(panel.toggleCommand, { ...shortcutContext(document.activeElement), preserveFocus: event.detail > 0 })
+              : setLayout(panelVisibilityPatch(layout, panel.id, !layout.panelVisible[panel.id])))}
           >
             {panel.icon}
           </button>
@@ -141,7 +140,8 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
           aria-label={t("titlebar.toggleRightSidebar")}
           aria-pressed={layout.sidebarVisible && layout.sidebarPosition === "right"}
           title={t("titlebar.toggleRightSidebar")}
-          onClick={() => setLayout(toggleSidePanel(layout, "right"))}
+          onMouseDown={preserveContentFocus}
+          onClick={() => preserveLayoutFocus(() => setLayout(toggleSidePanel(layout, "right")))}
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
             <rect x="1" y="1.5" width="10" height="9" rx="1.5" stroke="currentColor" />

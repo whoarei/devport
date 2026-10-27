@@ -76,7 +76,7 @@ const actions: Record<AppCommandId, (context: ShortcutContext) => unknown> = {
     const app = useAppStore.getState();
     if (!app.layout.panelVisible.console || app.layout.panelCollapsed.console) {
       revealConsolePanel();
-      useCommandUiStore.setState({ focus: "console" });
+      if (!context.preserveFocus) useCommandUiStore.setState({ focus: "console" });
       return;
     }
     app.setLayout(panelVisibilityPatch(app.layout, "console", false));

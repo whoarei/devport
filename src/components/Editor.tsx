@@ -19,6 +19,7 @@ import { ContextMenu, contextMenuPosition, type MenuEntry, type MenuState } from
 import { nameOf } from "../workspaceTree";
 import { useThemeStore, type Theme } from "../theme";
 import { useCommandUiStore } from "../commandUiStore";
+import { preserveContentFocus, preserveLayoutFocus } from "../focus";
 import { executeAppCommand } from "../appCommands";
 import { shortcutLabel, shortcutTitle } from "../shortcuts";
 import { EDITOR_LANGUAGES, isEditorLanguage } from "../editorLanguages";
@@ -186,7 +187,7 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
   return <>
     {languageError === language && <div className="editor-error" role="status">
       {t("editor.languageLoadFailed", { language: language === "text" ? t("editor.plainText") : t(`editor.languages.${language}`) })}
-      <button onClick={() => setLanguageAttempt((attempt) => attempt + 1)}>{t("editor.retryLanguage")}</button>
+      <button onMouseDown={preserveContentFocus} onClick={() => setLanguageAttempt((attempt) => attempt + 1)}>{t("editor.retryLanguage")}</button>
     </div>}
     <div className="code-editor" ref={parent} />
   </>;
@@ -249,8 +250,8 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
   ] } : null;
   return <div className={`editor${state.tabs.length === 0 ? " empty" : ""}`}>
     {state.error && <div className="editor-error" role="alert">{state.error}
-      {active?.conflict && <button disabled={locked || state.saving} onClick={() => void useAppStore.getState().reloadFile()}>{t("editor.reloadDisk")}</button>}
-      {active?.loaded === false && <button disabled={locked} onClick={() => void useAppStore.getState().openWorkspaceFile(active.name)}>{t("environment.retry")}</button>}
+      {active?.conflict && <button disabled={locked || state.saving} onMouseDown={preserveContentFocus} onClick={() => void useAppStore.getState().reloadFile()}>{t("editor.reloadDisk")}</button>}
+      {active?.loaded === false && <button disabled={locked} onMouseDown={preserveContentFocus} onClick={() => void useAppStore.getState().openWorkspaceFile(active.name)}>{t("environment.retry")}</button>}
     </div>}
     {state.tabs.length === 0 ? <EmptyState icon="code" title={state.loading ? t("editor.opening") : t("editor.emptyTitle")} description={t("editor.placeholder")}>
       {state.workspace ? <span className="empty-state-shortcut">{t("editor.previewHint")}</span> : <span className="empty-state-shortcut"><kbd>{shortcutLabel("openWorkspace")}</kbd>{t("shortcuts.openWorkspace")}</span>}
@@ -265,7 +266,8 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
         if (selected) document.getElementById(tabId(selected))?.focus();
       }}>
         <button className="editor-collapse center-panel-collapse" data-tab-strip-inset aria-label={collapsed ? t("editor.expand") : t("editor.collapse")} aria-expanded={!collapsed}
-          title={collapsed ? t("editor.expand") : t("editor.collapse")} onClick={onToggleCollapse}><Icon name={collapsed ? "chevronRight" : "chevronDown"} /></button>
+          title={collapsed ? t("editor.expand") : t("editor.collapse")} onMouseDown={preserveContentFocus}
+          onClick={() => onToggleCollapse && preserveLayoutFocus(onToggleCollapse)}><Icon name={collapsed ? "chevronRight" : "chevronDown"} /></button>
         {state.tabs.map((tab) => (
           <div key={tab.name} data-active-tab={tab.name === state.activeFile}
             onContextMenu={(event) => openTabMenu(event, tab)}
@@ -280,7 +282,8 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
             </button>
             <button className="editor-tab-close" tabIndex={tab.name === state.activeFile ? 0 : -1} aria-label={t("editor.closeTab", { name: tab.name })} title={shortcutTitle(t("editor.closeFileTitle"), "closeFile")}
               disabled={closeLocked}
-              onClick={() => void useAppStore.getState().closeFile(tab.name)}><Icon name="close" /></button>
+              onMouseDown={preserveContentFocus}
+              onClick={() => void preserveLayoutFocus(() => useAppStore.getState().closeFile(tab.name))}><Icon name="close" /></button>
           </div>
         ))}
       </div>
@@ -301,6 +304,7 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
                 : state.error ? t("editor.failed")
                 : dirtyTab(active)
                   ? <button className="editor-status-save" disabled={locked || state.uploadBusy}
+                      onMouseDown={preserveContentFocus}
                       title={shortcutTitle(t("menu.saveFile"), "saveFile")}
                       onClick={() => void executeAppCommand("saveFile")}>{t("editor.save")}</button>
                   : t("editor.saved")}

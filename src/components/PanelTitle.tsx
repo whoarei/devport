@@ -1,5 +1,6 @@
 import type { MouseEvent, ReactNode } from "react";
 import { Icon } from "./Icon";
+import { preserveContentFocus, preserveLayoutFocus } from "../focus";
 
 interface PanelTitleProps {
   title: string;
@@ -21,7 +22,8 @@ export function PanelTitle({ title, collapsed, onToggle, className, onContextMen
       role="button"
       tabIndex={0}
       aria-expanded={!collapsed}
-      onClick={onToggle}
+      onMouseDown={preserveContentFocus}
+      onClick={() => preserveLayoutFocus(onToggle)}
       onContextMenu={onContextMenu}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -36,6 +38,7 @@ export function PanelTitle({ title, collapsed, onToggle, className, onContextMen
       </span>
       {children && (
         <span className="panel-actions" onClick={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
           onKeyDown={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.stopPropagation()}>
           {children}

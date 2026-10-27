@@ -6,6 +6,7 @@ import { useAppStore } from "../store";
 import { ConfirmDialog, ConfirmRequest } from "./ConfirmDialog";
 import { PanelTitle } from "./PanelTitle";
 import { useWorkspaceRunStore } from "../workspaceRunStore";
+import { preserveContentFocus } from "../focus";
 
 /** Managed Python Runtime 管理面板：Runtime 摘要 + 项目环境列表 + 重建/删除/清理 */
 export function RuntimePanel({ collapsed, onToggleCollapse }: { collapsed: boolean; onToggleCollapse: () => void }) {
@@ -150,12 +151,13 @@ export function RuntimePanel({ collapsed, onToggleCollapse }: { collapsed: boole
       {!collapsed && (
         <>
           <div className="runtime-actions">
-            <button disabled={!device || isSerial || busy != null} onClick={() => void refresh()}>
+            <button disabled={!device || isSerial || busy != null} onMouseDown={preserveContentFocus} onClick={() => void refresh()}>
               {t("runtime.refresh")}
             </button>
             <button
               disabled={!device || isSerial || !workspaceDir || busy != null}
               title={workspaceDir ? t("runtime.rebuildTitle") : t("runtime.rebuildNeedWorkspace")}
+              onMouseDown={preserveContentFocus}
               onClick={() => void rebuild()}
             >
               {busy === "rebuild" ? t("runtime.rebuilding") : t("runtime.rebuild")}

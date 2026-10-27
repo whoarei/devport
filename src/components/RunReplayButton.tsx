@@ -8,6 +8,7 @@ import { ContextMenu, type MenuState } from "./ContextMenu";
 import { appCommandEnabled, executeAppCommand } from "../appCommands";
 import { shortcutTitle } from "../shortcuts";
 import { Icon } from "./Icon";
+import { preserveContentFocus } from "../focus";
 
 export function RunReplayButton({ run, compact = false, showShortcut = true }: {
   run: RunStatus | null; compact?: boolean; showShortcut?: boolean;
@@ -23,6 +24,7 @@ export function RunReplayButton({ run, compact = false, showShortcut = true }: {
   const title = run?.replay ? `${t("runHistory.originalTooltip", { device: run.device_name })} · ${run.label}` : t("runHistory.legacy");
   return <div className={`run-replay-button${compact ? " compact" : ""}`}>
     <button type="button" disabled={disabled} title={showShortcut ? shortcutTitle(title, "rerun") : title}
+      onMouseDown={preserveContentFocus}
       aria-label={t("runHistory.originalTooltip", { device: run?.device_name ?? "" })} onClick={() => void executeAppCommand("rerun", context)}>
       {compact ? <Icon name="play" /> : <><Icon name="play" />{t("runHistory.restart")}</>}
     </button>

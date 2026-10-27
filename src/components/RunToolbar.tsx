@@ -11,6 +11,7 @@ import { shortcutTitle } from "../shortcuts";
 import { Icon } from "./Icon";
 import { RunElapsed } from "./RunElapsed";
 import { useShallow } from "zustand/react/shallow";
+import { preserveContentFocus } from "../focus";
 
 export function RunToolbar() {
   const { t } = useTranslation();
@@ -50,6 +51,7 @@ export function RunToolbar() {
       <span className={`run-state state-${active.state}`} role="status">{runStateLabel(active.state)}{active.exit_code != null ? ` (${active.exit_code})` : ""}</span>
       <RunElapsed run={active} />
       {isActiveRun(active) && <button className="danger" disabled={!appCommandEnabled("stop", { area: "run", runId: activeRunId ?? undefined })}
+        onMouseDown={preserveContentFocus}
         title={shortcutTitle(`${t("run.stop")} · ${active.label} @ ${active.device_name}`, "stop")}
         onClick={() => void executeAppCommand("stop", { area: "run", runId: activeRunId ?? undefined })}>{t("run.stop")}</button>}
       <RunReplayButton run={active} />
@@ -63,8 +65,8 @@ export function RunToolbar() {
       <code>{launch.program}</code>{launch.version && <span>{launch.version}</span>}<span>cwd: {launch.cwd}</span>
     </div>}
     {preset && !launch && <div className="run-launch">{t("workspaceRun.presetShell")}</div>}
-    {warning && <div className="workspace-error" role="alert"><span>{t("workspaceRun.historyUnsaved")} · {warning}</span><button onClick={() => activeRunId && void api.retryWorkspaceHistory(activeRunId).then(() => feature.recover(activeRunId))}>{t("workspaceRun.retry")}</button></div>}
+    {warning && <div className="workspace-error" role="alert"><span>{t("workspaceRun.historyUnsaved")} · {warning}</span><button onMouseDown={preserveContentFocus} onClick={() => activeRunId && void api.retryWorkspaceHistory(activeRunId).then(() => feature.recover(activeRunId))}>{t("workspaceRun.retry")}</button></div>}
     {active?.error && <div className="runtime-error">{active.error}</div>}
-    {feature.launchError && <div className="workspace-error" role="alert"><span>{feature.launchError}</span><button onClick={() => useWorkspaceRunStore.setState({ launchError: null })}>{t("workspaceRun.close")}</button></div>}
+    {feature.launchError && <div className="workspace-error" role="alert"><span>{feature.launchError}</span><button onMouseDown={preserveContentFocus} onClick={() => useWorkspaceRunStore.setState({ launchError: null })}>{t("workspaceRun.close")}</button></div>}
   </div>;
 }

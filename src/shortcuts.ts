@@ -28,6 +28,8 @@ export type AppCommandId = keyof typeof APP_SHORTCUTS;
 export type ShortcutArea = "editor" | "workspace" | "run" | "history" | "other";
 export interface ShortcutContext {
   area: ShortcutArea;
+  /** Mouse layout controls reveal panels without taking the existing editing focus. */
+  preserveFocus?: boolean;
   console?: boolean;
   terminal?: boolean;
   input?: boolean;

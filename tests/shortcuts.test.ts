@@ -469,6 +469,20 @@ test("console toggle expands hidden or collapsed panels without switching their 
   }
 });
 
+test("mouse layout controls can reveal the console without requesting editing focus", async t => {
+  reset(t);
+  const layout = structuredClone(DEFAULT_LAYOUT);
+  layout.panelVisible.console = false;
+  layout.panelCollapsed.console = true;
+  useAppStore.setState({ layout });
+  useTerminalStore.setState({ activeTab: "keep-this-terminal" });
+  await executeAppCommand("toggleConsole", { area: "editor", preserveFocus: true });
+  assert.equal(useAppStore.getState().layout.panelVisible.console, true);
+  assert.equal(useAppStore.getState().layout.panelCollapsed.console, false);
+  assert.equal(useTerminalStore.getState().activeTab, "keep-this-terminal");
+  assert.equal(useCommandUiStore.getState().focus, null);
+});
+
 test("hiding the focused console restores the editor and preserves terminal sessions, running tasks and layout sizes", async t => {
   reset(t);
   const layout = structuredClone(DEFAULT_LAYOUT);

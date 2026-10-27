@@ -8,6 +8,7 @@ import { ConfirmDialog, ConfirmRequest } from "./ConfirmDialog";
 import { ContextMenu, contextMenuPosition, MenuState } from "./ContextMenu";
 import { PanelTitle } from "./PanelTitle";
 import { Icon } from "./Icon";
+import { preserveContentFocus } from "../focus";
 import { deviceDisplayNames } from "../workspacePresentation";
 
 /** 编辑草稿；id 为 null 表示新增 */
@@ -219,6 +220,7 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
               </span>
               </div>
               <button type="button" className="command-action command-run" disabled={busy || !targetName}
+                onMouseDown={preserveContentFocus}
                 aria-label={t("commands.runOn", { name: preset.name || preset.command, device: targetName ?? t("run.selectDeviceFirst") })}
                 title={targetName ? t("commands.runOn", { name: preset.name || preset.command, device: targetName }) : t("run.selectDeviceFirst")}
                 onClick={(event) => { if (event.detail < 2) void runPreset(preset); }}><Icon name="play" /></button>

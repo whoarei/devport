@@ -16,6 +16,7 @@ import { ConfirmDialog, ConfirmRequest } from "./ConfirmDialog";
 import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
 import { deviceLabel } from "./DeviceEditor";
 import { PanelTitle } from "./PanelTitle";
+import { preserveContentFocus } from "../focus";
 import { workspaceRunMenu } from "../workspaceRunMenu";
 import { useWorkspaceRunStore } from "../workspaceRunStore";
 import { workspaceSourceRevision } from "../workspaceRun";
@@ -382,7 +383,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
           </div>}
           {workspaceError && <div className="workspace-error" role="alert">
             <span>{workspaceError}</span>
-            <button onClick={() => useAppStore.getState().dismissWorkspaceError()}>{t("workspace.close")}</button>
+            <button onMouseDown={preserveContentFocus} onClick={() => useAppStore.getState().dismissWorkspaceError()}>{t("workspace.close")}</button>
           </div>}
           {workspace ? (
             <div className="file-tree">

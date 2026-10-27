@@ -8,6 +8,7 @@ import { isActiveRun, runStateLabel } from "../runState";
 import { useRunHistoryStore } from "../runHistoryStore";
 import { PanelTitle } from "./PanelTitle";
 import { RunReplayButton } from "./RunReplayButton";
+import { preserveContentFocus } from "../focus";
 import { RunHistoryPreview } from "./RunHistoryPreview";
 import { ContextMenu, type MenuEntry, type MenuState } from "./ContextMenu";
 import { appCommandEnabled, executeAppCommand } from "../appCommands";
@@ -56,6 +57,7 @@ export function RunHistoryPanel({ visible, collapsed, onToggleCollapse }: { visi
           </button>
           <div className="history-row-actions" onMouseEnter={close}>
             {isActiveRun(run) ? <button type="button" className="history-stop" disabled={!appCommandEnabled("stop", { area: "history", runId: run.run_id })}
+              onMouseDown={preserveContentFocus}
               title={shortcutTitle(`${t("run.stop")} · ${run.label} @ ${run.device_name}`, "stop")} aria-label={`${t("run.stop")} · ${run.label} @ ${run.device_name}`}
               onClick={() => void executeAppCommand("stop", { area: "history", runId: run.run_id })}>■</button> : <RunReplayButton run={run} compact />}
           </div>

@@ -18,6 +18,7 @@ import { Icon } from "./Icon";
 import { deviceDisplayNames } from "../workspacePresentation";
 import { tabNavigationTarget, useRevealActiveTab } from "../tabStrip";
 import { useCommandUiStore } from "../commandUiStore";
+import { preserveContentFocus, preserveLayoutFocus } from "../focus";
 
 export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
   visible: boolean; collapsed: boolean; onToggleCollapse: () => void;
@@ -125,7 +126,7 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
   const contentVisible = visible && !collapsed;
   return <div className="console-panel">
     <div className="console-tabs-bar center-panel-header">
-      <button className="console-collapse center-panel-collapse" aria-label={collapsed ? t("console.expand") : t("console.collapse")} aria-expanded={!collapsed} onClick={onToggleCollapse}><Icon name={collapsed ? "chevronRight" : "chevronDown"} /></button>
+      <button className="console-collapse center-panel-collapse" aria-label={collapsed ? t("console.expand") : t("console.collapse")} aria-expanded={!collapsed} onMouseDown={preserveContentFocus} onClick={() => preserveLayoutFocus(onToggleCollapse)}><Icon name={collapsed ? "chevronRight" : "chevronDown"} /></button>
       <div ref={tabStrip} className="console-tabs" role="tablist" aria-label={t("console.tabsAria")} onContextMenu={openTabsBlankMenu} onKeyDown={(event) => {
         if (event.altKey || event.ctrlKey || event.metaKey) return;
         if ((event.target as HTMLElement).getAttribute("role") !== "tab") return;
@@ -147,7 +148,7 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
               <span className={`terminal-dot terminal-${tab.status?.state ?? "connecting"}`} aria-hidden="true" />
               <span className="terminal-tab-label">{t("console.terminalTab", { name: label })}</span><span className="terminal-number">{index + 1}</span>
             </button>
-            <button className="terminal-tab-close" tabIndex={activeTab === tab.id ? 0 : -1} disabled={tab.busy} aria-label={t("console.closeTerminalAria", { name: label, index: index + 1 })} onClick={() => void useTerminalStore.getState().close(tab.id)}><Icon name="close" /></button>
+            <button className="terminal-tab-close" tabIndex={activeTab === tab.id ? 0 : -1} disabled={tab.busy} aria-label={t("console.closeTerminalAria", { name: label, index: index + 1 })} onMouseDown={preserveContentFocus} onClick={() => void preserveLayoutFocus(() => useTerminalStore.getState().close(tab.id))}><Icon name="close" /></button>
           </div>;
         })}
       </div>

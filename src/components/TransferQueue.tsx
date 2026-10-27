@@ -7,6 +7,7 @@ import { useTransferStore } from "../transferStore";
 import { transferActive, transferApi, transferBytes, type TransferSummary, type TransferTask } from "../transferApi";
 import { canRetryTransfer, splitTransferQueue, transferPercent, transferQueueState, transferTaskName } from "../transferQueue";
 import { ContextMenu, contextMenuPosition, type MenuState } from "./ContextMenu";
+import { preserveContentFocus } from "../focus";
 
 interface RowProps {
   task: TransferSummary;
@@ -61,7 +62,7 @@ function QueueRow({ task, onDetails, onRetry, onMenu, menuOpen }: RowProps) {
       {isActive && <progress aria-label={t("transfer.progressFor", { name })} max={100} value={percent} />}
     </td>
     <td className="transfer-queue-actions">
-      {isActive && <button disabled={working || task.state === "canceling"} onClick={() => void perform(() => transferApi.cancel(task.id))}>{t("transfer.cancel")}</button>}
+      {isActive && <button disabled={working || task.state === "canceling"} onMouseDown={preserveContentFocus} onClick={() => void perform(() => transferApi.cancel(task.id))}>{t("transfer.cancel")}</button>}
       {canRetryTransfer(task) && <button disabled={working || blocked} title={t("transfer.retry")} aria-label={t("transfer.retry")} onClick={onRetry}>{t("transfer.retryShort")}</button>}
       <button className="transfer-more" disabled={working} aria-label={t("transfer.moreActions", { name })} aria-haspopup="menu" aria-expanded={menuOpen} onClick={(e) => more(e.currentTarget)}>⋯</button>
     </td>
