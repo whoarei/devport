@@ -306,7 +306,6 @@ export const zh = {
     saveBlocked: "任务正在准备、同步或停止，请稍后保存",
   },
   terminal: {
-    serialHint: "串口独占使用。关闭标签只断开连接并释放端口，设备上的程序可能继续运行。",
     copyFailed: "复制失败，可使用快捷键或右键菜单重试：{{message}}",
     pasteFailed: "粘贴失败，可使用快捷键或右键菜单重试：{{message}}",
     connecting: "连接中…",

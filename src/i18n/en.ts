@@ -305,7 +305,6 @@ export const en: Messages = {
     saveBlocked: "A task is preparing, syncing, or stopping; save later",
   },
   terminal: {
-    serialHint: "This terminal exclusively holds the serial port. Closing the tab disconnects and releases the port; programs on the device may keep running.",
     copyFailed: "Copy failed. Retry with the keyboard shortcut or context menu: {{message}}",
     pasteFailed: "Paste failed. Retry with the keyboard shortcut or context menu: {{message}}",
     connecting: "Connecting…",
