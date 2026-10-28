@@ -40,6 +40,55 @@ fn invalid_relative_paths_never_reach_hosts() {
 }
 
 #[tokio::test]
+async fn directory_tree_listing_keeps_the_root_and_rejects_relative_escape() {
+    let config = Temp::new();
+    let root = Temp::new();
+    std::fs::create_dir(root.0.join("child")).unwrap();
+    std::fs::write(root.0.join("child/main.py"), b"print('hello')").unwrap();
+    let manager = TransferManager::new(&config.0);
+    let endpoint = WorkspaceRef::local(root.0.to_string_lossy());
+    let top = manager.list(endpoint.clone()).await.unwrap();
+    let child = manager
+        .list_within(endpoint.clone(), "child")
+        .await
+        .unwrap();
+    assert_eq!(child.endpoint, top.endpoint);
+    assert_eq!(child.entries.len(), 1);
+    assert_eq!(child.entries[0].name, "main.py");
+    for path in [
+        "../escape",
+        "child/..",
+        "/absolute",
+        "child//nested",
+        "child\\nested",
+    ] {
+        assert!(
+            manager.list_within(endpoint.clone(), path).await.is_err(),
+            "{path}"
+        );
+    }
+    assert!(manager
+        .list_within(endpoint, "child/main.py")
+        .await
+        .is_err());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn directory_tree_listing_does_not_follow_a_replaced_child() {
+    let config = Temp::new();
+    let root = Temp::new();
+    let outside = Temp::new();
+    std::fs::create_dir(root.0.join("child")).unwrap();
+    let manager = TransferManager::new(&config.0);
+    let endpoint = WorkspaceRef::local(root.0.to_string_lossy());
+    manager.list(endpoint.clone()).await.unwrap();
+    std::fs::remove_dir(root.0.join("child")).unwrap();
+    std::os::unix::fs::symlink(&outside.0, root.0.join("child")).unwrap();
+    assert!(manager.list_within(endpoint, "child").await.is_err());
+}
+
+#[tokio::test]
 async fn binary_stream_and_publication_never_clobber_existing_target() {
     let temp = Temp::new();
     let endpoint = WorkspaceRef::local(temp.0.to_string_lossy());
@@ -206,6 +255,20 @@ async fn wsl_binary_round_trip_large_files_conflicts_and_alias_guard() {
     .await;
     assert_eq!(task.state, "completed", "{:?}", task.error);
     assert!(task.residuals.is_empty(), "{:?}", task.warnings);
+    let root_listing = manager.list(remote_endpoint.clone()).await.unwrap();
+    let child_listing = manager
+        .list_within(root_listing.endpoint.clone(), "dir")
+        .await
+        .unwrap();
+    assert_eq!(child_listing.endpoint, root_listing.endpoint);
+    assert!(child_listing
+        .entries
+        .iter()
+        .any(|entry| entry.name == "中文.bin"));
+    assert!(manager
+        .list_within(root_listing.endpoint, "dir/../../escape")
+        .await
+        .is_err());
     let task = run(
         &manager,
         remote_endpoint.clone(),

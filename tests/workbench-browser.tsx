@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 // Full workbench visual fixture. All APIs are in-memory; no devices are contacted.
-// ?theme=light|dark&lang=zh|en&empty=1&transfer=1&local=1&error=1&width=900&many=1&collision=1&running=1&commands=1
+// ?theme=light|dark&lang=zh|en&empty=1&transfer=1&local=1&error=1&width=900&many=1&collision=1&running=1&commands=1&deviceWorkspace=1
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { api, type DeviceProfile, type WorkspaceRef } from "../src/api";
@@ -14,6 +14,8 @@ import { DEFAULT_LAYOUT } from "../src/layoutState";
 import { initializeTheme, useThemeStore } from "../src/theme";
 import { TitleBar } from "../src/components/TitleBar";
 import { WorkspacePanel } from "../src/components/WorkspacePanel";
+import { DeviceWorkspacePanel } from "../src/components/DeviceWorkspacePanel";
+import { type PanelId } from "../src/panels/registry";
 import { CommandsPanel } from "../src/components/CommandsPanel";
 import { CenterDock } from "../src/components/CenterDock";
 import { DeviceManager } from "../src/components/DeviceManager";
@@ -62,12 +64,47 @@ api.readTerminal = async id => {
 };
 api.openTerminal = async () => ({ session_id: crypto.randomUUID(), device_name: base.name, state: "connected", exit_code: null, error: null });
 transferApi.list = async endpoint => {
+  if (params.has("deviceWorkspace") && endpoint.type === "device") return transferApi.listWithin(endpoint, "");
   if (params.has("error") && endpoint.type === "device") throw new Error("目录不存在，请检查路径或重新选择目录。");
   return { endpoint, overwrite: true, entries: [
     { name: "output", kind: "dir" as const, size: 0, mode: null, identity: "dir", modified: "0" },
     ...["main.py", "pyproject.toml", "README.md", "report.json"].map((name, i) => ({ name, kind: "file" as const, size: 1200 + i * 400, mode: null, identity: name, modified: "0" })),
   ] };
 };
+const deviceFiles = new Map<string, Map<string, "file" | "dir">>();
+for (const path of ["/", "/home", "/home/dev", "/home/dev/projects", "/home/dev/projects/remote-runner-demo", "/home/dev/projects/data", "/home/dev/projects/另一个项目"]) {
+  deviceFiles.set(path, new Map());
+  if (path !== "/") deviceFiles.get(path.slice(0, path.lastIndexOf("/")) || "/")?.set(path.slice(path.lastIndexOf("/") + 1), "dir");
+}
+for (const name of ["main.py", "pyproject.toml", "README.md"]) deviceFiles.get("/home/dev/projects/remote-runner-demo")!.set(name, "file");
+const devicePath = (endpoint: WorkspaceRef, name = "") => `${endpoint.type === "device" ? endpoint.path.replace(/^~\//, "/home/dev/").replace(/\/+$/, "") : "/local"}${name ? `/${name}` : ""}` || "/";
+transferApi.listWithin = async (endpoint, subdir) => {
+  if (params.has("error")) throw new Error("目录不存在，请检查设备工作区根目录。");
+  const listing = deviceFiles.get(devicePath(endpoint, subdir));
+  if (!listing) throw new Error("目录不存在");
+  const entries = [...listing].map(([name, kind]) => ({ name, kind, size: 0, mode: null, identity: name, modified: "0" }));
+  return { endpoint: endpoint.type === "device" ? { ...endpoint, path: devicePath(endpoint) } : endpoint, entries, overwrite: true };
+};
+api.createWorkspaceEntry = async (root, name, kind) => {
+  const path = devicePath(root, name), slash = path.lastIndexOf("/"), dir = path.slice(0, slash) || "/";
+  const listing = deviceFiles.get(dir);
+  if (!listing || listing.has(path.slice(slash + 1))) throw new Error("目录不存在或目标已存在");
+  listing.set(path.slice(slash + 1), kind);
+  if (kind === "dir") deviceFiles.set(path, new Map());
+};
+api.renameWorkspaceEntry = async (root, name, target) => {
+  const path = devicePath(root, name), next = devicePath(root, target), slash = path.lastIndexOf("/"), dir = path.slice(0, slash) || "/";
+  const listing = deviceFiles.get(dir), kind = listing?.get(path.slice(slash + 1));
+  if (!listing || !kind || listing.has(next.slice(next.lastIndexOf("/") + 1))) throw new Error("文件不存在或目标已存在");
+  listing.delete(path.slice(slash + 1)); listing.set(next.slice(next.lastIndexOf("/") + 1), kind);
+  for (const [key, value] of [...deviceFiles]) if (key === path || key.startsWith(`${path}/`)) { deviceFiles.delete(key); deviceFiles.set(next + key.slice(path.length), value); }
+};
+api.deleteWorkspaceEntry = async (root, name) => {
+  const path = devicePath(root, name), slash = path.lastIndexOf("/");
+  deviceFiles.get(path.slice(0, slash) || "/")?.delete(path.slice(slash + 1));
+  for (const key of [...deviceFiles.keys()]) if (key === path || key.startsWith(`${path}/`)) deviceFiles.delete(key);
+};
+api.renameWorkspaceCommands = async () => {};
 useAppStore.setState({ devices, selectedDeviceId: "ubuntu", workspace: empty ? null : workspace, environmentReady: false,
   workspaceTree: rootTree([{ name: "output", is_dir: true }, { name: "tools", is_dir: true }, { name: "main.py", is_dir: false }, { name: "pyproject.toml", is_dir: false }, { name: "README.md", is_dir: false }, { name: "run.sh", is_dir: false }]),
   openTabs: empty ? [] : [{ name: "main.py", fileContent: source, savedContent: source, revision: "demo", eol: "lf", bom: false, language: "python", conflict: false, generation: 1 },
@@ -108,17 +145,18 @@ if (transfer) {
   await useTransferStore.getState().browse("local", { type: "local", dir: "C:\\projects\\remote-runner-demo" });
   await useTransferStore.getState().browse("device", workspace.type === "device" ? workspace : { type: "device", device_id: base.id, path: base.workspace_root });
 }
-useAppStore.setState({ layout: { ...DEFAULT_LAYOUT, panelVisible: { ...DEFAULT_LAYOUT.panelVisible, editor: !empty, transfer }, panelCollapsed: { ...DEFAULT_LAYOUT.panelCollapsed } } });
+useAppStore.setState({ layout: { ...DEFAULT_LAYOUT, panelVisible: { ...DEFAULT_LAYOUT.panelVisible, editor: !empty, transfer, deviceWorkspace: params.has("deviceWorkspace") }, panelCollapsed: { ...DEFAULT_LAYOUT.panelCollapsed } } });
 const width = Number(params.get("width"));
 if (width >= 640) document.getElementById("root")!.style.cssText = `width:min(${width}px,100vw);margin:auto;border-inline:1px solid var(--border);`;
 function Fixture() {
   const layout = useAppStore(s => s.layout);
-  const toggle = (id: "editor" | "console" | "transfer" | "workspace" | "commands") => useAppStore.getState().setLayout({ panelCollapsed: { ...layout.panelCollapsed, [id]: !layout.panelCollapsed[id] } });
+  const toggle = (id: PanelId) => useAppStore.getState().setLayout({ panelCollapsed: { ...layout.panelCollapsed, [id]: !layout.panelCollapsed[id] } });
   return <div className="app">
     <TitleBar closeReady uiZoom={100} onUiZoom={() => {}} onAbout={() => {}} onCheckUpdate={() => {}} />
     <main className="app-main">
       {layout.sidebarVisible && <aside className="dock-side" style={{ width: 252 }}>
         <WorkspacePanel collapsed={layout.panelCollapsed.workspace} onToggleCollapse={() => toggle("workspace")} />
+        {layout.panelVisible.deviceWorkspace && <DeviceWorkspacePanel visible collapsed={layout.panelCollapsed.deviceWorkspace} onToggleCollapse={() => toggle("deviceWorkspace")} />}
         <div className="commands-section"><CommandsPanel collapsed={layout.panelCollapsed.commands} onToggleCollapse={() => toggle("commands")} /></div>
       </aside>}
       <CenterDock />

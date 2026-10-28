@@ -18,7 +18,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { anyDirty } from "./editorDocument";
-import { errorMessage } from "./api";
+import { errorMessage, isRemoteWorkspaceHost } from "./api";
 import i18n from "./i18n";
 import { requestQuit } from "./appLifecycle";
 import { pollTransfers } from "./transferStore";
@@ -132,10 +132,11 @@ export default function App() {
 
   const layout = useAppStore((state) => state.layout);
   const hasRunHistory = useAppStore((state) => Object.values(state.runs).some(isExecutionRun));
+  const hasDeviceWorkspace = useAppStore((state) => state.devices.some((device) => device.id === state.selectedDeviceId && isRemoteWorkspaceHost(device)));
   const environmentError = useAppStore((state) => state.environmentError);
   const setLayout = useAppStore((state) => state.setLayout);
 
-  const visible = (id: PanelId) => layout.panelVisible[id] && (id !== "history" || hasRunHistory);
+  const visible = (id: PanelId) => layout.panelVisible[id] && (id !== "history" || hasRunHistory) && (id !== "deviceWorkspace" || hasDeviceWorkspace);
   const collapsed = (id: PanelId) => layout.panelCollapsed[id];
   const toggleCollapse = (id: PanelId) => () => setLayout(panelCollapsePatch(layout, id, !layout.panelCollapsed[id]));
   // ---- 侧栏 dock：面板按注册表顺序堆叠，展开面板分配可用高度 ----

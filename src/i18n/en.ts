@@ -176,6 +176,11 @@ export const en: Messages = {
     completions: "Completions",
     escHint: "Esc to leave the editor",
   },
+  deviceWorkspace: {
+    path: "Current device workspace path", invalidPath: "Enter an absolute device path or ~/ path without . or .. components.",
+    enterDirectory: "Enter Directory", directoryHint: "Click to expand; double-click to enter directory", newEntry: "New File or Directory",
+    title: "Device Workspace", openAsWorkspace: "Open as Workspace", openFileHint: "Open file in this device workspace", retry: "Retry", empty: "This directory is empty",
+  },
   workspace: {
     emptyHint: "Open a local or device folder to browse files and run scripts.", openLocal: "Open Local Folder", openRemote: "Open Device Folder",
     title: "Workspace",

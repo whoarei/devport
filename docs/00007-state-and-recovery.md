@@ -1,6 +1,6 @@
 # 00007 客户端状态与恢复
 
-基线：2026-10-20 / 0.12.0。架构摘要见 [技术方案](00002-architecture.html#frontend)。
+基线：2026-10-27 / 0.23.2。架构摘要见 [技术方案](00002-architecture.html#frontend)。
 
 ## 1. 前端职责与面板
 
@@ -13,10 +13,13 @@ React 18 + TypeScript，Zustand 管理状态，CodeMirror 6 编辑文本，xterm
 | 运行历史查看、配置草稿与快照重跑 | `runHistoryStore.ts`；展示与转换见 `runHistory.ts` |
 | 独立终端标签及连接 | `terminalStore.ts` |
 | 文件传输计划/任务/浏览 | `transferStore.ts` |
+| 跟随运行目标的设备目录树、路径导航与文件修改 | `deviceWorkspaceStore.ts` / `deviceWorkspaceActions.ts`，每个挂载的面板独立持有 |
 | USB 设备与操作 | `usbStore.ts` |
 | 工作环境快照编排 | `workEnvironment.ts`；窗口由 `windowState.ts` 约束 |
 
-面板由 `panels/registry.tsx` 元数据和 `panels/components.ts` 懒加载映射注册，避免组件与布局模块循环依赖。侧栏为 Workspace / Commands / Runtime / History，中心为 Editor / Console / Transfer；Runtime 和 Transfer 默认隐藏，编辑器随文件打开出现。历史命令位于侧栏底部，默认高 260px，可拖动调整，保存范围 120–600px；旧布局缺失该面板时默认显示。侧栏左右切换、宽度、面板显隐/折叠和中心分割比例归一化后持久化。隐藏/折叠保持需要保活的编辑器、终端实例。
+面板由 `panels/registry.tsx` 元数据和 `panels/components.ts` 懒加载映射注册，避免组件与布局模块循环依赖。侧栏为 Workspace / Device Workspace / Commands / Runtime / History，中心为 Editor / Console / Transfer；Device Workspace、Runtime 和 Transfer 默认隐藏，编辑器随文件打开出现。历史命令位于侧栏底部，默认高 260px，可拖动调整，保存范围 120–600px；旧布局缺失该面板时默认显示。侧栏左右切换、宽度、面板显隐/折叠和中心分割比例归一化后持久化。隐藏/折叠保持需要保活的编辑器、终端实例。
+
+“设备工作区”是 Workspace 下方的独立侧栏面板，默认隐藏，通过“视图 → 面板”显示，显隐/折叠偏好随布局保存。标题下直接显示路径导航，不重复显示设备名称、路径和协议摘要。它跟随运行目标的 SSH / WSL 设备，选中串口、本机 Shell 或没有有效设备时不渲染整个区域；这种条件隐藏不改写布局偏好。隐藏侧栏时卸载浏览器，使过期读取失效；折叠面板保留浏览状态。目录及编辑交互见 [00004](00004-workspace-and-sync.md)。
 
 中心区域由 `CenterDock.tsx` 统一渲染，每两个相邻展开面板之间都有分隔条，三个面板同时展开时也能独立调整。布局保存各面板权重，旧版 `splits.center` 自动迁移为编辑器/控制台权重；隐藏与折叠保留尺寸偏好。拖动只改变相邻两区，双击或 Home 恢复两区默认比例；分隔条支持方向键微调，Shift 加大步长。
 
@@ -178,6 +181,7 @@ xterm 显示实例跟随标签保留，重连只替换后台 session，沿用当
 | `remote-runner.copy-on-ctrl-c.v1` / `.paste-on-ctrl-v.v1` | 独立终端和运行控制台共用的 Ctrl+C 复制选区 / Ctrl+V 粘贴开关，缺省均开启 |
 | `remote-runner.presets.v1` | 全局预置命令，最多 100 条；不等于工作区命令历史 |
 | `remote-runner.transfer-directories.v1` | 本机及各设备上次成功打开的目录；不存勾选项 |
+| `remote-runner.device-workspace-directories.v1` | 设备工作区按设备 ID 保存的上次成功浏览路径；独立于文件传输目录，切换设备、重新显示侧栏和重启后恢复 |
 | `runner.settings.v1:<workspace-key>` | 目标、按设备 Python/Bash 选择、env、模式、超时；cwd 来自源 `.runner` |
 
 偏好坏数据防御性回落，写入失败保留会话设置。客户端附加 env 会落在本机 WebView 偏好及运行快照中，不应描述为秘密保险箱。完成任务的 replay 足以在重启后按原配置重新提交；旧记录缺少 replay 时只允许查看已有输出，不能猜测目标或设置。源 `.runner/commands.json` 继续保存可共享的入口/参数索引，与本机每次运行的快照分开。准备弹框任务和长连接上下文仍只在当前会话保留。

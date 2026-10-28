@@ -21,8 +21,12 @@ pub struct AppState {
 pub async fn transfer_list_dir(
     state: tauri::State<'_, AppState>,
     endpoint: WorkspaceRef,
+    subdir: Option<String>,
 ) -> std::result::Result<crate::file_transfer::Directory, crate::workspace::FileError> {
-    state.transfer_manager.list(endpoint).await
+    match subdir {
+        Some(subdir) => state.transfer_manager.list_within(endpoint, &subdir).await,
+        None => state.transfer_manager.list(endpoint).await,
+    }
 }
 
 #[tauri::command]

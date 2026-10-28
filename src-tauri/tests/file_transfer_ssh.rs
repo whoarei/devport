@@ -1350,6 +1350,29 @@ async fn ssh_binary_directories_and_all_conflict_modes_round_trip() {
 }
 
 #[tokio::test]
+async fn ssh_directory_tree_keeps_its_root_while_browsing_children() {
+    let fixture = Fixture::new(Behavior::default()).await;
+    let manager = TransferManager::new(&fixture.config);
+    fs::create_dir_all(fixture.remote.join("project/subdir")).unwrap();
+    fs::write(fixture.remote.join("project/subdir/main.py"), b"print(1)").unwrap();
+    let root = manager
+        .list(WorkspaceRef::device("test", "/data"))
+        .await
+        .unwrap();
+    let child = manager
+        .list_within(root.endpoint.clone(), "project/subdir")
+        .await
+        .unwrap();
+    assert_eq!(child.endpoint, root.endpoint);
+    assert_eq!(child.entries.len(), 1);
+    assert_eq!(child.entries[0].name, "main.py");
+    assert!(manager
+        .list_within(root.endpoint, "project/../../escape")
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn home_roots_resolve_to_the_sftp_login_directory() {
     let fixture = Fixture::new(Behavior::default()).await;
     fs::create_dir_all(fixture.remote.join("devrunner/workspaces")).unwrap();

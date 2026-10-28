@@ -15,6 +15,7 @@ export interface PanelComponentProps {
 export const PANEL_COMPONENTS: Record<PanelId, LazyExoticComponent<ComponentType<PanelComponentProps>>> = {
   transfer: lazy(() => import("../components/FileTransferPanel").then((m) => ({ default: m.FileTransferPanel }))),
   workspace: lazy(() => import("../components/WorkspacePanel").then((m) => ({ default: m.WorkspacePanel }))),
+  deviceWorkspace: lazy(() => import("../components/DeviceWorkspacePanel").then((m) => ({ default: m.DeviceWorkspacePanel }))),
   commands: lazy(() => import("../components/CommandsPanel").then((m) => ({ default: m.CommandsPanel }))),
   history: lazy(() => import("../components/RunHistoryPanel").then((m) => ({ default: m.RunHistoryPanel }))),
   runtime: lazy(() => import("../components/RuntimePanel").then((m) => ({ default: m.RuntimePanel }))),

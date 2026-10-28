@@ -5,7 +5,7 @@ import { useAppStore } from "./store";
 import { appendEndpoint, transferActive, workspaceTransferPath } from "./transferApi";
 import { useTransferStore } from "./transferStore";
 import { workspaceSourceRevision } from "./workspaceRun";
-import { parentOf } from "./workspaceTree";
+import { joinPath, parentOf } from "./workspaceTree";
 
 export interface DeviceFileContext { endpoint: WorkspaceRef; generation: number; revision: string | null }
 export type DeviceFileAction =
@@ -28,11 +28,15 @@ export function deviceFileContextCurrent(context: DeviceFileContext): boolean {
 
 /** Only the successfully listed directory can be changed; address-bar drafts are ignored. */
 export function deviceFileBlocker(context: DeviceFileContext | null): string | null {
-  const state = useTransferStore.getState(), app = useAppStore.getState();
   if (!context || !deviceFileContextCurrent(context)) return i18n.t("transfer.directoryChanged");
-  if (state.deviceMutating || state.planning || state.plan || app.updating || app.saving || app.starting || app.guarding || app.workspaceMutating) return i18n.t("workspace.busy");
+  return deviceFileOperationBlocker(context.endpoint);
+}
+
+/** Shared guards for the transfer browser and the independent device sidebar. */
+export function deviceFileOperationBlocker(endpoint: WorkspaceRef): string | null {
+  const state = useTransferStore.getState(), app = useAppStore.getState();
+  if (state.deviceMutating || state.planning || state.plan || app.loading || app.updating || app.saving || app.starting || app.guarding || app.workspaceMutating) return i18n.t("workspace.busy");
   if (uploadBusy(app)) return i18n.t("workspace.uploadBusy");
-  const endpoint = context.endpoint;
   if (endpoint.type !== "device" || !app.devices.some((d) => d.id === endpoint.device_id && ["ssh", "wsl"].includes(d.transport))) return i18n.t("transfer.directoryChanged");
   if (state.registeredIds.some((id) => !state.tasks.some((task) => task.id === id))) return i18n.t("transfer.filesBusy");
   if (state.tasks.some((task) => transferActive(task.state) && [task.source, task.target].some((host) => host.type === "device" && host.device_id === endpoint.device_id))) return i18n.t("transfer.filesBusy");
@@ -49,36 +53,53 @@ export async function mutateDeviceFile(context: DeviceFileContext, action: Devic
   const fail = (message: string) => { useTransferStore.setState({ error: message }); return false; };
   const blocked = deviceFileBlocker(context);
   if (blocked) return fail(blocked);
-  if (!validDeviceFilename(action.name) || (action.type === "rename" && !validDeviceFilename(action.newName))) return fail(i18n.t("transfer.invalidFilename"));
   const entry = state.device.directory!.entries.find((e) => e.name === action.name);
   if (action.type !== "create" && (!entry || !["file", "dir"].includes(entry.kind))) return fail(i18n.t("transfer.directoryChanged"));
+  useTransferStore.setState({ error: null });
+  const { success, started } = await performDeviceFileAction(context.endpoint, "", action, () => deviceFileContextCurrent(context), (message) => { fail(message); });
+  // A failed recursive deletion may still have removed children: refresh on either outcome.
+  if (started && (success || action.type === "delete") && deviceFileContextCurrent(context)) {
+    const selection = success ? action.type === "delete" ? [] : [action.type === "rename" ? action.newName : action.name] : state.device.selected;
+    await useTransferStore.getState().browse("device", context.endpoint, selection);
+  }
+  return success;
+}
 
+/** Mutate below a fixed root, routing editor-owned paths through the editor's tab/dirty guards. */
+export async function performDeviceFileAction(
+  root: WorkspaceRef, dir: string, action: DeviceFileAction,
+  current: () => boolean, reportError: (message: string) => void,
+): Promise<{ success: boolean; started: boolean }> {
+  const fail = (message: string) => { reportError(message); return { success: false, started: false }; };
+  if (!current()) return fail(i18n.t("transfer.directoryChanged"));
+  const blocked = deviceFileOperationBlocker(root);
+  if (blocked) return fail(blocked);
+  if (!validDeviceFilename(action.name) || (action.type === "rename" && !validDeviceFilename(action.newName))) return fail(i18n.t("transfer.invalidFilename"));
+  const path = joinPath(dir, action.name);
+  const endpoint = dir.split("/").filter(Boolean).reduce(appendEndpoint, root);
   const editor = useAppStore.getState();
   const workspace = editor.workspace;
-  if (workspace && action.type !== "create" && workspaceTransferPath(workspace, "", appendEndpoint(context.endpoint, action.name)) !== null) return fail(i18n.t("transfer.workspaceRootProtected"));
-  const relative = workspace ? workspaceTransferPath(context.endpoint, action.name, workspace) : null;
-  useTransferStore.setState({ deviceMutating: true, error: null });
+  if (workspace && action.type !== "create" && workspaceTransferPath(workspace, "", appendEndpoint(endpoint, action.name)) !== null) return fail(i18n.t("transfer.workspaceRootProtected"));
+  const relative = workspace ? workspaceTransferPath(root, path, workspace) : null;
+  useTransferStore.setState({ deviceMutating: true });
+  if (relative === null) useAppStore.setState({ workspaceMutating: true });
   let success = false;
   try {
     if (relative !== null) {
       if (action.type === "create") success = await editor.createWorkspaceEntry(parentOf(relative), action.name, action.kind);
       else if (action.type === "rename") success = await editor.renameWorkspaceEntry(relative, action.newName);
-      else success = await editor.deleteWorkspaceEntry(relative, () => deviceFileContextCurrent(context));
+      else success = await editor.deleteWorkspaceEntry(relative, current);
       if (!success && useAppStore.getState().workspaceError) fail(useAppStore.getState().workspaceError!);
     } else {
-      if (action.type === "create") await api.createWorkspaceEntry(context.endpoint, action.name, action.kind);
-      else if (action.type === "rename") await api.renameWorkspaceEntry(context.endpoint, action.name, action.newName);
-      else await api.deleteWorkspaceEntry(context.endpoint, action.name);
+      if (action.type === "create") await api.createWorkspaceEntry(root, path, action.kind);
+      else if (action.type === "rename") await api.renameWorkspaceEntry(root, path, joinPath(dir, action.newName));
+      else await api.deleteWorkspaceEntry(root, path);
       success = true;
     }
   } catch (error) { fail(errorMessage(error)); }
   finally {
-    // A failed recursive deletion may still have removed children: refresh on either outcome.
-    if ((success || action.type === "delete") && deviceFileContextCurrent(context)) {
-      const selection = success ? action.type === "delete" ? [] : [action.type === "rename" ? action.newName : action.name] : state.device.selected;
-      await useTransferStore.getState().browse("device", context.endpoint, selection);
-    }
+    if (relative === null) useAppStore.setState({ workspaceMutating: false });
     useTransferStore.setState({ deviceMutating: false });
   }
-  return success;
+  return { success, started: true };
 }

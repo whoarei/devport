@@ -26,6 +26,8 @@ export interface TransferTask {
 
 export const transferApi = {
   list: (endpoint: WorkspaceRef) => invoke<TransferDirectory>("transfer_list_dir", { endpoint }),
+  /** List a relative directory under a fixed root; the response keeps the canonical root endpoint. */
+  listWithin: (endpoint: WorkspaceRef, subdir: string) => invoke<TransferDirectory>("transfer_list_dir", { endpoint, subdir }),
   mkdir: (endpoint: WorkspaceRef, name: string) => invoke<void>("transfer_create_dir", { endpoint, name }),
   plan: (request: TransferRequest) => invoke<TransferPlan>("transfer_plan", { request }),
   discard: (planId: string) => invoke<void>("transfer_discard_plan", { planId }),

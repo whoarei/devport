@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore, workspaceLabel } from "../store";
 import { appendEndpoint } from "../transferApi";
-import { deviceFileContextCurrent, mutateDeviceFile, validDeviceFilename, type DeviceFileContext } from "../transferFileActions";
+import { deviceFileContextCurrent, mutateDeviceFile, validDeviceFilename, type DeviceFileContext, type DeviceFileAction } from "../transferFileActions";
 import { useTransferStore } from "../transferStore";
 
 export interface TransferFileRequest {
@@ -12,7 +12,13 @@ export interface TransferFileRequest {
   directory?: boolean;
 }
 
-export function TransferFileDialog({ request, onClose }: { request: TransferFileRequest; onClose: () => void }) {
+export interface FileDialogController {
+  current: () => boolean;
+  mutate: (action: DeviceFileAction) => Promise<boolean>;
+  error: () => string | null;
+}
+
+export function TransferFileDialog({ request, onClose, controller }: { request: TransferFileRequest; onClose: () => void; controller?: FileDialogController }) {
   const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -29,18 +35,19 @@ export function TransferFileDialog({ request, onClose }: { request: TransferFile
   }, []);
   const submit = async () => {
     if (busy) return;
-    if (!deviceFileContextCurrent(request.context)) { setError(t("transfer.directoryChanged")); return; }
+    if (!(controller ? controller.current() : deviceFileContextCurrent(request.context))) { setError(t("transfer.directoryChanged")); return; }
     const filename = name.trim();
     if (!deleting && !validDeviceFilename(filename)) { setError(t("transfer.invalidFilename")); return; }
     if (request.type === "rename" && filename === request.name) { onClose(); return; }
     setBusy(true); setError(null);
-    const success = await mutateDeviceFile(request.context, deleting
+    const action: DeviceFileAction = deleting
       ? { type: "delete", name: request.name! }
       : request.type === "rename" ? { type: "rename", name: request.name!, newName: filename }
-      : { type: "create", name: filename, kind: request.type === "create-dir" ? "dir" : "file" });
+      : { type: "create", name: filename, kind: request.type === "create-dir" ? "dir" : "file" };
+    const success = await (controller ? controller.mutate(action) : mutateDeviceFile(request.context, action));
     setBusy(false);
     if (success || deleting) onClose();
-    else setError(useTransferStore.getState().error);
+    else setError(controller ? controller.error() : useTransferStore.getState().error);
   };
   return <dialog ref={dialog} className="transfer-plan-dialog transfer-file-dialog" aria-labelledby="transfer-file-title" onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}>
     <form onSubmit={(event) => { event.preventDefault(); void submit(); }}>

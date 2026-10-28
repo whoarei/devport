@@ -464,6 +464,12 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
   min-height: 0;
 }
 
+.device-workspace-action { display: inline-flex; align-items: center; justify-content: center; padding: 2px; border: 0; background: transparent; }
+.device-workspace-action .ui-icon { width: 14px; height: 14px; }
+.device-workspace-navigation { display: flex; align-items: center; gap: 4px; padding: 7px 8px; border-bottom: 1px solid var(--line-subtle); }
+.device-workspace-navigation > button { flex: 0 0 22px; height: 28px; }
+.device-workspace-navigation input { box-sizing: border-box; min-width: 0; height: 28px; padding: 4px 6px; font: inherit; font-size: 12px; }
+
 .workspace-dir {
   display: flex;
   align-items: center;

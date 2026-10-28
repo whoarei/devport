@@ -72,6 +72,15 @@ test("normalizeLayout keeps valid fields and fills missing ones", () => {
   assert.equal(layout.splits.center, DEFAULT_LAYOUT.splits.center);
 });
 
+test("device workspace visibility and collapse preferences persist and old layouts default to hidden", () => {
+  const migrated = normalizeLayout({ panelVisible: { workspace: true } });
+  assert.equal(migrated.panelVisible.deviceWorkspace, false);
+  const saved = normalizeLayout({ panelVisible: { deviceWorkspace: true }, panelCollapsed: { deviceWorkspace: true } });
+  assert.equal(saved.panelVisible.deviceWorkspace, true);
+  assert.equal(saved.panelCollapsed.deviceWorkspace, true);
+  assert.ok(panelsInDock("sidebar").some((panel) => panel.id === "deviceWorkspace"));
+});
+
 test("normalizeLayout migrates v1 legacy fields", () => {
   const layout = normalizeLayout({
     workspaceVisible: false,

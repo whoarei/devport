@@ -522,9 +522,24 @@ impl TransferManager {
     }
 
     pub async fn list(&self, endpoint: WorkspaceRef) -> Result<Directory> {
+        self.list_within(endpoint, "").await
+    }
+
+    /// Keep the canonical root fixed while listing a validated relative subdirectory.
+    /// Unlike opening a subdirectory as a new root, this rejects links below the root.
+    pub async fn list_within(&self, endpoint: WorkspaceRef, subdir: &str) -> Result<Directory> {
+        if !subdir.is_empty() {
+            relative(subdir)?;
+        }
         let profile = device(&endpoint, &self.config)?;
         let mut host = timed(Host::open(&endpoint, profile.as_ref(), &self.config)).await?;
-        let entries = timed(host.list("")).await?;
+        if !subdir.is_empty() && host.endpoint(&endpoint) != endpoint {
+            return Err(error(
+                "path",
+                "Directory root changed; refresh the directory tree",
+            ));
+        }
+        let entries = timed(host.list(subdir)).await?;
         Ok(Directory {
             endpoint: host.endpoint(&endpoint),
             entries,

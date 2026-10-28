@@ -177,6 +177,11 @@ export const zh = {
     completions: "补全建议",
     escHint: "Esc 跳出编辑器",
   },
+  deviceWorkspace: {
+    path: "设备工作区当前路径", invalidPath: "请输入绝对设备路径或 ~/ 路径，不能包含 . 或 .. 路径组件。",
+    enterDirectory: "进入目录", directoryHint: "单击展开，双击进入目录", newEntry: "新建文件或目录",
+    title: "设备工作区", openAsWorkspace: "打开为工作区", openFileHint: "在此设备工作区中打开文件", retry: "重试", empty: "此目录为空",
+  },
   workspace: {
     emptyHint: "打开本机或设备上的文件夹，浏览文件并运行脚本。", openLocal: "打开本机文件夹", openRemote: "打开设备文件夹",
     title: "工作区",
