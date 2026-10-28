@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { useStore } from "zustand";
 import { useTranslation } from "react-i18next";
 import { errorMessage, workspaceRefEquals } from "../api";
@@ -21,7 +21,8 @@ import { PanelTitle } from "./PanelTitle";
 import { DirectoryPathInput } from "./DirectoryPathInput";
 import { TransferFileDialog, type TransferFileRequest } from "./TransferFileDialog";
 import "../fileTransfer.css";
-import { WorkspaceTransferRow } from "./WorkspaceTransferRow";
+import { WorkspaceEntryRow, workspaceEntryRunPath } from "./WorkspaceEntryRow";
+import { appCommandEnabled, executeAppCommand } from "../appCommands";
 
 export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: PanelComponentProps) {
   const { t } = useTranslation();
@@ -36,19 +37,21 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
   const refreshedTransfers = useRef(new Map<string, number>());
   const { root, tree, key, generation, navigating, mutating, error } = useStore(browser);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [menuRow, setMenuRow] = useState<{ path: string; kind: "more" | "new" } | null>(null);
+  const closeMenu = useCallback(() => { setMenu(null); setMenuRow(null); }, []);
   const [opening, setOpening] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pathDraft, setPathDraft] = useState("");
   const [fileRequest, setFileRequest] = useState<{ request: TransferFileRequest; context: DeviceWorkspaceFileContext } | null>(null);
   const sourceKey = deviceWorkspaceKey(device);
   useEffect(() => {
-    setMenu(null);
+    closeMenu();
     setActionError(null);
     setFileRequest(null);
     void browser.getState().follow(visible ? device : null);
     return () => { void browser.getState().follow(null); };
-  }, [browser, visible, sourceKey]);
-  useEffect(() => { setMenu(null); if (!mutating) setFileRequest(null); }, [collapsed, generation]);
+  }, [browser, visible, sourceKey, closeMenu]);
+  useEffect(() => { closeMenu(); if (!mutating) setFileRequest(null); }, [collapsed, generation, closeMenu]);
   useEffect(() => { setPathDraft(root?.type === "device" ? root.path : ""); }, [root]);
   useEffect(() => {
     if (root?.type !== "device") return;
@@ -74,7 +77,7 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
   const openAsWorkspace = (dir: string) => { if (!unavailable && sourceCurrent()) void openWorkspace(endpoint(dir)); };
   const navigate = (path: string) => {
     if (navigatingDisabled || !sourceCurrent()) return;
-    setMenu(null); setFileRequest(null); setActionError(null);
+    closeMenu(); setFileRequest(null); setActionError(null);
     void browser.getState().navigate(path);
   };
   const requestAction = async (type: TransferFileRequest["type"], dir: string, name?: string, directory?: boolean) => {
@@ -105,15 +108,32 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
       if (browser.getState().key === sourceKey) setActionError(errorMessage(error));
     } finally { setOpening(false); }
   };
-  const openMenu = (event: MouseEvent, path: string, directory: boolean) => {
+  const openNewMenu = (event: MouseEvent<HTMLButtonElement>, path: string) => {
     event.preventDefault(); event.stopPropagation();
     if (!current || !root) return;
+    if (menuRow?.path === path && menuRow.kind === "new") { closeMenu(); return; }
+    const anchor = event.currentTarget, rect = anchor.getBoundingClientRect(), entries = createEntries(path);
+    setMenuRow({ path, kind: "new" });
+    setMenu({ ...contextMenuPosition(rect.right, rect.bottom, entries.length), entries, anchor });
+  };
+  const openMenu = (event: MouseEvent, path: string, directory: boolean, fromButton = false) => {
+    event.preventDefault(); event.stopPropagation();
+    if (!current || !root) return;
+    if (fromButton && menuRow?.path === path && menuRow.kind === "more") { closeMenu(); return; }
+    const anchor = fromButton ? event.currentTarget as HTMLElement : undefined, rect = anchor?.getBoundingClientRect();
     const entries: MenuEntry[] = [
       directory
         ? { label: t("deviceWorkspace.openAsWorkspace"), disabled: unavailable, onSelect: () => openAsWorkspace(path) }
         : { label: t("workspace.open"), disabled: unavailable, onSelect: () => void openFile(path) },
       { label: t("transfer.title"), onSelect: () => useTransferStore.getState().seed(root, path || undefined) },
     ];
+    const runWorkspace = useAppStore.getState().workspace;
+    const runPath = workspaceEntryRunPath(root, path, directory, runWorkspace);
+    if (runPath) {
+      const context = { area: "workspace" as const, filePath: runPath };
+      entries.unshift({ label: t("run.run"), disabled: unavailable || !appCommandEnabled("runFile", context),
+        onSelect: () => { if (sourceCurrent() && workspaceRefEquals(runWorkspace, useAppStore.getState().workspace)) void executeAppCommand("runFile", context); } });
+    }
     if (path) entries.splice(1, 0, { label: `${t("transfer.download")}…`, disabled: unavailable,
       onSelect: () => { if (sourceCurrent()) useTransferStore.getState().requestWorkspaceTransfer(root, path, directory); } });
     if (directory) {
@@ -127,7 +147,8 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
         { label: t("workspace.rename"), disabled, onSelect: () => requestAction("rename", dir, name, directory) },
         { label: t("workspace.delete"), disabled, danger: true, onSelect: () => requestAction("delete", dir, name, directory) });
     }
-    setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
+    setMenuRow(path ? { path, kind: "more" } : null);
+    setMenu({ ...contextMenuPosition(rect?.right ?? event.clientX, rect?.bottom ?? event.clientY, entries.length), entries, anchor });
   };
   const level = (dir: string, depth: number): ReactNode => {
     const node = tree[dir];
@@ -142,16 +163,18 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
         const directory = entry.kind === "dir";
         const expanded = !!tree[path]?.expanded;
         return <li key={entry.name}>
-          <WorkspaceTransferRow workspace={root!} path={path}><button className="tree-row" style={{ paddingLeft: 10 + depth * 12 }}
-            title={directory ? t("deviceWorkspace.directoryHint") : t("deviceWorkspace.openFileHint")}
+          <WorkspaceEntryRow workspace={root!} path={path} name={entry.name} directory={directory} disabled={unavailable}
+            newDisabled={transferBusy || !!deviceFileOperationBlocker(root!)} menuKind={menuRow?.path === path ? menuRow.kind : null}
+            onMore={(event) => openMenu(event, path, directory, true)} onNew={(event) => openNewMenu(event, path)}
+            onContextMenu={(event) => openMenu(event, path, directory)}><button className="tree-row" style={{ paddingLeft: 10 + depth * 12 }}
+            title={`${entry.name}\n${directory ? t("deviceWorkspace.directoryHint") : t("deviceWorkspace.openFileHint")}`}
             disabled={unavailable} aria-expanded={directory ? expanded : undefined}
             onClick={(event) => { if (!directory) void openFile(path); else if (event.detail < 2) void browser.getState().toggle(path); }}
-            onDoubleClick={directory ? () => navigate((endpoint(path) as { path: string }).path) : undefined}
-            onContextMenu={(event) => openMenu(event, path, directory)}>
+            onDoubleClick={directory ? () => navigate((endpoint(path) as { path: string }).path) : undefined}>
             <span className="tree-chevron" aria-hidden="true">{directory && <Icon name={expanded ? "chevronDown" : "chevronRight"} />}</span>
             <FileIcon name={entry.name} directory={directory} expanded={expanded} />
             <span className="tree-name">{entry.name}</span>
-          </button></WorkspaceTransferRow>
+          </button></WorkspaceEntryRow>
           {directory && expanded && level(path, depth + 1)}
         </li>;
       })}
@@ -160,9 +183,10 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
   return <div className="workspace-panel device-workspace-panel" onContextMenu={collapsed ? undefined : (event) => openMenu(event, "", true)}>
     <PanelTitle title={t("deviceWorkspace.title")} collapsed={collapsed} onToggle={onToggleCollapse}>
       <button className="device-workspace-action" disabled={unavailable || transferBusy} title={t("deviceWorkspace.newEntry")} aria-label={t("deviceWorkspace.newEntry")}
-        onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); const entries = createEntries(""); setMenu({ ...contextMenuPosition(rect.left, rect.bottom, entries.length), entries }); }}><Icon name="plus" /></button>
+        aria-haspopup="menu" aria-expanded={menuRow?.path === "" && menuRow.kind === "new"}
+        onClick={(event) => openNewMenu(event, "")}><Icon name="plus" /></button>
       <button className="device-workspace-action" onMouseDown={preserveContentFocus} disabled={navigatingDisabled || navigating || tree[""]?.loading} title={t("workspace.refresh")} aria-label={t("workspace.refresh")}
-        onClick={() => { setMenu(null); void browser.getState().refresh(); }}><Icon name="refresh" /></button>
+        onClick={() => { closeMenu(); void browser.getState().refresh(); }}><Icon name="refresh" /></button>
       <button className="device-workspace-action" disabled={unavailable} title={t("deviceWorkspace.openAsWorkspace")} aria-label={t("deviceWorkspace.openAsWorkspace")}
         onClick={() => openAsWorkspace("")}><Icon name="folderOpen" /></button>
     </PanelTitle>
@@ -171,7 +195,7 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
         <button className="device-workspace-action" disabled={navigatingDisabled || navigating || root?.type !== "device" || root.path === "/"} title={t("transfer.up")} aria-label={t("transfer.up")}
           onClick={() => root?.type === "device" && navigate(parentDevicePath(root.path))}><Icon name="arrowUp" /></button>
         <button className="device-workspace-action" disabled={navigatingDisabled || navigating} title={t("transfer.resetDeviceRoot")} aria-label={t("transfer.resetDeviceRoot")}
-          onClick={() => { setMenu(null); setFileRequest(null); void browser.getState().resetRoot(); }}><Icon name="server" /></button>
+          onClick={() => { closeMenu(); setFileRequest(null); void browser.getState().resetRoot(); }}><Icon name="server" /></button>
         <DirectoryPathInput value={pathDraft} endpoint={root} contextKey={`${sourceKey}:${generation}`} directory={listing}
           disabled={navigatingDisabled} label={t("deviceWorkspace.path")} placeholder={device?.workspace_root}
           onChange={setPathDraft} onNavigate={navigate} />
@@ -184,7 +208,7 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
       {current && level("", 0)}
       {!current && <EmptyState compact icon="folder" title={t("transfer.loading")} />}
     </>}
-    <ContextMenu menu={menu} onClose={() => setMenu(null)} />
+    <ContextMenu menu={menu} onClose={closeMenu} />
     {fileRequest && <TransferFileDialog request={fileRequest.request} onClose={() => setFileRequest(null)} controller={{
       current: () => deviceWorkspaceContextCurrent(browser, fileRequest.context),
       mutate: (action) => mutateDeviceWorkspaceFile(browser, fileRequest.context, action),

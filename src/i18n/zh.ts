@@ -187,6 +187,8 @@ export const zh = {
     title: "设备工作区", openAsWorkspace: "打开为工作区", openFileHint: "在编辑区打开设备文件", retry: "重试", empty: "此目录为空",
   },
   workspace: {
+    entryActions: "{{name}} 的操作", moreActions: "{{name}} 的更多操作", moreActionsLabel: "更多操作",
+    newEntry: "新建文件或目录", newEntryIn: "在 {{name}} 中新建", runEntry: "运行 {{name}}", transferEntry: "{{action}} {{name}}",
     emptyHint: "打开本机或设备上的文件夹，浏览文件并运行脚本。", openLocal: "打开本机文件夹", openRemote: "打开设备文件夹",
     title: "工作区",
     newFileName: "新建文件名",

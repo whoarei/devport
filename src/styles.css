@@ -531,6 +531,25 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 }
 .tree-row:focus-visible { outline-offset: -2px; }
 
+.workspace-entry-row { position: relative; min-width: 0; }
+.workspace-entry-row > .tree-row .tree-name { min-width: 0; flex: 1; }
+.workspace-entry-actions { position: absolute; inset: 0 0 auto auto; height: 28px; padding: 0 4px; display: flex; align-items: center; opacity: 0; pointer-events: none; background: var(--surface-control); }
+.workspace-entry-actions::before { content: ""; position: absolute; inset: 0 100% 0 auto; width: 12px; pointer-events: none; background: linear-gradient(to right, transparent, var(--surface-control)); }
+.workspace-entry-actions > button { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 25px; padding: 3px; border: 0; background: transparent; color: var(--text-secondary); }
+.workspace-entry-actions .ui-icon { width: 14px; height: 14px; }
+.workspace-entry-actions .entry-download-icon { transform: rotate(180deg); }
+.workspace-entry-actions > button:hover:not(:disabled) { background: var(--surface-hover); border-radius: 3px; }
+.workspace-entry-row:is(:hover, :focus-within, .entry-menu-open) > .workspace-entry-actions { opacity: 1; pointer-events: auto; }
+.workspace-entry-row:is(:hover, :focus-within, .entry-menu-open) > .tree-row { padding-right: var(--entry-actions-width); background: var(--surface-control); }
+.file-list li.active > .workspace-entry-row > .tree-row { background: var(--accent-surface); color: var(--text-primary); box-shadow: inset 2px 0 var(--accent); }
+.file-list li.active > .workspace-entry-row > .workspace-entry-actions { background: var(--accent-surface); }
+.file-list li.active > .workspace-entry-row > .workspace-entry-actions::before { background: linear-gradient(to right, transparent, var(--accent-surface)); }
+.file-list li.active > .workspace-entry-row > .workspace-transfer-row > .tree-row { color: var(--text-primary); box-shadow: inset 2px 0 var(--accent); }
+@media (hover: none) {
+  .workspace-entry-actions { opacity: 1; pointer-events: auto; }
+  .workspace-entry-row > .tree-row { padding-right: var(--entry-actions-width); }
+}
+
 .workspace-transfer-row { position: relative; display: flex; align-items: center; isolation: isolate; min-width: 0; }
 .workspace-transfer-row > .tree-row { flex: 1; width: auto; min-width: 0; }
 .workspace-transfer-row .tree-name { min-width: 0; flex: 1; }

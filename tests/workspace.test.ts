@@ -11,6 +11,8 @@ test.before(async () => { await i18n.changeLanguage("zh"); });
 import { EditorTab, inferLanguage } from "../src/editorDocument";
 import { DEFAULT_RUN_DRAFT } from "../src/runState";
 import { WorkspacePanel, workspacePickerMenuEntries, workspaceSwitchMenuEntries, workspaceTerminalMenuEntries } from "../src/components/WorkspacePanel";
+import { WorkspaceEntryRow, workspaceEntryRunPath } from "../src/components/WorkspaceEntryRow";
+import { useTransferStore } from "../src/transferStore";
 import {
   collectScripts, dropSubtree, isWithin, joinPath, nameOf, parentOf, rekeySubtree, WORKSPACE_ROOT,
 } from "../src/workspaceTree";
@@ -75,6 +77,35 @@ test("workspace path helpers keep relative paths and subtree relations", () => {
     },
     sub: { entries: [{ name: "deep.py", is_dir: false }], expanded: true, loaded: true },
   }), ["a.py", "b.sh", "sub/deep.py"]);
+});
+
+test("row run shortcuts map only supported scripts inside the current workspace", () => {
+  const source = deviceWorkspace("ssh", "/work"), workspace = deviceWorkspace("ssh", "/work/project");
+  assert.equal(workspaceEntryRunPath(source, "project/main.py", false, workspace), "main.py");
+  assert.equal(workspaceEntryRunPath(source, "project/tools/run.SH", false, workspace), "tools/run.SH");
+  assert.equal(workspaceEntryRunPath(source, "other/main.py", false, workspace), null);
+  assert.equal(workspaceEntryRunPath(source, "project/main.py", false, deviceWorkspace("other", "/work/project")), null);
+  assert.equal(workspaceEntryRunPath(source, "project/main.py", false, localWorkspace("/work/project")), null);
+  assert.equal(workspaceEntryRunPath(source, "project/main.py", true, workspace), null);
+  assert.equal(workspaceEntryRunPath(source, "project/README.md", false, workspace), null);
+});
+
+test("row actions expose script run, transfer and more, and folder creation uses a menu", (t) => {
+  const previous = useAppStore.getState(), transfers = useTransferStore.getState();
+  t.after(() => { useAppStore.setState(previous, true); useTransferStore.setState(transfers, true); });
+  t.mock.method(React, "useSyncExternalStore", (_subscribe, getSnapshot) => getSnapshot());
+  useAppStore.setState(treeState());
+  useTransferStore.setState({ tasks: [], plan: null, planning: false, workspaceTransfer: null, deviceMutating: false });
+  const render = (path: string, directory: boolean, menuKind?: "more" | "new") => renderToStaticMarkup(createElement(WorkspaceEntryRow, {
+    workspace: localWorkspace("/work"), path, name: path, directory, disabled: false, menuKind,
+    onMore: () => {}, onNew: () => {}, onContextMenu: () => {}, children: createElement("button", { className: "tree-row" }, path),
+  }));
+  assert.match(render("main.py", false), /aria-label="运行 main.py"/);
+  assert.match(render("main.py", false), /aria-label="上传 main.py"/);
+  assert.match(render("main.py", false, "more"), /aria-label="main.py 的更多操作" aria-haspopup="menu" aria-expanded="true"/);
+  assert.doesNotMatch(render("README.md", false), /aria-label="运行/);
+  assert.match(render("sub", true, "new"), /aria-label="在 sub 中新建" aria-haspopup="menu" aria-expanded="true"/);
+  assert.doesNotMatch(render("sub", true), /aria-label="运行/);
 });
 
 test("workspace panel renders the tree with expansion state and an empty hint", (t) => {

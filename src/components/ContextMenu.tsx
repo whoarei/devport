@@ -16,6 +16,8 @@ export interface MenuState {
   x: number;
   y: number;
   entries: MenuEntry[];
+  /** Row action menus follow their button; pointer context menus retain fixed coordinates. */
+  anchor?: HTMLElement;
 }
 
 /** 保存弹出锚点；实际边界在菜单渲染后测量，条目数参数兼容现有调用。 */
@@ -123,17 +125,23 @@ export function ContextMenu({ menu, disabled, onClose }: {
       const { width, height } = element.getBoundingClientRect();
       const margin = 8;
       const scale = width / element.offsetWidth || 1;
-      element.style.left = `${Math.max(margin, Math.min(menu.x, window.innerWidth - width - margin)) / scale}px`;
-      element.style.top = `${Math.max(margin, Math.min(menu.y, window.innerHeight - height - margin)) / scale}px`;
+      const anchor = menu.anchor?.getBoundingClientRect();
+      const x = anchor ? anchor.right - width : menu.x;
+      let y = anchor ? anchor.bottom + 3 : menu.y;
+      if (anchor && y + height > window.innerHeight - margin && anchor.top - height - 3 >= margin) y = anchor.top - height - 3;
+      element.style.left = `${Math.max(margin, Math.min(x, window.innerWidth - width - margin)) / scale}px`;
+      element.style.top = `${Math.max(margin, Math.min(y, window.innerHeight - height - margin)) / scale}px`;
     };
     // 首次绘制前定位，并跟随窗口、字体及换行造成的尺寸变化。
     reposition();
     const observer = new ResizeObserver(reposition);
     observer.observe(element);
     window.addEventListener("resize", reposition);
+    if (menu.anchor) window.addEventListener("scroll", reposition, true);
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
     };
   }, [menu]);
   const open = menu !== null;
@@ -145,10 +153,11 @@ export function ContextMenu({ menu, disabled, onClose }: {
     return () => {
       if (element.contains(document.activeElement) || document.activeElement === document.body) opener?.focus();
     };
-  }, [open]);
+  }, [open, menu?.anchor]);
   useEffect(() => {
     if (!menu) return;
     const onPointerDown = (event: PointerEvent) => {
+      if (menu.anchor?.contains(event.target as Node)) return;
       if (container.current && !container.current.contains(event.target as Node)) onClose();
     };
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };

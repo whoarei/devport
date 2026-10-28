@@ -186,6 +186,8 @@ export const en: Messages = {
     title: "Device Workspace", openAsWorkspace: "Open as Workspace", openFileHint: "Open device file in the editor", retry: "Retry", empty: "This directory is empty",
   },
   workspace: {
+    entryActions: "Actions for {{name}}", moreActions: "More actions for {{name}}", moreActionsLabel: "More Actions",
+    newEntry: "New File or Folder", newEntryIn: "Create in {{name}}", runEntry: "Run {{name}}", transferEntry: "{{action}} {{name}}",
     emptyHint: "Open a local or device folder to browse files and run scripts.", openLocal: "Open Local Folder", openRemote: "Open Device Folder",
     title: "Workspace",
     newFileName: "New file name",

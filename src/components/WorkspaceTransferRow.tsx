@@ -9,7 +9,7 @@ import { transferActive, transferApi, transferBytes } from "../transferApi";
 import { preserveContentFocus } from "../focus";
 import { Icon } from "./Icon";
 
-export function WorkspaceTransferRow({ workspace, path, children }: { workspace: WorkspaceRef; path: string; children: ReactNode }) {
+export function WorkspaceTransferRow({ workspace, path, children, actions }: { workspace: WorkspaceRef; path: string; children: ReactNode; actions?: ReactNode }) {
   const { t } = useTranslation();
   const { tasks, inlineHiddenIds, completionNotices, inlineOrigins, blocked } = useTransferStore(useShallow((s) => ({
     tasks: s.tasks, inlineHiddenIds: s.inlineHiddenIds, completionNotices: s.completionNotices, inlineOrigins: s.inlineOrigins,
@@ -24,7 +24,7 @@ export function WorkspaceTransferRow({ workspace, path, children }: { workspace:
     const timer = setTimeout(() => setNow(Date.now()), Math.max(0, until - Date.now()));
     return () => clearTimeout(timer);
   }, [until]);
-  if (!match) return <>{children}</>;
+  if (!match) return <>{children}{actions}</>;
   const { task, nested } = match;
   const active = transferActive(task.state), state = transferQueueState(task);
   const completed = state === "completed", failed = !active && !completed;

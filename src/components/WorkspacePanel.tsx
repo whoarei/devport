@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { appCommandEnabled, executeAppCommand } from "../appCommands";
@@ -23,7 +23,7 @@ import { workspaceSourceRevision } from "../workspaceRun";
 import { workspacePresentation } from "../workspacePresentation";
 import { FileIcon, Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
-import { WorkspaceTransferRow } from "./WorkspaceTransferRow";
+import { WorkspaceEntryRow } from "./WorkspaceEntryRow";
 
 type Editing =
   | { mode: "create-file"; dir: WorkspacePath }
@@ -138,6 +138,9 @@ interface TreeProps {
   onOpen: (path: WorkspacePath, preview: boolean) => void;
   onToggle: (path: WorkspacePath) => void;
   onMenu: (event: MouseEvent, dir: WorkspacePath, entry: WorkspaceEntry | null) => void;
+  onMore: (event: MouseEvent<HTMLButtonElement>, dir: WorkspacePath, entry: WorkspaceEntry) => void;
+  onNew: (event: MouseEvent<HTMLButtonElement>, dir: WorkspacePath) => void;
+  menuRow: { path: string; kind: "more" | "new" } | null;
   onEditing: (editing: Editing | null) => void;
 }
 
@@ -180,7 +183,7 @@ function InlineInput({ initial, label, onSubmit, onCancel }: {
 
 function TreeLevel(props: TreeProps) {
   const { t } = useTranslation();
-  const { dir, depth, tree, openFile, disabled, editing, onOpen, onToggle, onMenu, onEditing } = props;
+  const { dir, depth, tree, openFile, disabled, editing, onOpen, onToggle, onMenu, onMore, onNew, menuRow, onEditing } = props;
   const node = tree[dir];
   const workspace = useAppStore((state) => state.workspace);
   useEffect(() => {
@@ -218,22 +221,24 @@ function TreeLevel(props: TreeProps) {
                 onCancel={() => onEditing(null)}
               />
             ) : (
-              <WorkspaceTransferRow workspace={workspace!} path={path}><button
+              <WorkspaceEntryRow workspace={workspace!} path={path} name={entry.name} directory={entry.is_dir} disabled={disabled}
+                menuKind={menuRow?.path === path ? menuRow.kind : null} onMore={(event) => onMore(event, dir, entry)}
+                onNew={(event) => onNew(event, path)} onContextMenu={(event) => onMenu(event, dir, entry)}><button
                 type="button"
                 className="tree-row"
+                title={path}
                 data-workspace-file={entry.is_dir ? undefined : path}
                 disabled={disabled && !entry.is_dir}
                 aria-expanded={entry.is_dir ? !!child?.expanded : undefined}
                 onClick={() => (entry.is_dir ? onToggle(path) : onOpen(path, true))}
                 onDoubleClick={entry.is_dir ? undefined : () => onOpen(path, false)}
-                onContextMenu={(event) => onMenu(event, dir, entry)}
               >
                 <span className="tree-chevron" aria-hidden="true">
                   {entry.is_dir && <Icon name={child?.expanded ? "chevronDown" : "chevronRight"} />}
                 </span>
                 <FileIcon name={entry.name} directory={entry.is_dir} expanded={!!child?.expanded} />
                 <span className="tree-name">{entry.name}</span>
-              </button></WorkspaceTransferRow>
+              </button></WorkspaceEntryRow>
             )}
             {entry.is_dir && child?.expanded && <TreeLevel {...props} dir={path} depth={depth + 1} />}
           </li>
@@ -262,6 +267,19 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
   })));
   const tabsFull = useTerminalStore((s) => s.tabs.length >= 8);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [menuRow, setMenuRow] = useState<{ path: string; kind: "more" | "new" } | null>(null);
+  const menuEpoch = useRef(0);
+  const pendingMenuAnchor = useRef<HTMLElement | null>(null);
+  const closeMenu = useCallback(() => { ++menuEpoch.current; setMenu(null); setMenuRow(null); }, []);
+  useEffect(() => {
+    if (!menuRow || menu) return;
+    // A directory's run/history entries may still be loading when Escape or an outside click arrives.
+    const cancel = (event: KeyboardEvent) => { if (event.key === "Escape") closeMenu(); };
+    const outside = (event: PointerEvent) => { if (!pendingMenuAnchor.current?.contains(event.target as Node)) closeMenu(); };
+    document.addEventListener("keydown", cancel);
+    document.addEventListener("pointerdown", outside, true);
+    return () => { document.removeEventListener("keydown", cancel); document.removeEventListener("pointerdown", outside, true); };
+  }, [menuRow, menu, closeMenu]);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const label = workspaceLabel(workspace, devices);
@@ -284,14 +302,27 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
 
   // 折叠面板或切换工作区时收起菜单与行内输入，避免操作落到错误的目录
   const sourceRevision = workspaceSourceRevision(workspace, devices);
-  useEffect(() => { setMenu(null); setEditing(null); }, [collapsed, workspace, sourceRevision]);
+  useEffect(() => { closeMenu(); setEditing(null); }, [collapsed, workspace, sourceRevision, closeMenu]);
 
   const startCreate = async (dir: WorkspacePath, mode: "create-file" | "create-dir") => {
     const node = useAppStore.getState().workspaceTree[dir];
     // 折叠目录（包括从未展开、还没有缓存节点的目录）中新建时先展开，
     // 否则行内输入框会落在不可见的子树里
     if (dir !== WORKSPACE_ROOT && !node?.expanded) await useAppStore.getState().toggleWorkspaceDir(dir);
+    if (workspace !== useAppStore.getState().workspace || sourceRevision !== workspaceSourceRevision(workspace, useAppStore.getState().devices)) return;
     setEditing({ mode, dir });
+  };
+  const createEntries = (dir: WorkspacePath): MenuEntry[] => [
+    { label: t("workspace.newFile"), disabled, onSelect: () => void startCreate(dir, "create-file") },
+    { label: t("workspace.newDir"), disabled, onSelect: () => void startCreate(dir, "create-dir") },
+  ];
+  const openNewMenu = (event: MouseEvent<HTMLButtonElement>, dir: WorkspacePath) => {
+    event.preventDefault(); event.stopPropagation();
+    if (menuRow?.path === dir && menuRow.kind === "new") { closeMenu(); return; }
+    ++menuEpoch.current;
+    const anchor = event.currentTarget, rect = anchor.getBoundingClientRect(), entries = createEntries(dir);
+    setMenuRow({ path: dir, kind: "new" });
+    setMenu({ ...contextMenuPosition(rect.right, rect.bottom, entries.length), entries, anchor });
   };
 
   /** 在工作区（子）目录中打开设备终端：先展开控制面板区；失败复用工作区错误条展示 */
@@ -303,13 +334,18 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
       .catch((error) => useAppStore.setState({ workspaceError: errorMessage(error) }));
   };
 
-  const menuEpoch = useRef(0);
-  const openMenu = async (event: MouseEvent, dir: WorkspacePath, entry: WorkspaceEntry | null) => {
+  const openMenu = async (event: MouseEvent, dir: WorkspacePath, entry: WorkspaceEntry | null, fromButton = false) => {
     event.preventDefault();
     event.stopPropagation();
-    if (!workspace) return;    const path = entry ? joinPath(dir, entry.name) : dir;
+    if (!workspace) return;
+    const path = entry ? joinPath(dir, entry.name) : dir;
+    if (fromButton && menuRow?.path === path && menuRow.kind === "more") { closeMenu(); return; }
     const epoch = ++menuEpoch.current;
-    const x = event.clientX, y = event.clientY;
+    const anchor = fromButton ? event.currentTarget as HTMLElement : undefined;
+    pendingMenuAnchor.current = anchor ?? null;
+    const rect = anchor?.getBoundingClientRect();
+    const x = rect?.right ?? event.clientX, y = rect?.bottom ?? event.clientY;
+    setMenuRow(entry ? { path, kind: "more" } : null);
     void useWorkspaceRunStore.getState().refreshCommands();
     const entries: MenuEntry[] = await workspaceRunMenu(workspace, path, !entry || entry.is_dir);
     if (epoch !== menuEpoch.current || workspace !== useAppStore.getState().workspace || sourceRevision !== workspaceSourceRevision(workspace, useAppStore.getState().devices)) return;
@@ -325,8 +361,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     if (!entry || entry.is_dir) {
       const fileManagerEntry = workspaceFileManagerMenuEntry(t, workspace, path);
       if (fileManagerEntry) entries.push(fileManagerEntry);
-      entries.push({ label: t("workspace.newFile"), onSelect: () => void startCreate(path, "create-file") });
-      entries.push({ label: t("workspace.newDir"), onSelect: () => void startCreate(path, "create-dir") });
+      entries.push(...createEntries(path));
       // 目录与空白区（工作区根）可落在设备终端：本机工作区列出本机设备，设备工作区列出宿主设备
       entries.push({
         label: t("workspace.openInTerminal"),
@@ -344,6 +379,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     setMenu({
       ...contextMenuPosition(x, y, entries.length),
       entries,
+      anchor,
     });
   };
 
@@ -351,6 +387,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
   const openPickerMenu = (event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
+    ++menuEpoch.current; setMenuRow(null);
     const entries = workspacePickerMenuEntries(t, recentWorkspaces, devices);
     setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
   };
@@ -407,6 +444,9 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
                 onOpen={(path, preview) => void useAppStore.getState().openWorkspaceFile(path, { preview })}
                 onToggle={(path) => void useAppStore.getState().toggleWorkspaceDir(path)}
                 onMenu={openMenu}
+                onMore={(event, dir, entry) => void openMenu(event, dir, entry, true)}
+                onNew={openNewMenu}
+                menuRow={menuRow}
                 onEditing={setEditing}
               />
             </div>
@@ -416,7 +456,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
           </EmptyState>}
         </>
       )}
-      <ContextMenu menu={menu} disabled={disabled} onClose={() => setMenu(null)} />
+      <ContextMenu menu={menu} disabled={disabled} onClose={closeMenu} />
       <ConfirmDialog request={confirmRequest} />
     </div>
   );

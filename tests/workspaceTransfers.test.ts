@@ -9,6 +9,7 @@ import { useTransferStore } from "../src/transferStore";
 import { transferApi, type TransferPlan, type TransferSummary } from "../src/transferApi";
 import { inlineTransferFor, loadHiddenTransfers } from "../src/workspaceTransfers";
 import { WorkspaceTransferRow } from "../src/components/WorkspaceTransferRow";
+import { WorkspaceEntryRow } from "../src/components/WorkspaceEntryRow";
 
 const local = localWorkspace("C:\\work"), device = deviceWorkspace("ssh", "/work");
 const host: DeviceProfile = { id: "ssh", revision: "v1", name: "box", transport: "ssh", host: "box", port: 22, username: "user", auth: { type: "key", key_path: null }, workspace_root: "/work", is_default: false };
@@ -177,4 +178,22 @@ test("retry errors are visible through row details when the transfer panel is hi
   assert.equal(useTransferStore.getState().inlineDetailsId, failed.id);
   assert.deepEqual(useTransferStore.getState().inlineActionError, { id: failed.id, message: "connection failed" });
   assert.equal(useTransferStore.getState().planning, false);
+});
+
+test("transfer states take priority over hover shortcuts and restore shortcuts after clearing", (t) => {
+  reset(t);
+  t.mock.method(React, "useSyncExternalStore", (_subscribe, getSnapshot) => getSnapshot());
+  const render = () => renderToStaticMarkup(createElement(WorkspaceEntryRow, {
+    workspace: local, path: "folder", name: "folder", directory: true, disabled: false,
+    onMore: () => {}, onNew: () => {}, onContextMenu: () => {}, children: createElement("button", { className: "tree-row" }, "folder"),
+  }));
+  useTransferStore.setState({ tasks: [summary()] });
+  assert.match(render(), /aria-label="取消传输 folder"/);
+  assert.doesNotMatch(render(), /workspace-entry-actions/);
+  useTransferStore.setState({ tasks: [summary({ state: "failed", failed: 1 })] });
+  assert.match(render(), /aria-label="重试 folder"/);
+  assert.match(render(), /aria-label="清除 folder 的传输状态"/);
+  assert.doesNotMatch(render(), /workspace-entry-actions/);
+  useTransferStore.getState().clearInlineTransfer("task");
+  assert.match(render(), /workspace-entry-actions/);
 });

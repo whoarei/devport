@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 // Full workbench visual fixture. All APIs are in-memory; no devices are contacted.
-// ?theme=light|dark&lang=zh|en&empty=1&transfer=1&local=1&error=1&width=900&many=1&collision=1&running=1&commands=1&deviceWorkspace=1&longNames=1&inlineTransfers=1
+// ?theme=light|dark&lang=zh|en&empty=1&transfer=1&local=1&error=1&width=900&many=1&collision=1&running=1&commands=1&deviceWorkspace=1&longNames=1&inlineTransfers=1&rowActions=1
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { api, type DeviceProfile, type WorkspaceRef } from "../src/api";
@@ -226,6 +226,19 @@ if (params.has("inlineTransfers")) {
       items: [{ path: item.first_path, attrs: attributes, target_attrs: null, state: item.state === "completed" ? "completed" : item.state === "failed" ? "failed" : "pending", target_path: item.first_path, error: item.error }] };
   };
   useTransferStore.setState({ tasks, options: { ...useTransferStore.getState().options, device_id: base.id }, directories: { local: local.dir, devices: { [base.id]: base.workspace_root } }, inlineHiddenIds: [] });
+}
+if (params.has("rowActions")) {
+  for (const device of devices) device.revision = "demo";
+  const longName = "measurement_collection_and_long_term_analysis_report_generator.py";
+  const app = useAppStore.getState();
+  useAppStore.setState({ workspaceTree: rootTree([...app.workspaceTree[""].entries, { name: longName, is_dir: false }]) });
+  deviceFiles.get("/home/dev/projects/remote-runner-demo")!.set(longName, "file");
+  api.runWorkspace = async request => {
+    const id = crypto.randomUUID(), status = { run_id: id, device_name: base.name, label: request.command.entry.type === "python_module" ? request.command.entry.name : request.command.entry.path,
+      state: "exited", exit_code: 0, error: null, started_at: new Date().toISOString(), ended_at: new Date().toISOString() };
+    useAppStore.getState().handleRunEvents([{ type: "status", status }, { type: "output", run_id: id, stream: "stdout", data: btoa("Fixture shortcut run completed.\r\n") }]);
+    return id;
+  };
 }
 function Fixture() {
   const layout = useAppStore(s => s.layout);
