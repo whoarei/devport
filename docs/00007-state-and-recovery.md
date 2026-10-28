@@ -183,6 +183,7 @@ xterm 显示实例跟随标签保留，重连只替换后台 session，沿用当
 | `remote-runner.copy-on-ctrl-c.v1` / `.paste-on-ctrl-v.v1` | 独立终端和运行控制台共用的 Ctrl+C 复制选区 / Ctrl+V 粘贴开关，缺省均开启 |
 | `remote-runner.presets.v1` | 全局预置命令，最多 100 条；不等于工作区命令历史 |
 | `remote-runner.transfer-directories.v1` | 本机及各设备上次成功打开的目录；不存勾选项 |
+| `remote-runner.workspace-transfer-hidden.v1` | 已手动清除行内状态的传输任务 ID（最多 100 项）；不删除后台历史或文件 |
 | `remote-runner.device-workspace-directories.v1` | 设备工作区按设备 ID 保存的上次成功浏览路径；独立于文件传输目录，切换设备、重新显示侧栏和重启后恢复 |
 | `runner.settings.v1:<workspace-key>` | 目标、按设备 Python/Bash 选择、env、模式、超时；cwd 来自源 `.runner` |
 

@@ -5,6 +5,7 @@ import { useAppStore } from "./store";
 import { DeviceManager } from "./components/DeviceManager";
 import { UsbDialog } from "./components/UsbDialog";
 import { RemoteWorkspaceDialog } from "./components/RemoteWorkspaceDialog";
+import { WorkspaceTransferDialogs } from "./components/WorkspaceTransferDialogs";
 import { UnsavedDialog } from "./components/UnsavedDialog";
 import { WorkspaceRunDialogs } from "./components/WorkspaceRunDialogs";
 import { RunHistoryDialogs } from "./components/RunHistoryDialogs";
@@ -202,6 +203,7 @@ export default function App() {
       <DeviceManager />
       <UsbDialog />
       <RemoteWorkspaceDialog />
+      <WorkspaceTransferDialogs />
       <TitleBar
         closeReady={closeReady}
         uiZoom={uiZoom}

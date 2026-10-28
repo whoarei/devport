@@ -581,10 +581,10 @@ test("completion feedback expires without being renewed by later snapshots", asy
   useTransferStore.setState({ tasks: [task("transferring")] });
   t.mock.method(transferApi, "snapshot", async () => [{ ...task("completed"), sequence: 2 }]);
   await useTransferStore.getState().refresh();
-  assert.equal(useTransferStore.getState().completionNotices.task, 6000);
+  assert.equal(useTransferStore.getState().completionNotices.task, 31000);
   now = 3000; await useTransferStore.getState().refresh();
-  assert.equal(useTransferStore.getState().completionNotices.task, 6000);
-  now = 6001; await useTransferStore.getState().refresh();
+  assert.equal(useTransferStore.getState().completionNotices.task, 31000);
+  now = 31001; await useTransferStore.getState().refresh();
   assert.deepEqual(useTransferStore.getState().completionNotices, {});
   useTransferStore.setState({ tasks: [] });
   await useTransferStore.getState().refresh();

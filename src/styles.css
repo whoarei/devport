@@ -531,6 +531,27 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 }
 .tree-row:focus-visible { outline-offset: -2px; }
 
+.workspace-transfer-row { position: relative; display: flex; align-items: center; isolation: isolate; min-width: 0; }
+.workspace-transfer-row > .tree-row { flex: 1; width: auto; min-width: 0; }
+.workspace-transfer-row .tree-name { min-width: 0; flex: 1; }
+.workspace-transfer-row > .tree-row:hover:not(:disabled) { background: transparent; }
+.workspace-transfer-row:hover { background: var(--surface-control); }
+.workspace-transfer-fill { position: absolute; inset: 0 auto 0 0; width: var(--transfer-progress); background: var(--accent-surface); z-index: -1; pointer-events: none; transition: width .3s ease; }
+.workspace-transfer-row.transfer-current-child .workspace-transfer-fill { width: 100%; opacity: .45; }
+.workspace-transfer-row.transfer-failed { background: var(--danger-surface); }
+.workspace-transfer-status { display: inline-flex; align-items: center; flex-shrink: 0; gap: 3px; padding: 3px 4px; border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.workspace-transfer-status .ui-icon { width: 13px; height: 13px; }
+.workspace-transfer-status .transfer-download-icon { transform: rotate(180deg); }
+.transfer-failed .workspace-transfer-status { color: var(--danger); }
+.transfer-completed .workspace-transfer-status { color: var(--success, var(--accent)); }
+.workspace-transfer-actions { display: flex; flex-shrink: 0; align-items: center; padding-right: 4px; }
+.workspace-transfer-actions > button { display: inline-flex; align-items: center; justify-content: center; width: 23px; height: 25px; padding: 3px; border: 0; background: transparent; color: var(--text-secondary); }
+.workspace-transfer-actions .ui-icon { width: 14px; height: 14px; }
+.workspace-transfer-actions > button:hover:not(:disabled) { background: var(--surface-hover); }
+.file-list li.active > .workspace-transfer-row > .tree-row { color: var(--text-primary); box-shadow: inset 2px 0 var(--accent); }
+.transfer-destination-source { margin: 0 0 16px; font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .workspace-transfer-fill { transition: none; } }
+
 .tree-chevron {
   display: flex;
   align-items: center;

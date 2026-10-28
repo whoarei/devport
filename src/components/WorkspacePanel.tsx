@@ -23,6 +23,7 @@ import { workspaceSourceRevision } from "../workspaceRun";
 import { workspacePresentation } from "../workspacePresentation";
 import { FileIcon, Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
+import { WorkspaceTransferRow } from "./WorkspaceTransferRow";
 
 type Editing =
   | { mode: "create-file"; dir: WorkspacePath }
@@ -217,7 +218,7 @@ function TreeLevel(props: TreeProps) {
                 onCancel={() => onEditing(null)}
               />
             ) : (
-              <button
+              <WorkspaceTransferRow workspace={workspace!} path={path}><button
                 type="button"
                 className="tree-row"
                 data-workspace-file={entry.is_dir ? undefined : path}
@@ -232,7 +233,7 @@ function TreeLevel(props: TreeProps) {
                 </span>
                 <FileIcon name={entry.name} directory={entry.is_dir} expanded={!!child?.expanded} />
                 <span className="tree-name">{entry.name}</span>
-              </button>
+              </button></WorkspaceTransferRow>
             )}
             {entry.is_dir && child?.expanded && <TreeLevel {...props} dir={path} depth={depth + 1} />}
           </li>
@@ -312,6 +313,12 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     void useWorkspaceRunStore.getState().refreshCommands();
     const entries: MenuEntry[] = await workspaceRunMenu(workspace, path, !entry || entry.is_dir);
     if (epoch !== menuEpoch.current || workspace !== useAppStore.getState().workspace || sourceRevision !== workspaceSourceRevision(workspace, useAppStore.getState().devices)) return;
+    if (entry) entries.push({ label: `${t(workspace.type === "local" ? "transfer.upload" : "transfer.download")}…`,
+      disabled: useTransferStore.getState().planning || !!useTransferStore.getState().plan || !!useTransferStore.getState().workspaceTransfer,
+      onSelect: () => {
+        if (workspace !== useAppStore.getState().workspace || sourceRevision !== workspaceSourceRevision(workspace, useAppStore.getState().devices)) return;
+        useTransferStore.getState().requestWorkspaceTransfer(workspace, path, entry.is_dir);
+      } });
     entries.push(workspaceTransferMenuEntry(t, workspace, entry ? path : undefined));
     if (!entry) entries.push({ label: t("workspace.refresh"), onSelect: () => void useAppStore.getState().loadWorkspaceDir(dir) });
     // 新建入口只出现在目录与空白区；文件条目上只有打开/重命名/删除

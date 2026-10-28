@@ -69,7 +69,7 @@ function QueueRow({ task, onDetails, onRetry, onMenu, menuOpen }: RowProps) {
   </tr>;
 }
 
-export function TransferDetailsDialog({ task, onClose, onRetry, onShowTask }: { task: TransferSummary; onClose: () => void; onRetry: () => void; onShowTask: (id: string) => void }) {
+export function TransferDetailsDialog({ task, onClose, onRetry, onShowTask, actionError }: { task: TransferSummary; onClose: () => void; onRetry: () => void; onShowTask: (id: string) => void; actionError?: string }) {
   const { t } = useTranslation();
   const ref = useRef<HTMLDialogElement>(null);
   const devices = useAppStore((s) => s.devices);
@@ -115,6 +115,7 @@ export function TransferDetailsDialog({ task, onClose, onRetry, onShowTask }: { 
     </div>}
     <p className="transfer-details-summary">{t(`transfer.states.${task.state}`)} · {t("transfer.taskCounts", { completed: task.completed, count: task.item_count, failed: task.failed, skipped: task.skipped })} · {transferBytes(task.transferred_bytes)} / {transferBytes(task.total_bytes)}</p>
     {isActive && task.current_path && <p className="transfer-hint">{task.current_path}</p>}
+    {actionError && <p role="alert" className="transfer-error">{actionError}</p>}
     {(detail?.error || task.error) && <p className="transfer-error">{detail?.error || task.error}</p>}
     {task.unknown_count > 0 && <p className="transfer-error">{t("transfer.reviewUnknown")}</p>}
     <label className="transfer-result-filter"><input type="checkbox" checked={onlyFailures} onChange={(e) => { filterChosen.current = true; setOnlyFailures(e.target.checked); setPage(0); }} /> {t("transfer.onlyFailures")}</label>

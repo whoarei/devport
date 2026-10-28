@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 // Full workbench visual fixture. All APIs are in-memory; no devices are contacted.
-// ?theme=light|dark&lang=zh|en&empty=1&transfer=1&local=1&error=1&width=900&many=1&collision=1&running=1&commands=1&deviceWorkspace=1&longNames=1
+// ?theme=light|dark&lang=zh|en&empty=1&transfer=1&local=1&error=1&width=900&many=1&collision=1&running=1&commands=1&deviceWorkspace=1&longNames=1&inlineTransfers=1
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { api, type DeviceProfile, type WorkspaceRef } from "../src/api";
@@ -8,12 +8,13 @@ import { useAppStore } from "../src/store";
 import { useTerminalStore } from "../src/terminalStore";
 import { useTransferStore } from "../src/transferStore";
 import { useWorkspaceRunStore } from "../src/workspaceRunStore";
-import { transferApi } from "../src/transferApi";
+import { transferApi, type TransferPlan, type TransferSummary } from "../src/transferApi";
 import { rootTree } from "../src/workspaceTree";
 import { DEFAULT_LAYOUT } from "../src/layoutState";
 import { initializeTheme, useThemeStore } from "../src/theme";
 import { TitleBar } from "../src/components/TitleBar";
 import { WorkspacePanel } from "../src/components/WorkspacePanel";
+import { WorkspaceTransferDialogs } from "../src/components/WorkspaceTransferDialogs";
 import { DeviceWorkspacePanel } from "../src/components/DeviceWorkspacePanel";
 import { type PanelId } from "../src/panels/registry";
 import { CommandsPanel } from "../src/components/CommandsPanel";
@@ -174,8 +175,65 @@ if (transfer) {
 useAppStore.setState({ layout: { ...DEFAULT_LAYOUT, panelVisible: { ...DEFAULT_LAYOUT.panelVisible, editor: !empty, transfer, deviceWorkspace: params.has("deviceWorkspace") }, panelCollapsed: { ...DEFAULT_LAYOUT.panelCollapsed } } });
 const width = Number(params.get("width"));
 if (width >= 640) document.getElementById("root")!.style.cssText = `width:min(${width}px,100vw);margin:auto;border-inline:1px solid var(--border);`;
+// Inline-transfer interactions use the real UI and store, with an entirely in-memory backend.
+if (params.has("inlineTransfers")) {
+  base.workspace_root = "/home/dev/projects/remote-runner-demo";
+  const remote: WorkspaceRef = { type: "device", device_id: base.id, path: base.workspace_root };
+  const local: WorkspaceRef = workspace.type === "local" ? workspace : { type: "local", dir: "C:\\projects\\workspace-source" };
+  const attributes = { kind: "file", size: 1_048_576, mode: null, identity: "mock", modified: "0" };
+  api.listWorkspaceDir = async (_workspace, subdir) => subdir === "output" ? [{ name: "report.json", is_dir: false }] : [
+    { name: "output", is_dir: true }, { name: "tools", is_dir: true }, { name: "main.py", is_dir: false },
+    { name: "pyproject.toml", is_dir: false }, { name: "README.md", is_dir: false }, { name: "run.sh", is_dir: false },
+  ];
+  const task = (id: string, first_path: string, source: WorkspaceRef, target: WorkspaceRef, state = "transferring", transferred_bytes = 0): TransferSummary => ({
+    id, first_path, source, target, state, transferred_bytes, total_bytes: 1_048_576, selection_count: 1,
+    sequence: 1, current_path: first_path === "output" ? "output/report.json" : first_path, error: state === "failed" ? "Connection disconnected" : null,
+    item_count: 1, completed: state === "completed" ? 1 : 0, skipped: 0, failed: state === "failed" ? 1 : 0,
+    pending_count: state === "transferring" ? 1 : 0, unknown_count: 0, residual_count: 0, warning_count: 0,
+  });
+  let tasks = [task("upload-file", "main.py", local, remote, "transferring", 440_402), task("upload-folder", "output", local, remote, "transferring", 713_031), task("failed-download", "README.md", remote, local, "failed", 300_000)];
+  const plans = new Map<string, TransferPlan>(), retries = new Map<string, string>(), animated = new Set<string>();
+  transferApi.plan = async request => {
+    const plan: TransferPlan = { id: crypto.randomUUID(), request, total_bytes: attributes.size, conflicts: 0, warnings: [], overwrite: true, keep_both: true,
+      items: request.paths.map(path => ({ path, attrs: attributes, target_attrs: null, state: "pending", target_path: null, error: null })) };
+    plans.set(plan.id, plan); return plan;
+  };
+  transferApi.retry = async id => {
+    const old = tasks.find(item => item.id === id)!;
+    const plan = await transferApi.plan({ source: old.source, target: old.target, paths: [old.first_path], exclude_project_files: false, protected_paths: [] });
+    retries.set(plan.id, id); return plan;
+  };
+  transferApi.discard = async id => { plans.delete(id); };
+  transferApi.start = async id => {
+    const plan = plans.get(id)!, created = task(crypto.randomUUID(), plan.request.paths[0], plan.request.source, plan.request.target);
+    const previous = retries.get(id);
+    if (previous) { created.retry_of = previous; tasks = tasks.map(item => item.id === previous ? { ...item, superseded_by: created.id, sequence: item.sequence + 1 } : item); }
+    tasks = [created, ...tasks]; animated.add(created.id); return created.id;
+  };
+  transferApi.cancel = async id => { tasks = tasks.map(item => item.id === id ? { ...item, state: "canceled", pending_count: 1, sequence: item.sequence + 1 } : item); };
+  transferApi.snapshot = async () => {
+    tasks = tasks.map(item => {
+      if (!animated.has(item.id) || item.state !== "transferring") return item;
+      const bytes = Math.min(item.total_bytes, item.transferred_bytes + 131_072), done = bytes === item.total_bytes;
+      return { ...item, transferred_bytes: bytes, state: done ? "completed" : "transferring", completed: done ? 1 : 0, pending_count: done ? 0 : 1, sequence: item.sequence + 1 };
+    });
+    return tasks.map(item => ({ ...item }));
+  };
+  transferApi.task = async id => {
+    const item = tasks.find(task => task.id === id)!;
+    return { id, request: { source: item.source, target: item.target, paths: [item.first_path], exclude_project_files: false, protected_paths: [] }, state: item.state,
+      policy: "keep_both", preserve_executable: false, total_bytes: item.total_bytes, transferred_bytes: item.transferred_bytes, error: item.error, warnings: [], residuals: [],
+      items: [{ path: item.first_path, attrs: attributes, target_attrs: null, state: item.state === "completed" ? "completed" : item.state === "failed" ? "failed" : "pending", target_path: item.first_path, error: item.error }] };
+  };
+  useTransferStore.setState({ tasks, options: { ...useTransferStore.getState().options, device_id: base.id }, directories: { local: local.dir, devices: { [base.id]: base.workspace_root } }, inlineHiddenIds: [] });
+}
 function Fixture() {
   const layout = useAppStore(s => s.layout);
+  React.useEffect(() => {
+    if (!params.has("inlineTransfers")) return;
+    const timer = setInterval(() => { void useTransferStore.getState().refresh(); }, 500);
+    return () => clearInterval(timer);
+  }, []);
   const toggle = (id: PanelId) => useAppStore.getState().setLayout({ panelCollapsed: { ...layout.panelCollapsed, [id]: !layout.panelCollapsed[id] } });
   return <div className="app">
     <TitleBar closeReady uiZoom={100} onUiZoom={() => {}} onAbout={() => {}} onCheckUpdate={() => {}} />
@@ -187,7 +245,7 @@ function Fixture() {
       </aside>}
       <CenterDock />
     </main>
-    <DeviceManager /><WorkspaceRunDialogs /><UnsavedDialog />
+    <DeviceManager /><WorkspaceRunDialogs /><UnsavedDialog /><WorkspaceTransferDialogs />
   </div>;
 }
 const root = createRoot(document.getElementById("root")!);

@@ -9,6 +9,7 @@ import type { TransferOptions } from "./environmentState";
 import { workspaceSourceRevision } from "./workspaceRun";
 import i18n from "./i18n";
 import { editorFileSource, editorSourceCurrent } from "./editorSources";
+import { INLINE_TRANSFER_NOTICE_MS, loadHiddenTransfers, rememberHiddenTransfers, transferOrigin, type WorkspaceTransferSelection } from "./workspaceTransfers";
 
 interface BrowserState { endpoint: WorkspaceRef | null; directory: TransferDirectory | null; selected: string[]; loading: boolean; error: string | null; generation: number; sourceRevision: string | null }
 type Side = "local" | "device";
@@ -20,6 +21,13 @@ interface State {
   deviceMutating: boolean;
   registeredIds: string[];
   completionNotices: Record<string, number>;
+  planOwner: "panel" | "workspace";
+  workspaceTransfer: WorkspaceTransferSelection | null;
+  inlinePlanOrigin: WorkspaceTransferSelection | null;
+  inlineOrigins: Record<string, WorkspaceTransferSelection>;
+  inlineHiddenIds: string[];
+  inlineDetailsId: string | null;
+  inlineActionError: { id: string; message: string } | null;
   directories: TransferDirectories;
   openDevice: (id: string) => Promise<void>;
   resetDeviceRoot: (id: string) => Promise<void>;
@@ -28,7 +36,10 @@ interface State {
   browse: (side: Side, endpoint: WorkspaceRef, selection?: string[]) => Promise<void>;
   select: (side: Side, paths: string[]) => void;
   prepare: (side: Side, excludeProjectFiles: boolean, paths?: string[]) => Promise<void>;
-  retry: (id: string) => Promise<void>;
+  retry: (id: string, owner?: "panel" | "workspace") => Promise<void>;
+  requestWorkspaceTransfer: (workspace: WorkspaceRef, path: string, directory: boolean) => void;
+  prepareWorkspaceTransfer: (target: WorkspaceRef) => Promise<void>;
+  clearInlineTransfer: (id: string) => void;
   discard: () => void;
   refresh: () => Promise<void>;
   seed: (workspace?: WorkspaceRef, path?: string) => void;
@@ -37,8 +48,10 @@ interface State {
 export const useTransferStore = create<State>((set, get) => ({
   options: { device_id: null, hidden: false, exclude: false },
   local: emptyBrowser(), device: emptyBrowser(), tasks: [], error: null, plan: null, planning: false, deviceMutating: false, registeredIds: [], completionNotices: {},
+  planOwner: "panel", workspaceTransfer: null, inlinePlanOrigin: null, inlineOrigins: {}, inlineHiddenIds: loadHiddenTransfers(), inlineDetailsId: null, inlineActionError: null,
   directories: loadTransferDirectories(),
-  register: (id) => set((s) => ({ registeredIds: [...s.registeredIds.filter((old) => old !== id), id].slice(-100) })),
+  register: (id) => set((s) => ({ registeredIds: [...s.registeredIds.filter((old) => old !== id), id].slice(-100),
+    inlineOrigins: s.inlinePlanOrigin ? { ...s.inlineOrigins, [id]: s.inlinePlanOrigin } : s.inlineOrigins })),
   browse: async (side, endpoint, selection = []) => {
     const generation = get()[side].generation + 1;
     const sourceRevision = workspaceSourceRevision(endpoint, useAppStore.getState().devices);
@@ -91,28 +104,35 @@ export const useTransferStore = create<State>((set, get) => ({
     const source = state[side], target = state[side === "local" ? "device" : "local"];
     const selected = (paths ?? source.selected).slice();
     if (source.loading || target.loading || !source.directory || !target.directory || !selected.length) return;
-    set({ planning: true, error: null });
-    try {
-      const editor = useAppStore.getState();
-      const selectedDirty = editor.openTabs.some((tab) => {
-        const origin = editorFileSource(tab, editor.workspace);
-        const path = origin ? workspaceTransferPath(origin.workspace, origin.path, source.directory!.endpoint) : null;
-        return dirtyTab(tab) && path !== null && selected.some((entry) => path === entry || path.startsWith(`${entry}/`));
-      });
-      if (selectedDirty && !await editor.confirmAllUnsaved()) return;
-      const current = useAppStore.getState();
-      const protectedPaths = current.openTabs.map((tab) => { const origin = editorFileSource(tab, current.workspace); return origin ? workspaceTransferPath(origin.workspace, origin.path, target.directory!.endpoint) : null; }).filter((p): p is string => p !== null);
-      const plan = await transferApi.plan({ source: source.directory.endpoint, target: target.directory.endpoint, paths: selected, exclude_project_files: excludeProjectFiles, protected_paths: protectedPaths });
-      set({ plan });
-    } catch (error) { set({ error: errorMessage(error) }); }
-    finally { set({ planning: false }); }
+    await prepareTransfer(source.directory.endpoint, target.directory.endpoint, selected, excludeProjectFiles, "panel", null);
   },
-  discard: () => { const plan = get().plan; set({ plan: null }); if (plan) void transferApi.discard(plan.id).catch(() => {}); },
-  retry: async (id) => {
+  requestWorkspaceTransfer: (workspace, path, directory) => {
+    if (get().planning || get().plan || get().deviceMutating || get().workspaceTransfer || !path) return;
+    set({ workspaceTransfer: { workspace, path, directory, revision: workspaceSourceRevision(workspace, useAppStore.getState().devices) }, error: null, planOwner: "workspace" });
+  },
+  prepareWorkspaceTransfer: async (target) => {
+    const selection = get().workspaceTransfer;
+    if (!selection || selection.revision !== workspaceSourceRevision(selection.workspace, useAppStore.getState().devices)) {
+      set({ error: i18n.t("transfer.directoryChanged") }); return;
+    }
+    const parts = selection.path.split("/"), name = parts.pop()!;
+    const source = parts.reduce(appendEndpoint, selection.workspace);
+    await prepareTransfer(source, target, [name], get().options.exclude, "workspace", selection, true);
+  },
+  clearInlineTransfer: (id) => {
+    const task = get().tasks.find((task) => task.id === id);
+    if (!task || transferActive(task.state)) return;
+    const ids = [...get().inlineHiddenIds.filter((old) => old !== id), id].slice(-100);
+    rememberHiddenTransfers(ids);
+    set({ inlineHiddenIds: ids, inlineDetailsId: get().inlineDetailsId === id ? null : get().inlineDetailsId });
+  },
+  discard: () => { const plan = get().plan; set({ plan: null, inlinePlanOrigin: null }); if (plan) void transferApi.discard(plan.id).catch(() => {}); },
+  retry: async (id, owner = "panel") => {
     if (get().planning || get().plan || get().deviceMutating) return;
-    set({ planning: true, error: null });
-    try { set({ plan: await transferApi.retry(id) }); }
-    catch (error) { set({ error: errorMessage(error) }); }
+    const task = get().tasks.find((task) => task.id === id);
+    set({ planning: true, error: null, planOwner: owner, inlineDetailsId: null, inlineActionError: null });
+    try { set({ plan: await transferApi.retry(id), inlinePlanOrigin: owner === "workspace" && task ? transferOrigin(task, get().tasks, get().inlineOrigins) : null }); }
+    catch (error) { set({ error: errorMessage(error), ...(owner === "workspace" ? { inlineDetailsId: id, inlineActionError: { id, message: errorMessage(error) } } : {}) }); }
     finally { set({ planning: false }); }
   },
   refresh: async () => {
@@ -128,9 +148,10 @@ export const useTransferStore = create<State>((set, get) => ({
     const notices = Object.fromEntries(Object.entries(get().completionNotices).filter(([id, until]) => until > now && merged.some((task) => task.id === id)));
     for (const task of merged) {
       const old = previous.find((item) => item.id === task.id);
-      if (task.state === "completed" && ((old && transferActive(old.state)) || (!old && get().registeredIds.includes(task.id)))) notices[task.id] ??= now + 5000;
+      if (task.state === "completed" && ((old && transferActive(old.state)) || (!old && get().registeredIds.includes(task.id)))) notices[task.id] ??= now + INLINE_TRANSFER_NOTICE_MS;
     }
-    set({ tasks: merged, completionNotices: notices });
+    set({ tasks: merged, completionNotices: notices, inlineOrigins: Object.fromEntries(Object.entries(get().inlineOrigins)
+      .filter(([id]) => merged.some((task) => task.id === id) || get().registeredIds.includes(id))) });
     for (const task of merged) {
       if (transferActive(task.state)) continue;
       const old = previous.find((t) => t.id === task.id);
@@ -157,6 +178,44 @@ export const useTransferStore = create<State>((set, get) => ({
     get().restore();
   },
 }));
+
+/** Both entry points use identical unsaved-file and overwrite protection with frozen endpoints. */
+async function prepareTransfer(source: WorkspaceRef, target: WorkspaceRef, paths: string[], exclude: boolean, owner: "panel" | "workspace", selection: WorkspaceTransferSelection | null, resolveTarget = false) {
+  const store = useTransferStore.getState();
+  if (store.planning || store.plan || store.deviceMutating) return;
+  const sourceRevision = workspaceSourceRevision(source, useAppStore.getState().devices);
+  const targetRevision = workspaceSourceRevision(target, useAppStore.getState().devices);
+  const current = () => sourceRevision === workspaceSourceRevision(source, useAppStore.getState().devices)
+    && targetRevision === workspaceSourceRevision(target, useAppStore.getState().devices)
+    && (!selection || useTransferStore.getState().workspaceTransfer === selection);
+  useTransferStore.setState({ planning: true, error: null, planOwner: owner, inlinePlanOrigin: null });
+  try {
+    if (resolveTarget) {
+      const directory = await transferApi.list(target);
+      if (!current()) throw new Error(i18n.t("transfer.directoryChanged"));
+      if (directory.endpoint.type !== target.type || target.type === "device" && (directory.endpoint.type !== "device" || directory.endpoint.device_id !== target.device_id)) throw new Error(i18n.t("transfer.directoryChanged"));
+      target = directory.endpoint;
+      useTransferStore.setState((s) => ({ directories: rememberTransferDirectory(s.directories, target) }));
+    }
+    const editor = useAppStore.getState();
+    const selectedDirty = editor.openTabs.some((tab) => {
+      const origin = editorFileSource(tab, editor.workspace);
+      const path = origin ? workspaceTransferPath(origin.workspace, origin.path, source) : null;
+      return dirtyTab(tab) && path !== null && paths.some((entry) => path === entry || path.startsWith(`${entry}/`));
+    });
+    if (selectedDirty && !await editor.confirmAllUnsaved()) return;
+    if (!current()) throw new Error(i18n.t("transfer.directoryChanged"));
+    const app = useAppStore.getState();
+    const protectedPaths = app.openTabs.map((tab) => { const origin = editorFileSource(tab, app.workspace); return origin ? workspaceTransferPath(origin.workspace, origin.path, target) : null; }).filter((path): path is string => path !== null);
+    const plan = await transferApi.plan({ source, target, paths, exclude_project_files: exclude, protected_paths: protectedPaths });
+    if (!current()) {
+      await transferApi.discard(plan.id).catch(() => {});
+      throw new Error(i18n.t("transfer.directoryChanged"));
+    }
+    useTransferStore.setState({ plan, inlinePlanOrigin: selection, ...(owner === "workspace" ? { workspaceTransfer: null } : {}) });
+  } catch (error) { useTransferStore.setState({ error: errorMessage(error) }); }
+  finally { useTransferStore.setState({ planning: false }); }
+}
 
 export function revealTransferPanel() {
   const state = useAppStore.getState();
