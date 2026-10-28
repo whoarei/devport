@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "com.devrunner.remote-runner",
   "productName": "Remote Runner",
-  "version": "0.23.2",
+  "version": "0.24.0",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
