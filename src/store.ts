@@ -8,6 +8,7 @@ import { loadWorkspaceHistory, rememberWorkspace, saveWorkspaceHistory } from ".
 import { LayoutState, loadLayout, normalizeLayout, panelCollapsePatch, panelVisibilityPatch, saveLayout } from "./layoutState";
 import { collectScripts, dropSubtree, isWithin, joinPath, nameOf, parentOf, rekeySubtree, rootTree, withNode, WORKSPACE_ROOT, WorkspacePath, WorkspaceTree } from "./workspaceTree";
 import { workspaceSourceRevision } from "./workspaceRun";
+import { applyDeviceEditorMutation, deviceEditorTargets, editorFileKey, editorFileSource, editorFileTitle, editorSourceCurrent, editorPathInWorkspace, workspaceEditorDirty, type EditorFileSource } from "./editorSources";
 
 interface AppState {
   updating: boolean;
@@ -76,17 +77,18 @@ interface AppState {
   renameWorkspaceEntry: (path: WorkspacePath, newName: string) => Promise<boolean>;
   deleteWorkspaceEntry: (path: WorkspacePath, canProceed?: () => boolean) => Promise<boolean>;
   dismissWorkspaceError: () => void;
-  openWorkspaceFile: (name: string, options?: { reveal?: boolean; preview?: boolean }) => Promise<void>;
+  openWorkspaceFile: (name: string, options?: { reveal?: boolean; preview?: boolean; source?: EditorFileSource }) => Promise<void>;
+  openDeviceFile: (workspace: WorkspaceRef, path: string) => Promise<void>;
   activateFile: (name: string) => void;
   pinFile: (name: string) => void;
   editContent: (name: string, content: string) => void;
   setLanguage: (language: EditorLanguage) => void;
   saveFile: (name?: string) => Promise<boolean>;
   /** 顺序保存所有脏标签；任一失败即中止并返回 false */
-  saveAllDirty: () => Promise<boolean>;
+  saveAllDirty: (workspaceOnly?: boolean) => Promise<boolean>;
   confirmUnsaved: (name?: string) => Promise<boolean>;
   /** 对所有脏标签逐个确认（窗口关闭 / 切换工作区前使用） */
-  confirmAllUnsaved: () => Promise<boolean>;
+  confirmAllUnsaved: (workspaceOnly?: boolean) => Promise<boolean>;
   reloadFile: () => Promise<void>;
   closeFile: (name?: string) => Promise<void>;
   /** Confirm every target before removing any tabs; cancel/failure keeps the batch open. */
@@ -158,9 +160,10 @@ async function confirmTabUnsaved(name: string, get: () => AppState, set: StoreAp
   if (!tab || !dirtyTab(tab)) return true;
   const sequence = workspaceSequence;
   const revision = workspaceSourceRevision(state.workspace, state.devices);
-  const sourceCurrent = () => sequence === workspaceSequence && workspaceRefEquals(get().workspace, state.workspace)
-    && revision === workspaceSourceRevision(get().workspace, get().devices);
-  const choice = await new Promise<ChangeChoice>((resolve) => set({ changePrompt: { name, resolve } }));
+  const sourceCurrent = () => tab.source ? JSON.stringify(get().openTabs.find((t) => t.name === name)?.source) === JSON.stringify(tab.source)
+    : sequence === workspaceSequence && workspaceRefEquals(get().workspace, state.workspace)
+      && revision === workspaceSourceRevision(get().workspace, get().devices);
+  const choice = await new Promise<ChangeChoice>((resolve) => set({ changePrompt: { name: editorFileTitle(tab, state.devices), resolve } }));
   set({ changePrompt: null });
   const current = get().openTabs.find((tab) => tab.name === name);
   if (!sourceCurrent() || !current || current.generation !== tab.generation || current.fileContent !== tab.fileContent || choice === "cancel") return false;
@@ -277,7 +280,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     ++workspaceSequence;
     // This selection owns loading cleanup as soon as it invalidates the old read.
     set({ loading: false });
-    if (!await get().confirmAllUnsaved() || sequence !== loadSequence) return;
+    if (!await get().confirmAllUnsaved(true) || sequence !== loadSequence) return;
     set({ loading: true, editorError: null, workspaceError: null });
     const previous = get().workspace;
     try {
@@ -287,7 +290,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       const recentWorkspaces = workspace ? rememberWorkspace(get().recentWorkspaces, workspace) : get().recentWorkspaces;
       if (workspace) saveWorkspaceHistory(recentWorkspaces);
       set((s) => ({ workspace, workspaceTree, recentWorkspaces,
-        openTabs: [], activeFile: null, workspaceScroll: 0,
+        openTabs: s.openTabs.filter((tab) => !!tab.source),
+        activeFile: s.openTabs.some((tab) => tab.source && tab.name === s.activeFile) ? s.activeFile : s.openTabs.find((tab) => tab.source)?.name ?? null, workspaceScroll: 0,
         runDraft: { ...s.runDraft, entry: "" } }));
       hideEmptyEditor(get);
     } catch (error) {
@@ -377,6 +381,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     const dir = parentOf(path);
     const target = joinPath(dir, newName);
     if (target === path) return true;
+    const movedDevice = applyDeviceEditorMutation(state, root, path, target);
+    if (new Set(movedDevice.openTabs.map((tab) => tab.name)).size !== state.openTabs.length) { set({ workspaceError: i18n.t("editor.targetOpen") }); return false; }
+    if (deviceEditorTargets(state.openTabs, root, path).some((tab) => !editorSourceCurrent(tab.source!, state.devices))) { set({ workspaceError: i18n.t("editor.deviceChanged") }); return false; }
     const sequence = workspaceSequence;
     set({ workspaceMutating: true, workspaceError: null });
     try {
@@ -390,11 +397,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         const moved = (value: string | null) =>
           value && isWithin(value, path) ? target + value.slice(path.length) : value;
         const openTabs = s.openTabs.map((tab) => {
+          if (tab.source) return tab;
           const name = moved(tab.name);
           return name && name !== tab.name ? { ...tab, name, language: inferLanguage(nameOf(name)) } : tab;
         });
-        return { workspaceTree: rekeySubtree(s.workspaceTree, path, target), openTabs,
-          activeFile: moved(s.activeFile),
+        const external = applyDeviceEditorMutation({ openTabs, activeFile: moved(s.activeFile) }, root, path, target);
+        return { workspaceTree: rekeySubtree(s.workspaceTree, path, target), ...external,
           runDraft: { ...s.runDraft, entry: moved(s.runDraft.entry) ?? "" } };
       });
       await get().loadWorkspaceDir(dir);
@@ -415,7 +423,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     const dir = parentOf(path);
     const sequence = workspaceSequence;
     // 删除会连带丢掉受影响标签的未保存修改，逐个复用既有的保存 / 放弃 / 取消确认
-    for (const tab of state.openTabs.filter((t) => isWithin(t.name, path))) {
+    const targets = state.openTabs.filter((tab) => { const relative = editorPathInWorkspace(tab, root); return relative !== null && isWithin(relative, path); });
+    if (targets.some((tab) => tab.source && !editorSourceCurrent(tab.source, state.devices))) { set({ workspaceError: i18n.t("editor.deviceChanged") }); return false; }
+    for (const tab of targets) {
       if (!await get().confirmUnsaved(tab.name)) return false;
       if (sequence !== workspaceSequence || canProceed?.() === false) return false;
     }
@@ -427,11 +437,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       await api.deleteWorkspaceEntry(root, path);
       if (sequence !== workspaceSequence) return false;
       set((s) => {
-        const openTabs = s.openTabs.filter((t) => !isWithin(t.name, path));
+        const removed = new Set(targets.map((tab) => tab.name));
+        const openTabs = s.openTabs.filter((t) => !removed.has(t.name));
         // 入口草稿无论是否打开都要跟随删除，否则下拉框会指向已删除的文件
         const entry = s.runDraft.entry && isWithin(s.runDraft.entry, path) ? "" : s.runDraft.entry;
         const runDraft = entry === s.runDraft.entry ? s.runDraft : { ...s.runDraft, entry };
-        const activeRemoved = !!s.activeFile && isWithin(s.activeFile, path);
+        const activeRemoved = !!s.activeFile && removed.has(s.activeFile);
         return { workspaceTree: dropSubtree(s.workspaceTree, path), runDraft, openTabs,
           activeFile: activeRemoved ? openTabs[0]?.name ?? null : s.activeFile,
           ...(activeRemoved ? { editorError: null } : {}) };
@@ -449,9 +460,28 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   dismissWorkspaceError: () => set({ workspaceError: null }),
 
-  openWorkspaceFile: async (name, { reveal = true, preview = false } = {}) => {
+  openDeviceFile: async (workspace, path) => {
+    if (workspace.type !== "device") return;
+    const device = get().devices.find((device) => device.id === workspace.device_id && ["ssh", "wsl"].includes(device.transport));
+    if (!device) { set({ editorError: i18n.t("editor.deviceChanged") }); return; }
+    const source: EditorFileSource = { workspace, path, device_revision: device.revision };
+    await get().openWorkspaceFile(editorFileKey(source), { source });
+  },
+
+  openWorkspaceFile: async (name, { reveal = true, preview = false, source: requestedSource } = {}) => {
     const workspace = get().workspace;
-    if (!workspace || get().saving || get().starting || get().guarding) return;
+    const initial = get().openTabs.find((tab) => tab.name === name);
+    const source = initial?.source ?? requestedSource;
+    if ((!workspace && !source) || get().saving || get().starting || get().guarding) return;
+    if (source && !editorSourceCurrent(source, get().devices)) { set({ editorError: i18n.t("editor.deviceChanged") }); revealEditor(get); return; }
+    // Reuse a file already opened through the other tree instead of creating a second buffer.
+    if (source && workspace?.type === "device") {
+      const relative = editorPathInWorkspace({ name, source } as EditorTab, workspace);
+      if (relative !== null && get().openTabs.some((tab) => !tab.source && tab.name === relative)) { get().activateFile(relative); return; }
+    } else if (!source && workspace?.type === "device") {
+      const independent = editorFileKey({ workspace, path: name });
+      if (get().openTabs.some((tab) => tab.source && tab.name === independent)) { get().activateFile(independent); return; }
+    }
     // 已打开的文件只激活标签，不重新读盘
     const existing = get().openTabs.find((tab) => tab.name === name);
     if (existing && existing.loaded !== false) {
@@ -462,14 +492,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const sequence = ++loadSequence;
     set({ loading: true, editorError: null, ...(existing ? { activeFile: name } : {}) });
     try {
-      const doc = await api.readWorkspaceFile(workspace, name);
-      if (sequence === loadSequence && workspaceRefEquals(get().workspace, workspace)) {
+      const doc = source ? await api.readDeviceEditorFile(source.workspace, source.path, source.device_revision) : await api.readWorkspaceFile(workspace!, name);
+      if (sequence === loadSequence && (source ? editorSourceCurrent(source, get().devices) : workspaceRefEquals(get().workspace, workspace))) {
         if (existing && !get().openTabs.some((tab) => tab.name === name && tab.generation === existing.generation)) return;
         const draft = existing?.recovery;
         const conflict = !!draft && draft.revision !== doc.revision && draft.content !== doc.content;
-        const tab: EditorTab = { name, fileContent: draft?.content ?? doc.content, savedContent: doc.content,
+        const tab: EditorTab = { name, ...(source ? { source } : {}), fileContent: draft?.content ?? doc.content, savedContent: doc.content,
           revision: conflict ? draft!.revision : doc.revision, eol: draft?.eol ?? doc.eol, bom: draft?.bom ?? doc.bom,
-          language: existing?.language ?? inferLanguage(name), view: existing?.view, loaded: true,
+          language: existing?.language ?? inferLanguage(source?.path ?? name), view: existing?.view, loaded: true,
           preview: existing ? !!existing.preview && preview : preview,
           conflict, generation: (existing?.generation ?? 0) + 1 };
         set((s) => {
@@ -477,13 +507,15 @@ export const useAppStore = create<AppState>((set, get) => ({
           const openTabs = s.openTabs.map((old) => old.preview && dirtyTab(old) ? { ...old, preview: false } : old);
           if (existing) openTabs.splice(openTabs.findIndex((old) => old.name === name), 1, tab);
           else {
-            const index = openTabs.findIndex((old) => old.preview);
+            const index = source ? -1 : openTabs.findIndex((old) => old.preview && !old.source);
             if (index < 0) openTabs.push(tab);
             else openTabs.splice(index, 1, tab);
           }
           return { openTabs, activeFile: name, editorError: conflict ? i18n.t("environment.draftConflict") : null };
         });
         if (reveal) revealEditor(get);
+      } else if (sequence === loadSequence && source && !editorSourceCurrent(source, get().devices)) {
+        set({ editorError: i18n.t("editor.deviceChanged") });
       }
     } catch (e) {
       if (sequence === loadSequence) set((s) => ({ editorError: errorMessage(e),
@@ -524,13 +556,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (state.saving || state.loading) return false;
     const tab = state.openTabs.find((t) => t.name === (name ?? state.activeFile));
     if (!tab) return false;
-    if (!state.workspace) return false;
+    const source = editorFileSource(tab, state.workspace);
+    if (!source) return false;
+    if (tab.source && !editorSourceCurrent(source, state.devices)) { set({ editorError: i18n.t("editor.deviceChanged") }); return false; }
     if (tab.loaded === false) {
       const sequence = ++loadSequence;
       set({ loading: true, editorError: null });
       try {
-        const doc = await api.readWorkspaceFile(state.workspace!, tab.name);
-        if (sequence !== loadSequence || !workspaceRefEquals(get().workspace, state.workspace)) return false;
+        const doc = tab.source ? await api.readDeviceEditorFile(source.workspace, source.path, source.device_revision) : await api.readWorkspaceFile(source.workspace, source.path);
+        if (sequence !== loadSequence || (tab.source ? !editorSourceCurrent(source, get().devices) : !workspaceRefEquals(get().workspace, state.workspace))) return false;
         const conflict = !!tab.recovery && tab.recovery.revision !== doc.revision && tab.fileContent !== doc.content;
         set((s) => ({ openTabs: withTab(s.openTabs, tab.name, (current) => ({ ...current, loaded: true, recovery: undefined,
           fileContent: tab.recovery ? current.fileContent : doc.content,
@@ -542,18 +576,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       return get().saveFile(tab.name);
     }
     if (!dirtyTab(tab)) return true;
-    if (!state.workspace) return false;
     if (uploadBusy(state)) {
       set({ editorError: i18n.t("run.saveBlocked") });
       return false;
     }
     set({ saving: true, editorError: null });
     try {
-      const saved = await api.writeWorkspaceFile({ workspace: state.workspace!, name: tab.name,
-        content: tab.fileContent, expectedRevision: tab.revision, eol: tab.eol, bom: tab.bom });
+      const request = { workspace: source.workspace, name: source.path, content: tab.fileContent, expectedRevision: tab.revision, eol: tab.eol, bom: tab.bom };
+      const saved = tab.source ? await api.writeDeviceEditorFile(request, source.device_revision) : await api.writeWorkspaceFile(request);
       // 标签被关闭或重读后，旧响应不得覆盖新文档
       const current = get().openTabs.find((t) => t.name === tab.name);
       if (!current || current.generation !== tab.generation) return false;
+      if (tab.source && !editorSourceCurrent(source, get().devices)) { set({ editorError: i18n.t("editor.deviceChanged") }); return false; }
       set((s) => ({ openTabs: withTab(s.openTabs, tab.name, (t) =>
         ({ ...t, savedContent: tab.fileContent, revision: saved.revision, conflict: false, recovery: undefined, discardRecovery: false })) }));
       return true;
@@ -567,11 +601,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  saveAllDirty: async () => {
+  saveAllDirty: async (workspaceOnly = false) => {
     for (const tab of get().openTabs) {
+      if (workspaceOnly && editorPathInWorkspace(tab, get().workspace) === null) continue;
       if (dirtyTab(tab) && !await get().saveFile(tab.name)) return false;
     }
-    return !anyDirty(get());
+    return workspaceOnly ? !workspaceEditorDirty(get()) : !anyDirty(get());
   },
 
   confirmUnsaved: async (name) => {
@@ -587,8 +622,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  confirmAllUnsaved: async () => {
+  confirmAllUnsaved: async (workspaceOnly = false) => {
     for (const tab of get().openTabs) {
+      if (workspaceOnly && tab.source) continue;
       if (!await get().confirmUnsaved(tab.name)) {
         set((s) => ({ openTabs: s.openTabs.map((t) => ({ ...t, discardRecovery: false })) }));
         return false;
@@ -600,14 +636,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   reloadFile: async () => {
     const state = get();
     const tab = state.openTabs.find((t) => t.name === state.activeFile);
-    if (!tab || !state.workspace || state.loading || state.saving || state.starting || state.guarding) return;
+    if (!tab || state.loading || state.saving || state.starting || state.guarding) return;
+    const source = editorFileSource(tab, state.workspace);
+    if (!source) return;
+    if (tab.source && !editorSourceCurrent(source, state.devices)) { set({ editorError: i18n.t("editor.deviceChanged") }); return; }
     // Reuse the same save/discard/cancel choice, preserving the buffer on read failure.
     if (!await get().confirmUnsaved(tab.name)) return;
     const sequence = ++loadSequence;
     set({ loading: true, editorError: null });
     try {
-      const doc = await api.readWorkspaceFile(state.workspace, tab.name);
-      if (sequence === loadSequence) set((s) => ({ openTabs: withTab(s.openTabs, tab.name, (t) =>
+      const doc = tab.source ? await api.readDeviceEditorFile(source.workspace, source.path, source.device_revision) : await api.readWorkspaceFile(source.workspace, source.path);
+      if (sequence === loadSequence && (!tab.source || editorSourceCurrent(source, get().devices))) set((s) => ({ openTabs: withTab(s.openTabs, tab.name, (t) =>
         ({ ...t, fileContent: doc.content, savedContent: doc.content, revision: doc.revision,
           eol: doc.eol, bom: doc.bom, conflict: false, loaded: true, recovery: undefined, discardRecovery: false, generation: t.generation + 1 })) }));
     } catch (error) {
@@ -672,7 +711,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ starting: true });
     const generation = workspaceSequence;
     try {
-      if (!await get().saveAllDirty() || anyDirty(get())) throw new Error(get().editorError ?? i18n.t("run.errorSaveIncomplete"));
+      if (!await get().saveAllDirty(true) || workspaceEditorDirty(get())) throw new Error(get().editorError ?? i18n.t("run.errorSaveIncomplete"));
       if (generation !== workspaceSequence || !workspaceRefEquals(request.workspace ?? null, get().workspace)) throw new Error(i18n.t("run.errorWorkspaceChanged"));
       const target = get().selectedDeviceId ?? request.device_id;
       const submitted = { ...request, device_id: target, console_mode: get().devices.find((device) => device.id === target)?.transport === "serial" ? "pty" as const : request.console_mode, ...get().consoleSize };

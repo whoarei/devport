@@ -10,6 +10,7 @@ import { runPhaseLabel, runStateLabel } from "../runState";
 import type { OutputBuffer } from "../outputBuffer";
 import { handleRunShortcut, parseRunArguments } from "../runArguments";
 import { ArgumentsEditor } from "./ArgumentsEditor";
+import { editorPathInWorkspace } from "../editorSources";
 
 function Modal({ open, title, close, children, onKeyDown }: { open: boolean; title: string; close: () => void; children: ReactNode; onKeyDown?: KeyboardEventHandler<HTMLDialogElement> }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -178,7 +179,7 @@ export function WorkspaceRunDialogs() {
   const workspace = useAppStore((s) => s.workspace), devices = useAppStore((s) => s.devices);
   const target = useAppStore((s) => s.selectedDeviceId);
   const tree=useAppStore((s)=>s.workspaceTree);
-  const projectRevision=useAppStore((s)=>s.openTabs.filter((tab)=>["pyproject.toml","uv.lock",".python-version"].includes(tab.name)).map((tab)=>`${tab.name}:${tab.revision}`).join("|"));
+  const projectRevision=useAppStore((s)=>s.openTabs.map((tab)=>({tab,path:editorPathInWorkspace(tab,s.workspace)})).filter(({path})=>path!==null&&["pyproject.toml","uv.lock",".python-version"].includes(path)).map(({tab,path})=>`${path}:${tab.revision}`).join("|"));
   const key = workspaceKey(workspace), ready = devices.length > 0;
   const sourceRevision = workspaceSourceRevision(workspace, devices);
   useEffect(() => { void useWorkspaceRunStore.getState().load(); }, [key, ready, sourceRevision]);

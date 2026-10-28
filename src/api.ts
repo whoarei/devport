@@ -365,8 +365,12 @@ export const api = {
     invoke<void>("open_workspace_in_file_manager", { workspace, subdir }),
   readWorkspaceFile: (workspace: WorkspaceRef, name: string) =>
     invoke<WorkspaceDocument>("read_workspace_file", { workspace, name }),
+  readDeviceEditorFile: (workspace: WorkspaceRef, name: string, expectedDeviceRevision?: string) =>
+    invoke<WorkspaceDocument>("read_workspace_file", { workspace, name, expectedDeviceRevision }),
   writeWorkspaceFile: (request: SaveWorkspaceRequest) =>
     invoke<{ revision: string }>("write_workspace_file", { request }),
+  writeDeviceEditorFile: (request: SaveWorkspaceRequest, expectedDeviceRevision?: string) =>
+    invoke<{ revision: string }>("write_workspace_file", { request, expectedDeviceRevision }),
   createWorkspaceEntry: (workspace: WorkspaceRef, name: string, kind: WorkspaceEntryKind) =>
     invoke<void>("create_workspace_entry", { workspace, name, kind }),
   renameWorkspaceEntry: (workspace: WorkspaceRef, oldName: string, newName: string) =>

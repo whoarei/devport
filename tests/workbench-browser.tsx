@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 // Full workbench visual fixture. All APIs are in-memory; no devices are contacted.
-// ?theme=light|dark&lang=zh|en&empty=1&transfer=1&local=1&error=1&width=900&many=1&collision=1&running=1&commands=1&deviceWorkspace=1
+// ?theme=light|dark&lang=zh|en&empty=1&transfer=1&local=1&error=1&width=900&many=1&collision=1&running=1&commands=1&deviceWorkspace=1&longNames=1
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { api, type DeviceProfile, type WorkspaceRef } from "../src/api";
@@ -37,6 +37,7 @@ const base: DeviceProfile = { id: "ubuntu", name: "wsl-dev@Ubuntu-24.04", transp
 const devices: DeviceProfile[] = [base, { ...base, id: "local", name: "PowerShell", transport: "local", is_default: false, local: { shell: "pwsh", no_profile: false } },
   { ...base, id: "ssh", name: "开发服务器", transport: "ssh", is_default: false, host: "192.168.1.100", username: "dev" }];
 if (params.has("collision")) devices.push({ ...base, id: "ubuntu-root", name: "wsl-root@Ubuntu-24.04", is_default: false, wsl: { distribution: "Ubuntu-24.04", user: "root" } });
+if (params.has("longNames")) devices.find((device) => device.id === "ssh")!.name = "生产环境数据采集与长期分析开发服务器";
 const workspace: WorkspaceRef = params.has("local") ? { type: "local", dir: "C:\\projects\\workspace-source" }
   : { type: "device", device_id: "ubuntu", path: "/home/dev/projects/remote-runner-demo" };
 const source = '# 数据采集与远程运行\nfrom pathlib import Path\nimport json\n\ndef collect_samples(count: int = 10):\n    """Collect device measurements and write a report."""\n    samples = []\n    for index in range(count):\n        value = 23.5 + index * 0.1\n        samples.append({"index": index, "value": value})\n        print(f"[{index + 1:02d}/{count}] temperature: {value:.1f} °C")\n    return samples\n\nif __name__ == "__main__":\n    report = collect_samples()\n    Path("output").mkdir(exist_ok=True)\n    Path("output/report.json").write_text(json.dumps(report, indent=2))\n    print("Report saved to output/report.json")\n';
@@ -46,6 +47,22 @@ api.listLocalShells = async () => [{ id: "pwsh", label: "PowerShell", path: "C:/
 api.listWslDistributions = async () => ["Ubuntu-24.04"];
 api.listSerialPorts = async () => [];
 api.readWorkspaceFile = async () => ({ content: source, revision: "demo", eol: "lf", bom: false });
+const editorDocuments = new Map<string, { content: string; revision: string; eol: "lf"; bom: boolean }>();
+api.readDeviceEditorFile = async (workspace, name) => {
+  const key = JSON.stringify([workspace, name]);
+  const document = editorDocuments.get(key) ?? { content: `# Device file: ${name}\n${source}`, revision: "device-demo", eol: "lf" as const, bom: false };
+  editorDocuments.set(key, document);
+  return document;
+};
+api.writeDeviceEditorFile = async (request) => {
+  const key = JSON.stringify([request.workspace, request.name]);
+  const before = editorDocuments.get(key);
+  if (before && before.revision !== request.expectedRevision) throw { code: "conflict", message: "文件已被修改" };
+  const revision = `${before?.revision ?? "demo"}-saved`;
+  editorDocuments.set(key, { content: request.content, revision, eol: "lf", bom: false });
+  return { revision };
+};
+api.writeWorkspaceFile = async () => ({ revision: "local-saved" });
 api.listWorkspaceDir = async () => [];
 api.resizeRunConsole = async () => {};
 api.resizeTerminal = async () => {};
@@ -127,6 +144,15 @@ if (params.has("many")) {
   if (tab) useAppStore.setState({ openTabs: [...useAppStore.getState().openTabs, ...Array.from({ length: 8 }, (_, i) => ({ ...tab, name: `tools/measurement_analysis_${i + 1}.py` }))], activeFile: "tools/measurement_analysis_8.py" });
   const terminal = useTerminalStore.getState().tabs[0];
   if (terminal) useTerminalStore.setState({ tabs: [...useTerminalStore.getState().tabs, ...Array.from({ length: 6 }, (_, i) => ({ ...terminal, id: `extra-${i}`, title: `dev@ubuntu:~/projects/remote-runner-demo/measurement-${i + 1}`, status: undefined }))], activeTab: "extra-5" });
+}
+if (!empty && params.has("longNames")) {
+  const longName = "tools/measurement_collection_and_long_term_analysis_report_generator.py";
+  const tab = useAppStore.getState().openTabs[0];
+  useAppStore.setState({ openTabs: [...useAppStore.getState().openTabs, { ...tab, name: longName, savedContent: "" }] });
+  const remote: WorkspaceRef = { type: "device", device_id: "ssh", path: "/home/dev/projects/remote-runner-demo" };
+  await useAppStore.getState().openDeviceFile(remote, "main.py");
+  await useAppStore.getState().openDeviceFile(remote, longName);
+  useAppStore.getState().editContent(useAppStore.getState().activeFile!, `${source}\n# Edited device draft\n`);
 }
 if (params.has("commands")) {
   useAppStore.setState({ openTabs: useAppStore.getState().openTabs.map((tab) => ({ ...tab, savedContent: tab.fileContent })) });

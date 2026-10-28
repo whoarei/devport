@@ -121,6 +121,7 @@ pub struct SessionStore {
 
 struct Slot {
     key: WorkspaceRef,
+    revision: String,
     session: RemoteWorkspace,
 }
 
@@ -133,7 +134,9 @@ impl SessionStore {
         config_dir: &std::path::Path,
     ) -> Result<MutexGuard<'a, Option<Slot>>, FileError> {
         let mut guard = self.inner.lock().await;
-        if !matches!(guard.as_ref(), Some(entry) if entry.key == *key) {
+        let revision = crate::workspace_run::device_revision(device);
+        if !matches!(guard.as_ref(), Some(entry) if entry.key == *key && entry.revision == revision)
+        {
             *guard = None;
             let (_, path) = key
                 .device_ref()
@@ -141,6 +144,7 @@ impl SessionStore {
             let session = RemoteWorkspace::open(device, config_dir, path).await?;
             *guard = Some(Slot {
                 key: key.clone(),
+                revision,
                 session,
             });
         }

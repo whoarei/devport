@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { api, errorMessage, workspaceRefEquals, type CommandSource, type PythonSelection, type RunEvent, type RunStatus, type RunnerConfigState, type WorkspaceCommand, type WorkspaceCommands, type WorkspaceExecutionSettings, type WorkspacePythonInfo, type WorkspaceRef, type WorkspaceRunRequest, type WorkspaceRunSession } from "./api";
 import { getWorkspaceGeneration, useAppStore } from "./store";
-import { anyDirty } from "./editorDocument";
+import { workspaceEditorDirty } from "./editorSources";
 import { workspaceKey, workspaceSourceRevision, commandLabel, pythonVersionMatches } from "./workspaceRun";
 import { revealConsolePanel } from "./consoleTabs";
 import { useTerminalStore } from "./terminalStore";
@@ -118,7 +118,7 @@ export const useWorkspaceRunStore = create<State>((set, get) => ({
     if (!initial.selectedDeviceId) { set({ settingsOpen: true }); throw new Error(i18n.t("run.selectDeviceFirst")); }
     useAppStore.setState({ starting: true });
     try {
-      if (!await initial.saveAllDirty() || anyDirty(useAppStore.getState())) throw new Error(i18n.t("run.errorSaveIncomplete"));
+      if (!await initial.saveAllDirty(true) || workspaceEditorDirty(useAppStore.getState())) throw new Error(i18n.t("run.errorSaveIncomplete"));
       const app = useAppStore.getState(), state = get();
       if (generation !== getWorkspaceGeneration() || !workspaceSourceCurrent(workspace, sourceRevision)) throw new Error(i18n.t("run.errorWorkspaceChanged"));
       if (state.configError || !state.config) throw new Error(state.configError ?? i18n.t("workspaceRun.loading"));

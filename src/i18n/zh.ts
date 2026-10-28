@@ -134,6 +134,8 @@ export const zh = {
     zoomFailed: "界面缩放失败：{{message}}",
   },
   editor: {
+    deviceChanged: "设备连接配置已变化或设备已移除，请关闭并重新打开该设备文件。未保存的内容已保留。",
+    targetOpen: "目标文件已在编辑器中打开，请先关闭对应标签。",
     previewHint: "单击文件预览，双击保留标签",
     reloadDisk: "重新加载磁盘内容…",
     opening: "正在打开…",
@@ -180,7 +182,7 @@ export const zh = {
   deviceWorkspace: {
     path: "设备工作区当前路径", invalidPath: "请输入绝对设备路径或 ~/ 路径，不能包含 . 或 .. 路径组件。",
     enterDirectory: "进入目录", directoryHint: "单击展开，双击进入目录", newEntry: "新建文件或目录",
-    title: "设备工作区", openAsWorkspace: "打开为工作区", openFileHint: "在此设备工作区中打开文件", retry: "重试", empty: "此目录为空",
+    title: "设备工作区", openAsWorkspace: "打开为工作区", openFileHint: "在编辑区打开设备文件", retry: "重试", empty: "此目录为空",
   },
   workspace: {
     emptyHint: "打开本机或设备上的文件夹，浏览文件并运行脚本。", openLocal: "打开本机文件夹", openRemote: "打开设备文件夹",

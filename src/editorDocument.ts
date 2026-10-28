@@ -3,8 +3,10 @@ export type { EditorLanguage } from "./editorLanguages";
 export { inferLanguage } from "./editorLanguages";
 export type ChangeChoice = "save" | "discard" | "cancel";
 
-/** 一个打开的文件标签：工作区相对路径即标签身份，generation 驱动编辑器 remount */
+/** 文件标签：工作区文件用相对路径，独立设备文件用来源身份；generation 驱动编辑器 remount。 */
 export interface EditorTab {
+  /** Independent device files keep a fixed source; name is their unique editor identity. */
+  source?: import("./editorSources").EditorFileSource;
   name: string;
   fileContent: string;
   savedContent: string;

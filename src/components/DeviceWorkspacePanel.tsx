@@ -87,11 +87,7 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
     setOpening(true);
     setActionError(null);
     try {
-      if (!workspaceRefEquals(useAppStore.getState().workspace, root)) await useAppStore.getState().setWorkspace(root);
-      // Canceling the editor's unsaved-change dialog keeps the previous workspace.
-      if (browser.getState().key === sourceKey && workspaceRefEquals(useAppStore.getState().workspace, root)) {
-        await useAppStore.getState().openWorkspaceFile(path, { preview: true });
-      }
+      await useAppStore.getState().openDeviceFile(root, path);
     } catch (error) {
       if (browser.getState().key === sourceKey) setActionError(errorMessage(error));
     } finally { setOpening(false); }

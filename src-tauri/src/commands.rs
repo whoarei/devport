@@ -404,6 +404,7 @@ pub async fn read_workspace_file(
     state: tauri::State<'_, AppState>,
     workspace: WorkspaceRef,
     name: String,
+    expected_device_revision: Option<String>,
 ) -> WorkspaceResult<crate::workspace::Document> {
     match &workspace {
         WorkspaceRef::Local { dir } => {
@@ -412,6 +413,7 @@ pub async fn read_workspace_file(
         }
         WorkspaceRef::Device { .. } => {
             let device = session_device(&state, &workspace)?;
+            check_editor_device_revision(&device, expected_device_revision.as_deref())?;
             state
                 .workspace_sessions
                 .with(&workspace, &device, &state.config_dir, move |session| {
@@ -426,6 +428,7 @@ pub async fn read_workspace_file(
 pub async fn write_workspace_file(
     state: tauri::State<'_, AppState>,
     request: crate::workspace::SaveRequest,
+    expected_device_revision: Option<String>,
 ) -> WorkspaceResult<crate::workspace::Saved> {
     match &request.workspace {
         WorkspaceRef::Local { .. } => {
@@ -441,6 +444,7 @@ pub async fn write_workspace_file(
             }
             let workspace = request.workspace.clone();
             let device = session_device(&state, &workspace)?;
+            check_editor_device_revision(&device, expected_device_revision.as_deref())?;
             let data =
                 crate::workspace::encode_content(&request.content, request.eol, request.bom)?;
             state
@@ -455,6 +459,19 @@ pub async fn write_workspace_file(
                 .await
         }
     }
+}
+
+fn check_editor_device_revision(
+    device: &DeviceProfile,
+    expected: Option<&str>,
+) -> WorkspaceResult<()> {
+    if expected.is_some_and(|revision| revision != crate::workspace_run::device_revision(device)) {
+        return Err(crate::workspace::FileError::new(
+            "device_changed",
+            "设备连接配置已变化，请关闭并重新打开设备文件",
+        ));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -955,4 +972,21 @@ pub async fn close_terminal(state: tauri::State<'_, AppState>, session_id: Strin
 #[tauri::command]
 pub async fn close_all_terminals(state: tauri::State<'_, AppState>) -> Result<()> {
     state.terminal_manager.close_all().await
+}
+
+#[cfg(test)]
+mod editor_revision_tests {
+    #[test]
+    fn editor_reads_and_writes_reject_changed_device_connections() {
+        let device: crate::device::DeviceProfile = serde_json::from_value(serde_json::json!({"id":"editor-test","name":"test","host":"example","username":"user"})).unwrap();
+        let revision = crate::workspace_run::device_revision(&device);
+        assert!(super::check_editor_device_revision(&device, None).is_ok());
+        assert!(super::check_editor_device_revision(&device, Some(&revision)).is_ok());
+        assert_eq!(
+            super::check_editor_device_revision(&device, Some("old-connection"))
+                .unwrap_err()
+                .code,
+            "device_changed"
+        );
+    }
 }

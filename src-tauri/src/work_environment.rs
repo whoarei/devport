@@ -55,6 +55,10 @@ pub struct Environment {
     active_terminal: Option<String>,
     transfer: Transfer,
     window: Option<Window>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    device_files: Vec<File>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    active_device_file: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -74,6 +78,16 @@ struct File {
     view: Option<Location>,
     #[serde(skip_serializing_if = "Option::is_none")]
     draft: Option<Draft>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<EditorSource>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EditorSource {
+    workspace: WorkspaceRef,
+    path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    device_revision: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -163,7 +177,11 @@ fn scroll(value: f64) -> bool {
 }
 impl Environment {
     fn validate(&self) -> Result<()> {
-        if self.version != 1 || self.workspaces.len() > 10 || self.terminals.len() > 8 {
+        if self.version != 1
+            || self.workspaces.len() > 10
+            || self.terminals.len() > 8
+            || self.device_files.len() > 256
+        {
             return Err(invalid("unsupported version or too many entries"));
         }
         if let Some(current) = &self.current {
@@ -181,6 +199,9 @@ impl Environment {
             }
             let mut files = std::collections::HashSet::new();
             for file in &state.files {
+                if file.source.is_some() {
+                    return Err(invalid("device file must be stored independently"));
+                }
                 relative(&file.name, false)?;
                 if !files.insert(&file.name) || !EDITOR_LANGUAGES.contains(&file.language.as_str())
                 {
@@ -211,6 +232,56 @@ impl Environment {
             for path in &state.expanded {
                 relative(path, false)?;
             }
+        }
+        let mut device_files = std::collections::HashSet::new();
+        for file in &self.device_files {
+            let origin = file
+                .source
+                .as_ref()
+                .ok_or_else(|| invalid("device file source missing"))?;
+            source(&origin.workspace)?;
+            let (device_id, root) = origin
+                .workspace
+                .device_ref()
+                .ok_or_else(|| invalid("expected device file source"))?;
+            relative(&origin.path, false)?;
+            let absolute = format!("{}/{}", root.strip_suffix('/').unwrap_or(root), origin.path);
+            let identity = format!(
+                "device-file:{}",
+                serde_json::to_string(&(device_id, absolute)).unwrap()
+            );
+            if file.name != identity
+                || !device_files.insert(&file.name)
+                || !EDITOR_LANGUAGES.contains(&file.language.as_str())
+                || origin
+                    .device_revision
+                    .as_ref()
+                    .is_some_and(|revision| revision.len() > 4096)
+            {
+                return Err(invalid("invalid device file descriptor"));
+            }
+            if file
+                .view
+                .as_ref()
+                .is_some_and(|view| !scroll(view.scroll_top) || !scroll(view.scroll_left))
+            {
+                return Err(invalid("invalid device file scroll"));
+            }
+            if file.draft.as_ref().is_some_and(|draft| {
+                draft.content.len() > FILE_LIMIT
+                    || draft.saved_content.len() > FILE_LIMIT
+                    || draft.revision.len() > 4096
+                    || !["lf", "crlf"].contains(&draft.eol.as_str())
+            }) {
+                return Err(invalid("invalid device file draft"));
+            }
+        }
+        if self
+            .active_device_file
+            .as_ref()
+            .is_some_and(|name| !device_files.contains(name))
+        {
+            return Err(invalid("active device file missing from tabs"));
         }
         let mut terminals = std::collections::HashSet::new();
         for terminal in &self.terminals {
@@ -358,6 +429,44 @@ mod tests {
             std::fs::read(root.join("work-environment.json")).unwrap(),
             original
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn independent_device_files_round_trip_with_drafts_and_reject_invalid_sources() {
+        let root = std::env::temp_dir().join(format!(
+            "rr-device-editor-environment-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let mut state = sample(&root);
+        let name = "device-file:[\"a\",\"/srv/project/main.py\"]";
+        let file: File = serde_json::from_value(serde_json::json!({
+            "name": name, "language":"python", "source": {"workspace":{"type":"device","device_id":"a","path":"/srv/project"},"path":"main.py","device_revision":"connection-1"},
+            "draft":{"content":"device draft","saved_content":"base","revision":"file-1","eol":"lf","bom":false}
+        })).unwrap();
+        state.device_files = vec![file.clone()];
+        state.active_device_file = Some(name.into());
+        write(&root, &state).unwrap();
+        let restored = read(&root).unwrap().unwrap();
+        assert_eq!(
+            restored.device_files[0].draft.as_ref().unwrap().content,
+            "device draft"
+        );
+        assert_eq!(
+            restored.device_files[0]
+                .source
+                .as_ref()
+                .unwrap()
+                .device_revision
+                .as_deref(),
+            Some("connection-1")
+        );
+        for path in ["../escape", "/absolute", "a/../b"] {
+            state.device_files[0].source.as_mut().unwrap().path = path.into();
+            assert!(state.validate().is_err());
+        }
+        state.device_files = vec![file.clone(), file];
+        assert!(state.validate().is_err());
+        assert_eq!(read(&root).unwrap().unwrap().device_files.len(), 1);
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

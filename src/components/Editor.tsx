@@ -28,6 +28,8 @@ import { editorFoldGutter, refreshEditorFoldLabels } from "../editorFolding";
 import { FileIcon, Icon } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { tabNavigationTarget, useRevealActiveTab } from "../tabStrip";
+import { editorFilePath, editorFileTitle } from "../editorSources";
+import { deviceDisplayNames } from "../workspacePresentation";
 
 function editorTheme(theme: Theme) {
   return [syntaxHighlighting(theme === "dark" ? oneDarkHighlightStyle : defaultHighlightStyle),
@@ -67,9 +69,12 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
     if (!parent.current) return;
     const source = useAppStore.getState().workspace;
     const initial = useAppStore.getState().openTabs.find((file) => file.name === tab);
+    const sameSource = () => initial?.source
+      ? JSON.stringify(useAppStore.getState().openTabs.find((file) => file.name === tab)?.source) === JSON.stringify(initial.source)
+      : workspaceRefEquals(source, useAppStore.getState().workspace);
     let positioned = !initial?.view;
     const capture = (editor: EditorView) => {
-      if (!positioned || !editor.dom.clientHeight || !workspaceRefEquals(source, useAppStore.getState().workspace)) return;
+      if (!positioned || !editor.dom.clientHeight || !sameSource()) return;
       const current = useAppStore.getState().openTabs.find((file) => file.name === tab);
       if (!current || current.loaded === false || current.generation !== initial?.generation) return;
       const selection = editor.state.selection.main;
@@ -104,7 +109,7 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
             const state = useAppStore.getState();
             return !state.loading && !state.starting && !state.guarding;
           }),
-          EditorView.contentAttributes.of({ "aria-label": i18n.t("editor.contentAria", { name: tab }), spellcheck: "false" }),
+          EditorView.contentAttributes.of({ "aria-label": i18n.t("editor.contentAria", { name: initial ? editorFileTitle(initial, useAppStore.getState().devices, source) : tab }), spellcheck: "false" }),
           keymap.of([
             ...completionKeymap, ...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...searchKeymap, ...foldKeymap,
             { key: "Escape", run: () => { handlers.current.focusToolbar(); return true; } }, indentWithTab,
@@ -147,7 +152,7 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
       const state = useAppStore.getState();
       const current = state.openTabs.find((file) => file.name === tab);
       if (editor.hasFocus && state.activeFile === tab && current && current.generation !== initial?.generation
-        && workspaceRefEquals(source, state.workspace)) useCommandUiStore.setState({ focus: "editor" });
+        && sameSource()) useCommandUiStore.setState({ focus: "editor" });
       capture(editor);
       editor.scrollDOM.removeEventListener("scroll", onScroll);
       editor.destroy(); view.current = null; restoreLocation.current = null;
@@ -212,6 +217,7 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
   const panelId = (name: string) => `editor-panel-${encodeURIComponent(name)}`;
   const locked = state.loading || state.starting || state.guarding;
   const active = state.tabs.find((tab) => tab.name === state.activeFile);
+  const deviceNames = deviceDisplayNames(state.devices);
   const closeLocked = locked || state.saving || state.workspaceMutating;
   const menuCurrent = () => {
     const current = useAppStore.getState();
@@ -268,24 +274,31 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
         <button className="editor-collapse center-panel-collapse" data-tab-strip-inset aria-label={collapsed ? t("editor.expand") : t("editor.collapse")} aria-expanded={!collapsed}
           title={collapsed ? t("editor.expand") : t("editor.collapse")} onMouseDown={preserveContentFocus}
           onClick={() => onToggleCollapse && preserveLayoutFocus(onToggleCollapse)}><Icon name={collapsed ? "chevronRight" : "chevronDown"} /></button>
-        {state.tabs.map((tab) => (
-          <div key={tab.name} data-active-tab={tab.name === state.activeFile}
-            onContextMenu={(event) => openTabMenu(event, tab)}
-            className={`editor-tab${tab.name === state.activeFile ? " active" : ""}${tab.preview ? " preview" : ""}`}>
-            <button className="editor-tab-label" role="tab" id={tabId(tab.name)} aria-controls={panelId(tab.name)} aria-selected={tab.name === state.activeFile} tabIndex={tab.name === state.activeFile ? 0 : -1} title={tab.name}
-              onDoubleClick={() => useAppStore.getState().pinFile(tab.name)}
-              onClick={() => {
-                useAppStore.getState().activateFile(tab.name);
-                if (useAppStore.getState().activeFile === tab.name) useCommandUiStore.setState({ focus: "editor" });
-              }}>
-              <FileIcon name={tab.name} /><span>{nameOf(tab.name)}</span>{dirtyTab(tab) && <span className="editor-tab-dirty" aria-label={t("titlebar.unsavedChanges")} />}
-            </button>
-            <button className="editor-tab-close" tabIndex={tab.name === state.activeFile ? 0 : -1} aria-label={t("editor.closeTab", { name: tab.name })} title={shortcutTitle(t("editor.closeFileTitle"), "closeFile")}
-              disabled={closeLocked}
-              onMouseDown={preserveContentFocus}
-              onClick={() => void preserveLayoutFocus(() => useAppStore.getState().closeFile(tab.name))}><Icon name="close" /></button>
-          </div>
-        ))}
+        {state.tabs.map((tab) => {
+          const source = tab.source?.workspace ?? state.workspace;
+          const deviceName = source?.type === "device" ? deviceNames.get(source.device_id) ?? source.device_id : null;
+          return (
+            <div key={tab.name} data-active-tab={tab.name === state.activeFile}
+              onContextMenu={(event) => openTabMenu(event, tab)}
+              className={`editor-tab${tab.name === state.activeFile ? " active" : ""}${tab.preview ? " preview" : ""}`}>
+              <button className="editor-tab-label" role="tab" id={tabId(tab.name)} aria-controls={panelId(tab.name)} aria-selected={tab.name === state.activeFile} aria-label={tab.source || state.workspace?.type === "device" ? editorFileTitle(tab, state.devices, state.workspace) : undefined} tabIndex={tab.name === state.activeFile ? 0 : -1} title={editorFileTitle(tab, state.devices, state.workspace)}
+                onDoubleClick={() => useAppStore.getState().pinFile(tab.name)}
+                onClick={() => {
+                  useAppStore.getState().activateFile(tab.name);
+                  if (useAppStore.getState().activeFile === tab.name) useCommandUiStore.setState({ focus: "editor" });
+                }}>
+                <FileIcon name={editorFilePath(tab)} />
+                <span className="editor-tab-name">{nameOf(editorFilePath(tab))}</span>
+                {deviceName && <span className="editor-tab-device" aria-hidden="true">· {deviceName}</span>}
+                {dirtyTab(tab) && <span className="editor-tab-dirty" aria-label={t("titlebar.unsavedChanges")} />}
+              </button>
+              <button className="editor-tab-close" tabIndex={tab.name === state.activeFile ? 0 : -1} aria-label={t("editor.closeTab", { name: editorFileTitle(tab, state.devices, state.workspace) })} title={shortcutTitle(t("editor.closeFileTitle"), "closeFile")}
+                disabled={closeLocked}
+                onMouseDown={preserveContentFocus}
+                onClick={() => void preserveLayoutFocus(() => useAppStore.getState().closeFile(tab.name))}><Icon name="close" /></button>
+            </div>
+          );
+        })}
       </div>
       {/* 折叠时编辑器保持挂载仅隐藏 DOM，保留撤销历史、滚动位置与选区 */}
       <div className={`editor-body${collapsed ? " collapsed" : ""}`}>

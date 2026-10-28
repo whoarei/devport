@@ -33,10 +33,10 @@ export function appCommandEnabled(id: AppCommandId, context: ShortcutContext = {
   const tab = app.openTabs.find(tab => tab.name === app.activeFile);
   switch (id) {
     case "openWorkspace": case "openRemoteWorkspace": return !busy;
-    case "saveFile": return !busy && !uploadBusy(app) && !!app.workspace && !!tab && dirtyTab(tab);
-    case "saveAll": return !busy && !uploadBusy(app) && !!app.workspace && anyDirty(app);
+    case "saveFile": return !busy && !uploadBusy(app) && (!!app.workspace || !!tab?.source) && !!tab && dirtyTab(tab);
+    case "saveAll": return !busy && !uploadBusy(app) && (!!app.workspace || app.openTabs.some((tab) => tab.source)) && anyDirty(app);
     case "closeFile": return !busy && !!tab;
-    case "runFile": case "runWithArgs": return !busy && !!app.workspace && !!scriptCommand(context.filePath ?? (context.area === "editor" ? activeFile() : undefined));
+    case "runFile": case "runWithArgs": return !busy && !(context.area === "editor" && tab?.source) && !!app.workspace && !!scriptCommand(context.filePath ?? (context.area === "editor" ? activeFile() : undefined));
     case "rerun": { const run = commandRun(context); return !busy && !history.busy && !!run?.replay && !isActiveRun(run); }
     case "stop": { const run = commandRun(context); return !app.updating && !!run && isActiveRun(run); }
     case "newTerminal": return !app.updating && !app.guarding && !terminals.shuttingDown && terminals.tabs.length < 8

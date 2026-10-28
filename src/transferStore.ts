@@ -8,6 +8,7 @@ import { appendEndpoint, sameTransferFilename, transferActive, transferApi, work
 import type { TransferOptions } from "./environmentState";
 import { workspaceSourceRevision } from "./workspaceRun";
 import i18n from "./i18n";
+import { editorFileSource, editorSourceCurrent } from "./editorSources";
 
 interface BrowserState { endpoint: WorkspaceRef | null; directory: TransferDirectory | null; selected: string[]; loading: boolean; error: string | null; generation: number; sourceRevision: string | null }
 type Side = "local" | "device";
@@ -93,13 +94,14 @@ export const useTransferStore = create<State>((set, get) => ({
     set({ planning: true, error: null });
     try {
       const editor = useAppStore.getState();
-      const selectedDirty = editor.workspace && editor.openTabs.some((tab) => {
-        const path = workspaceTransferPath(editor.workspace!, tab.name, source.directory!.endpoint);
+      const selectedDirty = editor.openTabs.some((tab) => {
+        const origin = editorFileSource(tab, editor.workspace);
+        const path = origin ? workspaceTransferPath(origin.workspace, origin.path, source.directory!.endpoint) : null;
         return dirtyTab(tab) && path !== null && selected.some((entry) => path === entry || path.startsWith(`${entry}/`));
       });
       if (selectedDirty && !await editor.confirmAllUnsaved()) return;
       const current = useAppStore.getState();
-      const protectedPaths = current.workspace ? current.openTabs.map((tab) => workspaceTransferPath(current.workspace!, tab.name, target.directory!.endpoint)).filter((p): p is string => p !== null) : [];
+      const protectedPaths = current.openTabs.map((tab) => { const origin = editorFileSource(tab, current.workspace); return origin ? workspaceTransferPath(origin.workspace, origin.path, target.directory!.endpoint) : null; }).filter((p): p is string => p !== null);
       const plan = await transferApi.plan({ source: source.directory.endpoint, target: target.directory.endpoint, paths: selected, exclude_project_files: excludeProjectFiles, protected_paths: protectedPaths });
       set({ plan });
     } catch (error) { set({ error: errorMessage(error) }); }
@@ -164,19 +166,23 @@ export function revealTransferPanel() {
 async function refreshWorkspaceAfterTransfer(task: TransferSummary) {
   const state = useAppStore.getState();
   const workspace = state.workspace;
-  if (!workspace || workspace.type !== task.target.type || (workspace.type === "device" && (task.target.type !== "device" || workspace.device_id !== task.target.device_id))) return;
+  const sameWorkspaceHost = workspace && workspace.type === task.target.type && (workspace.type !== "device" || task.target.type === "device" && workspace.device_id === task.target.device_id);
+  const matches = state.openTabs.map((tab) => { const origin = editorFileSource(tab, workspace); return { tab, origin, path: origin ? workspaceTransferPath(origin.workspace, origin.path, task.target) : null }; }).filter((item) => item.origin && item.path !== null);
+  if (!sameWorkspaceHost && !matches.length) return;
   const detail = await transferApi.task(task.id);
-  for (const tab of state.openTabs) {
-    const path = workspaceTransferPath(workspace, tab.name, task.target);
+  for (const { tab, origin, path } of matches) {
     if (path === null || !detail.items.some((item) => item.state === "completed" && item.target_path !== null && sameTransferFilename(item.target_path, path, task.target))) continue;
-    const document = await api.readWorkspaceFile(workspace, tab.name).catch(() => null);
-    if (!workspaceRefEquals(useAppStore.getState().workspace, workspace)) return;
+    const document = await (tab.source && editorSourceCurrent(origin!, useAppStore.getState().devices)
+      ? api.readDeviceEditorFile(origin!.workspace, origin!.path, origin!.device_revision)
+      : tab.source ? Promise.resolve(null) : api.readWorkspaceFile(origin!.workspace, origin!.path)).catch(() => null);
+    const current = useAppStore.getState();
+    if ((!tab.source && !workspaceRefEquals(current.workspace, workspace)) || !current.openTabs.some((file) => file.name === tab.name && file.generation === tab.generation)) continue;
     useAppStore.setState((s) => ({ openTabs: withTab(s.openTabs, tab.name, (current) => {
       if (!document || dirtyTab(current)) return { ...current, conflict: true };
       return { ...current, fileContent: document.content, savedContent: document.content, revision: document.revision, eol: document.eol, bom: document.bom, conflict: false, generation: current.generation + 1 };
     }) }));
   }
-  if (workspaceRefEquals(useAppStore.getState().workspace, workspace)) {
+  if (sameWorkspaceHost && workspaceRefEquals(useAppStore.getState().workspace, workspace)) {
     const dirs = Object.keys(useAppStore.getState().workspaceTree);
     for (const dir of dirs) void useAppStore.getState().loadWorkspaceDir(dir);
   }

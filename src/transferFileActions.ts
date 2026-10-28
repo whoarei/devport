@@ -6,6 +6,7 @@ import { appendEndpoint, transferActive, workspaceTransferPath } from "./transfe
 import { useTransferStore } from "./transferStore";
 import { workspaceSourceRevision } from "./workspaceRun";
 import { joinPath, parentOf } from "./workspaceTree";
+import { applyDeviceEditorMutation, deviceEditorTargets, editorSourceCurrent } from "./editorSources";
 
 export interface DeviceFileContext { endpoint: WorkspaceRef; generation: number; revision: string | null }
 export type DeviceFileAction =
@@ -81,6 +82,12 @@ export async function performDeviceFileAction(
   const workspace = editor.workspace;
   if (workspace && action.type !== "create" && workspaceTransferPath(workspace, "", appendEndpoint(endpoint, action.name)) !== null) return fail(i18n.t("transfer.workspaceRootProtected"));
   const relative = workspace ? workspaceTransferPath(root, path, workspace) : null;
+  const external = deviceEditorTargets(editor.openTabs, root, path);
+  if (external.some((tab) => !editorSourceCurrent(tab.source!, editor.devices))) return fail(i18n.t("editor.deviceChanged"));
+  if (action.type === "rename") {
+    const moved = applyDeviceEditorMutation(editor, root, path, joinPath(dir, action.newName));
+    if (new Set(moved.openTabs.map((tab) => tab.name)).size !== editor.openTabs.length) return fail(i18n.t("editor.targetOpen"));
+  }
   useTransferStore.setState({ deviceMutating: true });
   if (relative === null) useAppStore.setState({ workspaceMutating: true });
   let success = false;
@@ -91,13 +98,23 @@ export async function performDeviceFileAction(
       else success = await editor.deleteWorkspaceEntry(relative, current);
       if (!success && useAppStore.getState().workspaceError) fail(useAppStore.getState().workspaceError!);
     } else {
+      if (action.type === "delete") for (const tab of external) {
+        if (!await useAppStore.getState().confirmUnsaved(tab.name) || !current()) return { success: false, started: true };
+      }
+      if (!current()) return { success: false, started: true };
       if (action.type === "create") await api.createWorkspaceEntry(root, path, action.kind);
       else if (action.type === "rename") await api.renameWorkspaceEntry(root, path, joinPath(dir, action.newName));
       else await api.deleteWorkspaceEntry(root, path);
       success = true;
+      if (action.type !== "create") {
+        useAppStore.setState((s) => applyDeviceEditorMutation(s, root, path, action.type === "rename" ? joinPath(dir, action.newName) : undefined));
+        const app = useAppStore.getState();
+        if (!app.openTabs.length) app.setLayout({ panelVisible: { ...app.layout.panelVisible, editor: false } });
+      }
     }
   } catch (error) { fail(errorMessage(error)); }
   finally {
+    if (!success && action.type === "delete") useAppStore.setState((s) => ({ openTabs: s.openTabs.map((tab) => external.some((old) => old.name === tab.name) ? { ...tab, discardRecovery: false } : tab) }));
     if (relative === null) useAppStore.setState({ workspaceMutating: false });
     useTransferStore.setState({ deviceMutating: false });
   }

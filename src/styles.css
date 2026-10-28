@@ -659,9 +659,12 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .editor-tabs::-webkit-scrollbar, .console-tabs::-webkit-scrollbar { height: 6px; }
 /* Paint the whole tab, including its close button, as one square-edged surface. */
 .editor-tab, .console-tab { display: flex; flex-shrink: 0; border-radius: 0; border-bottom: 2px solid transparent; color: var(--text-secondary, #9fa2b0); font-size: inherit; white-space: nowrap; }
+.editor-tab { max-width: 240px; }
 .editor-tab.active, .console-tab.active, .console-tabs > button[role="tab"][aria-selected="true"] { color: var(--text-primary); background: var(--surface-base); border-bottom-color: var(--accent); }
-.editor-tab-label { display: flex; align-items: center; gap: 7px; border: 0; border-radius: 0; background: transparent; color: inherit; padding: 0 var(--center-label-inset); font: inherit; min-width: 0; max-width: 200px; }
-.editor-tab-label > span:not(.editor-tab-dirty) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-tab-label { display: flex; align-items: center; gap: 7px; border: 0; border-radius: 0; background: transparent; color: inherit; padding: 0 var(--center-label-inset); font: inherit; min-width: 0; }
+.editor-tab-name, .editor-tab-device { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Shrink the source first while retaining a visible hint of it. */
+.editor-tab-device { flex: 0 3 auto; min-width: 4em; max-width: 7em; color: var(--text-muted); font-size: 11px; font-style: normal; }
 .editor-tab-dirty { flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .editor-tab-label:hover, .console-tab button[role="tab"]:hover { background: transparent; color: var(--text-primary, #ddd); }
 .editor-tab.preview .editor-tab-label { font-style: italic; }

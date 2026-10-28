@@ -133,6 +133,8 @@ export const en: Messages = {
     zoomFailed: "Failed to zoom the interface: {{message}}",
   },
   editor: {
+    deviceChanged: "The device connection changed or the device was removed. Close and reopen this device file. Unsaved contents have been preserved.",
+    targetOpen: "The target file is already open in the editor. Close that tab first.",
     previewHint: "Click to preview a file; double-click to keep its tab",
     reloadDisk: "Reload from disk…",
     opening: "Opening…",
@@ -179,7 +181,7 @@ export const en: Messages = {
   deviceWorkspace: {
     path: "Current device workspace path", invalidPath: "Enter an absolute device path or ~/ path without . or .. components.",
     enterDirectory: "Enter Directory", directoryHint: "Click to expand; double-click to enter directory", newEntry: "New File or Directory",
-    title: "Device Workspace", openAsWorkspace: "Open as Workspace", openFileHint: "Open file in this device workspace", retry: "Retry", empty: "This directory is empty",
+    title: "Device Workspace", openAsWorkspace: "Open as Workspace", openFileHint: "Open device file in the editor", retry: "Retry", empty: "This directory is empty",
   },
   workspace: {
     emptyHint: "Open a local or device folder to browse files and run scripts.", openLocal: "Open Local Folder", openRemote: "Open Device Folder",

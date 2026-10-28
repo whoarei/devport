@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api, errorMessage, workspaceRefEquals, type DeletedRunHistory, type RunStatus } from "./api";
-import { anyDirty } from "./editorDocument";
+import { workspaceEditorDirty } from "./editorSources";
 import { getWorkspaceGeneration, useAppStore } from "./store";
 import { useWorkspaceRunStore } from "./workspaceRunStore";
 import { useTerminalStore } from "./terminalStore";
@@ -139,7 +139,7 @@ export async function submitHistoryRun(draft: HistoryRunDraft): Promise<string |
   const generation = getWorkspaceGeneration();
   useAppStore.setState({ starting: true });
   try {
-    if (!await useAppStore.getState().saveAllDirty() || anyDirty(useAppStore.getState())) throw new Error(i18n.t("run.errorSaveIncomplete"));
+    if (!await useAppStore.getState().saveAllDirty(true) || workspaceEditorDirty(useAppStore.getState())) throw new Error(i18n.t("run.errorSaveIncomplete"));
     if (generation !== getWorkspaceGeneration() || !workspaceRefEquals(workspace, useAppStore.getState().workspace)) throw new Error(i18n.t("run.errorWorkspaceChanged"));
     const device = validateDevices(), replay = structuredClone(draft.replay);
     const settings = historySettings(replay);
