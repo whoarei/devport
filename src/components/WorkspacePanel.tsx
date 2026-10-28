@@ -378,7 +378,10 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
         <>
           {presentation && <div className="workspace-dir" title={label ?? undefined}>
             <Icon name={workspace?.type === "device" ? "server" : "folder"} />
-            <div><strong>{presentation.name}</strong><span>{presentation.device ?? t(workspace?.type === "device" ? "workspace.remoteDevice" : "transfer.local")}</span></div>
+            <div>
+              <strong>{presentation.name}</strong>
+              {workspace?.type === "device" && <span>{presentation.device ?? t("workspace.remoteDevice")}</span>}
+            </div>
             {presentation.transport && <span className="workspace-transport">{presentation.transport.toUpperCase()}</span>}
           </div>}
           {workspaceError && <div className="workspace-error" role="alert">
