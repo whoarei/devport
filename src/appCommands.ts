@@ -40,7 +40,7 @@ export function appCommandEnabled(id: AppCommandId, context: ShortcutContext = {
     case "rerun": { const run = commandRun(context); return !busy && !history.busy && !!run?.replay && !isActiveRun(run); }
     case "stop": { const run = commandRun(context); return !app.updating && !!run && isActiveRun(run); }
     case "newTerminal": return !app.updating && !app.guarding && !terminals.shuttingDown && terminals.tabs.length < 8
-      && !!defaultDevice && defaultDevice.transport !== "serial";
+      && !!defaultDevice;
     case "focusEditor": return !app.guarding && !!tab;
     case "toggleConsole": case "toggleSidebar": return !app.guarding;
   }

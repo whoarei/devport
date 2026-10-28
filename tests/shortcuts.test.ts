@@ -402,13 +402,15 @@ test("save-all uses the existing serial save pipeline and stops on a failed file
   assert.deepEqual(useAppStore.getState().openTabs.map(tab => tab.savedContent), ["new", "base", "base"]);
 });
 
-test("new terminal follows the default device and honors serial, tab limit and shutdown guards", async t => {
+test("new terminal follows the default device including serial and honors tab limit and shutdown guards", async t => {
   reset(t);
   const open = t.mock.method(useTerminalStore.getState(), "open", async () => {});
   await executeAppCommand("newTerminal");
   assert.deepEqual(open.mock.calls[0].arguments, ["default", "default"]);
   useAppStore.setState({ devices: [device("serial", true, "serial"), device("other")] });
-  assert.equal(appCommandEnabled("newTerminal"), false);
+  assert.equal(appCommandEnabled("newTerminal"), true);
+  await executeAppCommand("newTerminal");
+  assert.deepEqual(open.mock.calls[1].arguments, ["serial", "serial"]);
   useAppStore.setState({ devices: [device("fallback")] });
   useTerminalStore.setState({ shuttingDown: true });
   assert.equal(appCommandEnabled("newTerminal"), false);

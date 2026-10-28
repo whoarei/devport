@@ -7,7 +7,7 @@ Remote Runner is a Tauri desktop application for running Python, Shell, and comm
 The supported transports are:
 
 - **SSH**: SFTP workspace upload, PTY or pipe execution, interactive input, resize, stop escalation, and run history.
-- **Serial Shell V1**: `tokio-serial`, 8N1, shell marker framing, UTF-8 text workspace upload, stdin, Ctrl+C, and timeout handling. It assumes the device is already logged into a Linux shell; it does not automate login credentials.
+- **Serial Shell V1**: `tokio-serial`, 8N1, shell marker framing, UTF-8 text workspace upload, stdin, Ctrl+C, and timeout handling. Runs and connection tests assume an already logged-in Linux shell. Standalone terminals pass raw bytes without shell probes or framing and allow manual login; closing only disconnects and releases the port, without sending interrupt/exit commands or confirming remote process exit. Terminals, runs, and connection tests share the exclusive port lease.
 - **WSL**: Windows `wsl.exe` directly starts a bundled Python helper in a selected local distribution, without SSH. Supports binary workspace snapshots, Linux PTY or separate pipes, stdin, resize, process-group stop escalation, and history. Requires Python 3.8+ inside the distribution.
 - **Local Shell**: runs workloads directly on this machine with a detected shell (Windows: pwsh, powershell, cmd, msys2, Git Bash; macOS/Linux: bash, zsh, sh), no SSH or helper. The workspace runs **in place** (no upload/copy; artifacts land in the workspace). PTY via `portable-pty` (ConPTY/openpty) or separate pipes, stdin, resize, and INT → TERM → KILL stop escalation (Windows pipe mode has no graceful interrupt; kills use `taskkill /T /F`). ConPTY startup requires the backend reader thread to answer the `\x1b[6n` DSR query itself. Whether PowerShell loads its profile is one explicit switch (`LocalConfig.no_profile`, default = loads it, matching posix login shells) shared by the interactive terminal, command, script, and probe paths via `local::profile_args` — that switch is what makes profile-provided PATH entries (fnm/nvm/conda, npm global CLI tools) visible. Paths handed to a shell (run cwd, terminal cwd) must go through `verbatim::simplify`, never a raw `canonicalize` product. See `docs/00003-execution-and-transports.md`.
 
@@ -23,7 +23,7 @@ There is no hardware available in the development environment. Serial behavior i
 - `tests/`: frontend tests, bundled by esbuild and run via `node --test`.
 - `src-tauri/src/runner.rs`: request validation, run lifecycle, status/history, per-run output log persistence (`run_logs/`, 2 MiB cap, pruned with history), and transport dispatch.
 - `src-tauri/src/ssh/`: SSH client, SFTP synchronization, and SSH process sessions.
-- `src-tauri/src/serial/`: serial port leasing, shell framing, session control, and text workspace upload.
+- `src-tauri/src/serial/`: serial port leasing, raw standalone terminals, shell framing, session control, and text workspace upload.
 - `src-tauri/src/wsl/`: direct WSL process bridge, bounded workspace snapshots, Python helper, and opt-in WSL integration tests.
 - `src-tauri/src/local/`: local shell registry and detection, portable-pty/pipe session layer with thread-based IO, per-flavor argv construction (posix/powershell/cmd), stop escalation, and real local-process integration tests (shells auto-skip when missing).
 - `src-tauri/src/workspace_ref.rs`: `WorkspaceRef` (local directory vs. device directory), device path validation, and workspace-host capability.

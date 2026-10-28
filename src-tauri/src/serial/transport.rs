@@ -6,7 +6,7 @@ use tokio_serial::{DataBits, FlowControl, Parity, SerialPortBuilderExt, SerialSt
 static BUSY_PORTS: parking_lot::Mutex<Option<HashSet<String>>> = parking_lot::Mutex::new(None);
 const USB_TRANSFER: &str = "__remote_runner_usb_transfer__";
 
-/// Covers both connection tests and runs, including duplicate device profiles for one port.
+/// Covers terminals, connection tests, and runs, including duplicate profiles for one port.
 pub struct PortLease(String);
 
 impl PortLease {
@@ -26,7 +26,7 @@ impl PortLease {
         }
         if !busy.get_or_insert_with(HashSet::new).insert(key.clone()) {
             return Err(RunnerError::Serial(format!(
-                "port {port} is already in use by another run or connection test"
+                "port {port} is already in use by a terminal, run, or connection test"
             )));
         }
         Ok(Self(key))

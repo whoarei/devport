@@ -1,6 +1,7 @@
 pub mod filesync;
 pub mod protocol;
 pub mod session;
+pub mod terminal;
 #[cfg(test)]
 mod tests;
 pub mod transport;

@@ -142,7 +142,7 @@ pre{background:#eee;color:#111}
 
 <section id="overview">
 <h2><small>01 / DESIGN INTENT</small>架构目标与系统边界</h2>
-<p>应用在用户桌面进程中管理设备配置、编辑会话、任务、终端和传输。远端 SSH 依赖现有服务，Serial 依赖已登录 Shell，WSL 使用按需启动的 Python helper，Local 直接创建本机子进程。当前没有统一常驻 Agent、后台作业服务或服务端数据库。</p>
+<p>应用在用户桌面进程中管理设备配置、编辑会话、任务、终端和传输。远端 SSH 依赖现有服务，Serial 任务依赖已登录 Shell、独立终端直接透传串口字节，WSL 使用按需启动的 Python helper，Local 直接创建本机子进程。当前没有统一常驻 Agent、后台作业服务或服务端数据库。</p>
 <div class="grid">
 <article class="card"><span class="num">D01</span>
 <h3>语义统一，能力显式</h3>
@@ -231,7 +231,7 @@ workspace_sync = 路径与同步统计</code></pre>
 </thead>
 <tbody>
 <tr><td>SSH</td><td>PTY/pipe、PID/进程组与退出消息</td><td>SFTP；逐参数引用；认证连接按运行内 channel 复用，不借编辑会话。</td></tr>
-<tr><td>Serial</td><td>RS/US 包围的随机 nonce 开始/结束标记</td><td>已登录 Shell、单合并流、文本上传、端口租约、无运行中 resize。</td></tr>
+<tr><td>Serial</td><td>任务：RS/US 包围的随机 nonce 开始/结束标记；终端：原始字节透传</td><td>任务需已登录 Shell、单合并流、文本上传；终端/任务/连接测试共用独占端口租约。终端关闭仅断开并释放端口，不发送远端终止命令；无动态 resize。</td></tr>
 <tr><td>WSL</td><td>wsl.exe + stdin 下发 Python helper；独立控制消息和显式完成</td><td>Windows；预装 Python 3.8+；结构化 argv；不终止整个发行版。</td></tr>
 <tr><td>Local</td><td>portable-pty 或 pipe 子进程等待</td><td>ConPTY DSR 后端应答；统一 profile；Shell 路径先 simplify；探测有进程组守卫。</td></tr>
 </tbody>

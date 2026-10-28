@@ -40,7 +40,6 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
   useRevealActiveTab(tabStrip, activeTab, visible);
   const deviceNames = deviceDisplayNames(devices);
   const defaultDevice = devices.find((device) => device.is_default) ?? devices[0];
-  const defaultTerminalAvailable = !!defaultDevice && defaultDevice.transport !== "serial";
   const activeRunId = useAppStore((s) => s.activeRunId);
   const previousRun = useRef(activeRunId);
   useEffect(() => {
@@ -49,7 +48,7 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
 
   const open = (deviceId: string) => {
     const device = devices.find((d) => d.id === deviceId);
-    if (!device || device.transport === "serial") return;
+    if (!device) return;
     keyboardTabFocus.current = false;
     setError("");
     if (collapsed) onToggleCollapse();
@@ -57,8 +56,7 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
   };
   const newTerminalEntries = (): MenuEntry[] => devices.length
     ? devices.map((device) => ({
-      label: `${deviceLabel(device)}${device.is_default ? t("device.defaultSuffix") : ""}${device.transport === "serial" ? t("console.serialNoTerminal") : ""}`,
-      disabled: device.transport === "serial",
+      label: `${deviceLabel(device)}${device.is_default ? t("device.defaultSuffix") : ""}`,
       onSelect: () => open(device.id),
     }))
     : [{ label: t("console.noDevices"), disabled: true, onSelect: () => undefined }];
@@ -89,7 +87,7 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
     const others = targets("others");
     const right = targets("right");
     const all = targets("all");
-    const sameDeviceAvailable = devices.some((device) => device.id === tab.deviceId && device.transport !== "serial");
+    const sameDeviceAvailable = devices.some((device) => device.id === tab.deviceId);
     const anyBusy = (ids: string[]) => ids.some((id) => tabs.find((candidate) => candidate.id === id)?.busy);
     const entries: MenuEntry[] = [
       {
@@ -153,9 +151,9 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
         })}
       </div>
       <div className="terminal-add-group">
-        <button className="terminal-add" aria-label={t("console.newDefaultTerminal")} title={shortcutTitle(defaultTerminalAvailable
+        <button className="terminal-add" aria-label={t("console.newDefaultTerminal")} title={shortcutTitle(defaultDevice
           ? t("console.newDefaultTerminalTitle", { name: defaultDevice.name })
-          : defaultDevice?.transport === "serial" ? t("console.defaultSerialNoTerminal") : t("console.noDefaultDevice"), "newTerminal")}
+          : t("console.noDefaultDevice"), "newTerminal")}
           disabled={!appCommandEnabled("newTerminal")}
           onClick={() => void executeAppCommand("newTerminal")}><Icon name="plus" /></button>
         <button className="terminal-device-picker" ref={deviceButton} aria-label={t("console.chooseTerminalDevice")}

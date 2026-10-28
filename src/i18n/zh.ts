@@ -252,7 +252,6 @@ export const zh = {
   console: {
     emptyTitle: "准备运行", emptyHint: "在工作区右键运行脚本，或双击预置命令。运行输出会显示在这里。", emptyWorkspaceHint: "先打开工作区，再选择脚本和目标设备开始运行。",
     inputFailed: "发送输入失败：{{error}}",
-    serialNoTerminal: "（暂不支持终端）",
     noDevices: "暂无可用设备",
     expand: "展开控制台",
     collapse: "折叠控制台",
@@ -266,7 +265,6 @@ export const zh = {
     newDefaultTerminalTitle: "在默认设备“{{name}}”上新建终端",
     chooseTerminalDevice: "选择设备并新建终端",
     noDefaultDevice: "没有可用的默认设备",
-    defaultSerialNoTerminal: "默认设备是串口设备，暂不支持新建终端",
   },
   run: {
     selectDeviceFirst: "请先选择设备",
@@ -308,6 +306,7 @@ export const zh = {
     saveBlocked: "任务正在准备、同步或停止，请稍后保存",
   },
   terminal: {
+    serialHint: "串口独占使用。关闭标签只断开连接并释放端口，设备上的程序可能继续运行。",
     copyFailed: "复制失败，可使用快捷键或右键菜单重试：{{message}}",
     pasteFailed: "粘贴失败，可使用快捷键或右键菜单重试：{{message}}",
     connecting: "连接中…",
@@ -410,7 +409,7 @@ export const zh = {
     serialPlaceholder: "COM8 或 /dev/ttyUSB0",
     refreshPorts: "刷新端口",
     baudRate: "波特率",
-    serialDescription: "8N1，无流控。设备串口需已登录 Linux shell；测试连接会执行探测命令。同一串口一次只能运行一个任务。",
+    serialDescription: "8N1，无流控。任务运行和连接测试需要设备已登录 Linux shell；测试连接会执行探测命令。可先打开终端手动登录。同一串口的终端、任务运行和连接测试互斥。",
     port: "端口",
     username: "用户名",
     auth: "认证方式",

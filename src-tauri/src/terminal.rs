@@ -81,7 +81,7 @@ pub async fn canceled(cancel: &mut watch::Receiver<bool>) {
 
 impl TerminalManager {
     /// 打开独立终端。`cwd` 为工作区终端的起始目录：Local 作为子进程 cwd，
-    /// SSH/WSL 在 shell 启动后进入该目录（00004-workspace-and-sync.md）；Serial 不支持终端。
+    /// SSH/WSL 在 shell 启动后进入该目录（00004-workspace-and-sync.md）；Serial 仅透传字节，不支持 cwd。
     pub fn open(
         &self,
         device: DeviceProfile,
@@ -92,9 +92,6 @@ impl TerminalManager {
     ) -> Result<Status> {
         device.validate()?;
         validate_size(cols, rows)?;
-        if device.transport == TransportKind::Serial {
-            return Err(invalid("串口暂不支持独立终端，请使用运行控制台"));
-        }
         if let Some(cwd) = &cwd {
             match device.transport {
                 TransportKind::Local => {
@@ -105,7 +102,9 @@ impl TerminalManager {
                 TransportKind::Ssh | TransportKind::Wsl => {
                     crate::workspace_ref::validate_device_path(cwd).map_err(|m| invalid(&m))?;
                 }
-                TransportKind::Serial => unreachable!(),
+                TransportKind::Serial => {
+                    return Err(invalid("串口终端不支持指定工作目录"));
+                }
             }
         }
         let (control, mut controls) = mpsc::channel(32);
@@ -164,7 +163,15 @@ impl TerminalManager {
                     )
                     .await
                 }
-                TransportKind::Serial => unreachable!(),
+                TransportKind::Serial => {
+                    crate::serial::terminal::execute(
+                        device.serial.as_ref().unwrap(),
+                        &mut controls,
+                        &mut cancellation,
+                        emit,
+                    )
+                    .await
+                }
                 TransportKind::Local => {
                     crate::local::terminal::execute(
                         device.local.as_ref().unwrap(),
@@ -346,9 +353,9 @@ mod tests {
     }
 
     #[test]
-    fn validates_boundaries_and_never_accepts_serial_or_over_capacity() {
+    fn validates_boundaries_and_never_exceeds_capacity() {
         let manager = TerminalManager::default();
-        let device: DeviceProfile = serde_json::from_value(serde_json::json!({"id":"s", "name":"serial", "transport":"serial", "serial":{"port":"COM1"}})).unwrap();
+        let device: DeviceProfile = serde_json::from_value(serde_json::json!({"id":"s", "name":"serial", "transport":"serial", "serial":{"port":""}})).unwrap();
         assert!(manager.open(device, PathBuf::new(), 80, 24, None).is_err());
         for (cols, rows) in [(0, 24), (80, 0), (4097, 24), (80, u32::MAX)] {
             assert!(validate_size(cols, rows).is_err());
@@ -364,6 +371,34 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains('8'));
+    }
+
+    #[tokio::test]
+    async fn serial_terminal_is_dispatched_and_reports_an_occupied_port_without_opening_it() {
+        let manager = TerminalManager::default();
+        let port = format!("rr-terminal-{}", uuid::Uuid::new_v4());
+        let lease = crate::serial::transport::PortLease::acquire(&port).unwrap();
+        let device = serde_json::from_value(serde_json::json!({
+            "id": "s", "name": "serial", "transport": "serial", "serial": { "port": port }
+        }))
+        .unwrap();
+        let status = manager.open(device, PathBuf::new(), 80, 24, None).unwrap();
+        let mut done = manager.handles.lock()[&status.session_id].done.clone();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !*done.borrow_and_update() {
+                done.changed().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        let failed = manager.read(&status.session_id).unwrap().status;
+        assert_eq!(failed.state, State::Failed);
+        assert_eq!(failed.exit_code, None);
+        assert!(failed.error.unwrap().contains("already in use"));
+        manager.close(&status.session_id).await.unwrap();
+        assert!(crate::serial::transport::PortLease::acquire(&port).is_err());
+        drop(lease);
+        assert!(crate::serial::transport::PortLease::acquire(&port).is_ok());
     }
 
     #[tokio::test]

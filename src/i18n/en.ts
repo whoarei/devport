@@ -251,7 +251,6 @@ export const en: Messages = {
   console: {
     emptyTitle: "Ready to run", emptyHint: "Right-click a script in the workspace to run it, or double-click a preset command. Output will appear here.", emptyWorkspaceHint: "Open a workspace, then select a script and a target device to start running.",
     inputFailed: "Could not send input: {{error}}",
-    serialNoTerminal: " (terminal not supported)",
     noDevices: "No devices available",
     expand: "Expand console",
     collapse: "Collapse console",
@@ -265,7 +264,6 @@ export const en: Messages = {
     newDefaultTerminalTitle: "New terminal on default device “{{name}}”",
     chooseTerminalDevice: "Choose a device for a new terminal",
     noDefaultDevice: "No default device is available",
-    defaultSerialNoTerminal: "The default device uses serial, which does not support terminals",
   },
   run: {
     selectDeviceFirst: "Select a device first",
@@ -307,6 +305,7 @@ export const en: Messages = {
     saveBlocked: "A task is preparing, syncing, or stopping; save later",
   },
   terminal: {
+    serialHint: "This terminal exclusively holds the serial port. Closing the tab disconnects and releases the port; programs on the device may keep running.",
     copyFailed: "Copy failed. Retry with the keyboard shortcut or context menu: {{message}}",
     pasteFailed: "Paste failed. Retry with the keyboard shortcut or context menu: {{message}}",
     connecting: "Connecting…",
@@ -409,7 +408,7 @@ export const en: Messages = {
     serialPlaceholder: "COM8 or /dev/ttyUSB0",
     refreshPorts: "Refresh",
     baudRate: "Baud Rate",
-    serialDescription: "8N1, no flow control. The device serial port must already be logged into a Linux shell; testing the connection runs a probe command. Only one task per serial port at a time.",
+    serialDescription: "8N1, no flow control. Runs and connection tests require a logged-in Linux shell; connection tests send probe commands. You can log in manually through a terminal first. Terminals, runs, and connection tests cannot share the same serial port.",
     port: "Port",
     username: "Username",
     auth: "Authentication",

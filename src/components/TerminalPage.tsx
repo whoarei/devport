@@ -33,6 +33,7 @@ interface View {
 export function TerminalPage({ tab, visible, autoFocus = true }: { tab: TerminalTab; visible: boolean; autoFocus?: boolean }) {
   const { t } = useTranslation();
   const theme = useThemeStore((state) => state.theme);
+  const isSerial = useAppStore((state) => state.devices.find((device) => device.id === tab.deviceId)?.transport === "serial");
   const focus = useCommandUiStore((state) => state.focus);
   const [clipboardError, setClipboardError] = useState<{ action: TerminalClipboardAction; message: string } | null>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -191,6 +192,7 @@ export function TerminalPage({ tab, visible, autoFocus = true }: { tab: Terminal
   const error = tab.error || (!tab.busy ? tab.status?.error : null);
 
   return <section className="terminal-page" role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} hidden={!visible}>
+    {isSerial && <div className="terminal-notice" role="note">{t("terminal.serialHint")}</div>}
     {clipboardError && <div className="terminal-error" role="status">{t(clipboardError.action === "copy" ? "terminal.copyFailed" : "terminal.pasteFailed", { message: clipboardError.message })}</div>}
     {error && <div className="terminal-error" role="alert">{error}</div>}
     <div className="console-body" ref={container} onContextMenu={openMenu}
