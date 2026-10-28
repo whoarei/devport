@@ -99,7 +99,7 @@ GitHub 仓库原地重命名为 `whoarei/devport`，旧地址依赖 GitHub 重�
 
 从 1.0.0 开始，应用 identifier 为 `com.devport.app`，Rust crate 和程序为 `devport` / `devport.exe`，Windows 安装注册表与自启动名称为 DevPort，默认安装目录为 `%LOCALAPPDATA%/DevPort`。签名公钥保持不变。
 
-首次启动在创建 WebView 和打开数据存储之前迁移旧 `com.devrunner.remote-runner` 数据：配置、设备、历史、运行日志、工作环境和未保存草稿复制到新目录；Windows WebView2 仅导入 Local Storage，浏览器缓存、Cookies 和机器绑定凭据不导入。复制在临时目录完成后提交；拒绝链接和 junction，旧 WebView 持有数据库锁时停止迁移并提示关闭旧版。已有 DevPort 目录始终优先，失败可重试，重复启动不会覆盖新数据。旧目录作为迁移前备份保留，新版正常运行不读取它，验证后可手动删除。
+首次启动在创建 WebView 和打开数据存储之前迁移旧 `com.devrunner.remote-runner` 数据：配置、设备、历史、运行日志、工作环境和未保存草稿复制到新目录；Windows WebView2 仅导入 Local Storage，浏览器缓存、Cookies 和机器绑定凭据不导入。本机 `runtime-v1` 整体保留在旧目录，不复制到新目录：uv 的 Python 版本别名可能使用 junction，环境 manifest、解释器路径和 venv 脚本也含绝对路径，不能直接搬移；需要时在 DevPort 根下重新准备。可搬移的 `uv-assets` 下载缓存继续导入。复制在临时目录完成后提交；用户数据中的链接和 junction 仍拒绝跟随，并在错误中显示具体路径。只有存储锁占用或源数据正在变化时才提示关闭旧版，其他错误按实际原因报告。已有 DevPort 目录始终优先，失败可重试，重复启动不会覆盖新数据。旧目录作为迁移前备份保留，新版正常运行不读取它，验证后可手动删除。
 
 前端先导入旧 `remote-runner.*` 偏好为 `devport.*`，完成后才初始化语言、主题、布局及应用；已有新键优先。复制失败不标记完成，保留原值以供重试。新项目模板使用 `[tool.devport]`，读取时兼容 `[tool.remote-runner]`，两者存在时新表优先；不会重写用户项目。远端缓存、同步身份及协议中的历史内部名称继续保留，以保护已有资源所有权和缓存兼容性。
 

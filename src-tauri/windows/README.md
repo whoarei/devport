@@ -13,6 +13,11 @@ recursively. Explicit user install-directory choices remain respected.
 
 Before the WebView starts, Rust imports configuration and the WebView2 Local Storage
 to the new app directories. Existing new directories win; originals remain backups.
+The old `runtime-v1` cache is excluded: uv creates Python alias junctions, and venv
+scripts/manifests contain absolute paths. Managed environments are prepared again
+under the new root when needed. Portable `uv-assets` downloads are still imported.
+Other user-data links are rejected with their path, and only busy-storage errors
+advise closing the old process.
 The frontend imports legacy preference keys before its other modules initialize.
 Windows autostart approval state is carried forward without enabling disabled items.
 The signing public key remains unchanged. New and legacy clients use separate

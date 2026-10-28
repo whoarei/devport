@@ -67,6 +67,8 @@ locks/  cache/  manifests/  downloads/  quarantine/
 
 本机根的实际实现使用传入的应用配置目录。旧设计中的“应用数据目录”泛称不应被当作另一个实际路径。
 
+从 Remote Runner 迁移到 DevPort 时，本机旧 `runtime-v1` 不搬移：Python 别名 junction 和环境绝对路径依赖旧根。旧环境作为备份保留，使用项目环境时在新根重新准备；可搬移的 `uv-assets` 下载缓存继续复用。
+
 同步使用 `uv sync --locked --no-install-project --no-default-groups --managed-python --no-python-downloads --no-progress --python <解析后的绝对解释器>`，按选择追加 group / extra。设置受控 `UV_PYTHON_INSTALL_DIR / UV_PROJECT_ENVIRONMENT / UV_CACHE_DIR / UV_NO_SYSTEM_CONFIG`，不与 `--managed-python` 同时设置会冲突的 `UV_PYTHON_PREFERENCE`。
 
 锁过期直接失败，不在目标更新 `uv.lock`。uv 创建前环境目录必须为空或不存在，不预先写入 `.preparing`。运行阶段使用实际 Python `-u <绝对脚本> ...args` 或 `-u -m <模块> ...args`，不经 `activate` 或 `uv run`。
