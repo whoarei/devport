@@ -1,8 +1,11 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { api, DeviceProfile, LocalShellInfo } from "../api";
+import { api, DeviceProfile, LocalShellInfo, type SerialConfig } from "../api";
 import { useUsbStore } from "../usbStore";
 import { automaticDeviceName } from "../deviceNaming";
+
+const SERIAL_BAUD_RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 1500000, 2000000, 3000000, 4000000];
+const defaultSerialConfig = (): SerialConfig => ({ port: "", baud_rate: 115200, data_bits: 8, parity: "none", stop_bits: 1, flow_control: "none" });
 
 export function DeviceIcon({ name }: { name: "ssh" | "serial" | "wsl" | "local" | "close" | "refresh" | "info" | "grip" | "plus" | "up" | "down" | "delete" | "check" }) {
   const paths = {
@@ -29,7 +32,7 @@ export const emptyDevice = (): DeviceProfile => ({
   name: "",
   is_default: false,
   transport: "ssh",
-  serial: { port: "", baud_rate: 115200 },
+  serial: defaultSerialConfig(),
   wsl: { distribution: "", user: "" },
   local: { shell: "", path: null, no_profile: false },
   host: "",
@@ -65,11 +68,15 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
   const [distributions, setDistributions] = useState<string[]>([]);
   const [shells, setShells] = useState<LocalShellInfo[]>([]);
   const [showWslHelp, setShowWslHelp] = useState(false);
+  const baudRate = editing.serial?.baud_rate ?? 115200;
+  const [customBaudRate, setCustomBaudRate] = useState(() => !SERIAL_BAUD_RATES.includes(baudRate));
+  const isCustomBaudRate = customBaudRate || !SERIAL_BAUD_RATES.includes(baudRate);
   const wslHelpId = useId();
   const nameInput = useRef<HTMLInputElement>(null);
   const connectionInput = useRef<HTMLInputElement>(null);
   const previousTransport = useRef(editing.transport);
   const device = { ...editing, name: automaticName ? automaticDeviceName(editing) : editing.name };
+  const updateSerial = (patch: Partial<SerialConfig>) => update({ serial: { ...defaultSerialConfig(), ...editing.serial, ...patch } });
 
   useEffect(() => {
     (editing.id ? nameInput.current : connectionInput.current)?.focus();
@@ -146,7 +153,7 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
               onMouseEnter={() => setShowWslHelp(value === "wsl")} onFocus={() => setShowWslHelp(value === "wsl")} onBlur={() => setShowWslHelp(false)}
               onClick={() => {
                 if (editing.transport === value) return;
-                update({ transport: value, serial: editing.serial ?? { port: "", baud_rate: 115200 }, wsl: editing.wsl ?? { distribution: "", user: "" }, local: editing.local ?? { shell: "", path: null, no_profile: false } });
+                update({ transport: value, serial: editing.serial ?? defaultSerialConfig(), wsl: editing.wsl ?? { distribution: "", user: "" }, local: editing.local ?? { shell: "", path: null, no_profile: false } });
                 setTestResult(null);
               }}>
               <DeviceIcon name={value} /><strong>{label}{value === "wsl" && <span className="device-transport-info"><DeviceIcon name="info" /></span>}</strong><span>{hint}</span>
@@ -201,16 +208,53 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
                 <label htmlFor="device-serial-port">{t("device.serialPort")}</label>
                 <div className="device-input-action">
                   <input ref={connectionInput} id="device-serial-port" list="serial-ports" value={editing.serial?.port ?? ""} placeholder={t("device.serialPlaceholder")}
-                    onChange={(e) => update({ serial: { port: e.target.value, baud_rate: editing.serial?.baud_rate ?? 115200 } })} />
+                    onChange={(e) => updateSerial({ port: e.target.value })} />
                   <button type="button" onClick={refreshPorts} aria-label={t("device.refreshPorts")} title={t("device.refreshPorts")}><DeviceIcon name="refresh" /></button>
                 </div>
                 <datalist id="serial-ports">{ports.map((port) => <option key={port} value={port} />)}</datalist>
               </div>
+              <div className="device-baud-rate">
+                <label>
+                  {t("device.baudRate")}
+                  <select value={isCustomBaudRate ? "custom" : baudRate} onChange={(e) => {
+                    const custom = e.target.value === "custom";
+                    setCustomBaudRate(custom);
+                    if (!custom) updateSerial({ baud_rate: Number(e.target.value) });
+                  }}>
+                    {SERIAL_BAUD_RATES.map((rate) => <option key={rate} value={rate}>{rate}</option>)}
+                    <option value="custom">{t("device.customBaudRate")}</option>
+                  </select>
+                </label>
+                {isCustomBaudRate && <input type="number" min={1} max={4000000} step={1} aria-label={t("device.customBaudRate")}
+                  value={baudRate} onChange={(e) => updateSerial({ baud_rate: Number(e.target.value) })} />}
+              </div>
               <label>
-                {t("device.baudRate")}
-                <input type="number" min={1} max={4000000} list="serial-baud-rates" value={editing.serial?.baud_rate ?? 115200}
-                  onChange={(e) => update({ serial: { port: editing.serial?.port ?? "", baud_rate: Number(e.target.value) } })} />
-                <datalist id="serial-baud-rates">{[9600, 57600, 115200, 230400, 460800, 921600, 1500000].map((rate) => <option key={rate} value={rate} />)}</datalist>
+                {t("device.dataBits")}
+                <select value={editing.serial?.data_bits ?? 8} onChange={(e) => updateSerial({ data_bits: Number(e.target.value) as SerialConfig["data_bits"] })}>
+                  {[5, 6, 7, 8].map((bits) => <option key={bits} value={bits}>{bits}</option>)}
+                </select>
+              </label>
+              <label>
+                {t("device.parity")}
+                <select value={editing.serial?.parity ?? "none"} onChange={(e) => updateSerial({ parity: e.target.value as SerialConfig["parity"] })}>
+                  <option value="none">{t("device.parityNone")}</option>
+                  <option value="odd">{t("device.parityOdd")}</option>
+                  <option value="even">{t("device.parityEven")}</option>
+                </select>
+              </label>
+              <label>
+                {t("device.stopBits")}
+                <select value={editing.serial?.stop_bits ?? 1} onChange={(e) => updateSerial({ stop_bits: Number(e.target.value) as SerialConfig["stop_bits"] })}>
+                  <option value={1}>1</option><option value={2}>2</option>
+                </select>
+              </label>
+              <label>
+                {t("device.flowControl")}
+                <select value={editing.serial?.flow_control ?? "none"} onChange={(e) => updateSerial({ flow_control: e.target.value as SerialConfig["flow_control"] })}>
+                  <option value="none">{t("device.flowControlNone")}</option>
+                  <option value="software">{t("device.flowControlSoftware")}</option>
+                  <option value="hardware">{t("device.flowControlHardware")}</option>
+                </select>
               </label>
             </> : <>
               <div className="device-field-wide device-host-fields">
@@ -248,9 +292,9 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
               </label>}
             </>}
           </div>
-          {["local", "serial"].includes(editing.transport) && <div className="device-notice">
+          {editing.transport === "local" && <div className="device-notice">
             <DeviceIcon name="info" />
-            <p>{t(editing.transport === "local" ? "device.localDescription" : "device.serialDescription")}</p>
+            <p>{t("device.localDescription")}</p>
           </div>}
         </section>
         <section className="device-settings">
@@ -261,11 +305,10 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
           <div className="device-settings-options">
             <div className="device-option">
               <label className="device-checkbox">
-                <input type="checkbox" checked={editing.is_default} disabled={editing.is_default} aria-describedby="device-default-hint"
+                <input type="checkbox" checked={editing.is_default} disabled={editing.is_default}
                   onChange={(e) => update({ is_default: e.target.checked })} />
                 {t("device.defaultDevice")}
               </label>
-              <p id="device-default-hint">{t("device.defaultDeviceHint")}</p>
             </div>
             {editing.transport === "wsl" && <button type="button" className="device-usb-button" onClick={() => useUsbStore.getState().show(editing.wsl ?? undefined)}>{t("usb.title")}</button>}
             {editing.transport === "ssh" && editing.id && <button type="button" className="device-usb-button" onClick={() => useUsbStore.getState().showRemote(editing.id)}>{t("usb.title")}</button>}

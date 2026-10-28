@@ -284,6 +284,7 @@ mod tests {
             serial: Some(crate::device::SerialConfig {
                 port: "COM99".into(),
                 baud_rate: 115200,
+                ..Default::default()
             }),
             wsl: None,
             local: None,

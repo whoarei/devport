@@ -1,7 +1,9 @@
-use crate::device::SerialConfig;
+use crate::device::{SerialConfig, SerialFlowControl, SerialParity};
 use crate::error::{Result, RunnerError};
 use std::collections::HashSet;
-use tokio_serial::{DataBits, FlowControl, Parity, SerialPortBuilderExt, SerialStream, StopBits};
+use tokio_serial::{
+    DataBits, FlowControl, Parity, SerialPortBuilder, SerialPortBuilderExt, SerialStream, StopBits,
+};
 
 static BUSY_PORTS: parking_lot::Mutex<Option<HashSet<String>>> = parking_lot::Mutex::new(None);
 const USB_TRANSFER: &str = "__remote_runner_usb_transfer__";
@@ -66,12 +68,34 @@ pub fn available_ports() -> Result<Vec<String>> {
     Ok(ports)
 }
 
+fn builder(config: &SerialConfig) -> Result<SerialPortBuilder> {
+    config.validate()?;
+    Ok(tokio_serial::new(config.port.trim(), config.baud_rate)
+        .data_bits(match config.data_bits {
+            5 => DataBits::Five,
+            6 => DataBits::Six,
+            7 => DataBits::Seven,
+            _ => DataBits::Eight,
+        })
+        .parity(match config.parity {
+            SerialParity::None => Parity::None,
+            SerialParity::Odd => Parity::Odd,
+            SerialParity::Even => Parity::Even,
+        })
+        .stop_bits(if config.stop_bits == 1 {
+            StopBits::One
+        } else {
+            StopBits::Two
+        })
+        .flow_control(match config.flow_control {
+            SerialFlowControl::None => FlowControl::None,
+            SerialFlowControl::Software => FlowControl::Software,
+            SerialFlowControl::Hardware => FlowControl::Hardware,
+        }))
+}
+
 pub fn open(config: &SerialConfig) -> Result<SerialStream> {
-    let stream = tokio_serial::new(config.port.trim(), config.baud_rate)
-        .data_bits(DataBits::Eight)
-        .parity(Parity::None)
-        .stop_bits(StopBits::One)
-        .flow_control(FlowControl::None)
+    let stream = builder(config)?
         .open_native_async()
         .map_err(|e| RunnerError::Serial(format!("open {}: {e}", config.port)))?;
     #[cfg(unix)]
@@ -90,6 +114,63 @@ pub fn open(config: &SerialConfig) -> Result<SerialStream> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn driver_uses_custom_line_settings_and_legacy_profiles_default_to_8n1() {
+        let legacy: SerialConfig =
+            serde_json::from_value(serde_json::json!({"port":"test-port"})).unwrap();
+        assert_eq!(
+            builder(&legacy).unwrap(),
+            tokio_serial::new("test-port", 115200)
+                .data_bits(DataBits::Eight)
+                .parity(Parity::None)
+                .stop_bits(StopBits::One)
+                .flow_control(FlowControl::None)
+        );
+        for (data_bits, parity, stop_bits, flow_control, expected) in [
+            (
+                7,
+                SerialParity::Even,
+                2,
+                SerialFlowControl::Hardware,
+                tokio_serial::new("test-port", 250000)
+                    .data_bits(DataBits::Seven)
+                    .parity(Parity::Even)
+                    .stop_bits(StopBits::Two)
+                    .flow_control(FlowControl::Hardware),
+            ),
+            (
+                5,
+                SerialParity::Odd,
+                1,
+                SerialFlowControl::Software,
+                tokio_serial::new("test-port", 250000)
+                    .data_bits(DataBits::Five)
+                    .parity(Parity::Odd)
+                    .stop_bits(StopBits::One)
+                    .flow_control(FlowControl::Software),
+            ),
+        ] {
+            let config = SerialConfig {
+                port: " test-port ".into(),
+                baud_rate: 250000,
+                data_bits,
+                parity,
+                stop_bits,
+                flow_control,
+            };
+            assert_eq!(builder(&config).unwrap(), expected);
+        }
+        let invalid = SerialConfig {
+            port: "must-not-open".into(),
+            data_bits: 9,
+            ..Default::default()
+        };
+        assert!(open(&invalid)
+            .unwrap_err()
+            .to_string()
+            .contains("data bits"));
+    }
+
     #[test]
     fn port_lease_is_exclusive_and_released() {
         let name = format!("test-{}", uuid::Uuid::new_v4());

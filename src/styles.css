@@ -1304,6 +1304,7 @@ button:disabled {
 .device-transport[aria-pressed="true"]::after { content: ""; position: absolute; top: 10px; right: 10px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent-surface, #9dbdff); }
 .device-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .device-fields > *, .device-host-fields > * { min-width: 0; }
+.device-baud-rate { display: flex; flex-direction: column; gap: 6px; }
 .device-field-wide { grid-column: 1 / -1; }
 .device-host-fields { display: grid; grid-template-columns: minmax(0, 1fr) 100px; gap: 16px; }
 .device-dialog label { display: flex; flex-direction: column; gap: 6px; color: var(--text-secondary, #adb4c4); font-size: 12px; }

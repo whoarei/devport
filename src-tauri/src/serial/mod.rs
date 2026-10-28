@@ -70,8 +70,15 @@ pub async fn test_device(device: &DeviceProfile) -> Result<String> {
         return Err(RunnerError::Serial("serial shell probe failed".into()));
     }
     Ok(format!(
-        "Serial shell ready ({} baud, 8N1)\n{}",
+        "Serial shell ready ({} baud, {}{}{})\n{}",
         config.baud_rate,
+        config.data_bits,
+        match config.parity {
+            crate::device::SerialParity::None => 'N',
+            crate::device::SerialParity::Odd => 'O',
+            crate::device::SerialParity::Even => 'E',
+        },
+        config.stop_bits,
         String::from_utf8_lossy(&output)
     ))
 }

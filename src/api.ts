@@ -5,13 +5,22 @@ export type AuthMethod =
   | { type: "password"; password: string }
   | { type: "key"; key_path: string | null };
 
+export interface SerialConfig {
+  port: string;
+  baud_rate: number;
+  data_bits?: 5 | 6 | 7 | 8;
+  parity?: "none" | "odd" | "even";
+  stop_bits?: 1 | 2;
+  flow_control?: "none" | "software" | "hardware";
+}
+
 export interface DeviceProfile {
   revision?: string;
   id: string;
   name: string;
   is_default: boolean;
   transport: "ssh" | "serial" | "wsl" | "local";
-  serial?: { port: string; baud_rate: number } | null;
+  serial?: SerialConfig | null;
   wsl?: { distribution: string; user: string } | null;
   local?: { shell: string; path?: string | null; no_profile?: boolean } | null;
   host: string;

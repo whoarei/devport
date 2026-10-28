@@ -14,6 +14,7 @@ fn config() -> SerialConfig {
     SerialConfig {
         port: format!("terminal-test-{}", uuid::Uuid::new_v4()),
         baud_rate: 115200,
+        ..Default::default()
     }
 }
 

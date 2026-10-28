@@ -116,9 +116,67 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(serial.serial.as_ref().unwrap().baud_rate, 115200);
+        assert_eq!(
+            serial.serial.as_ref().unwrap(),
+            &SerialConfig {
+                port: "COM8".into(),
+                ..Default::default()
+            }
+        );
         serial.validate().unwrap();
         serial.serial.as_mut().unwrap().baud_rate = 0;
         assert!(serial.validate().is_err());
+    }
+
+    #[test]
+    fn custom_serial_settings_survive_save_and_reload() {
+        let root =
+            std::env::temp_dir().join(format!("rr-serial-settings-{}", uuid::Uuid::new_v4()));
+        let store = DeviceStore::new(&root);
+        let profile: DeviceProfile = serde_json::from_value(serde_json::json!({
+            "id": "serial", "name": "uart", "transport": "serial",
+            "serial": {"port": "COM8", "baud_rate": 250000, "data_bits": 7,
+                "parity": "even", "stop_bits": 2, "flow_control": "hardware"}
+        }))
+        .unwrap();
+        let expected = profile.serial.clone();
+        store.save(profile).unwrap();
+        let reloaded = DeviceStore::new(&root).get("serial").unwrap();
+        assert_eq!(reloaded.serial, expected);
+        assert_eq!(reloaded.serial.unwrap().parity, SerialParity::Even);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn serial_settings_reject_invalid_values_at_the_boundary() {
+        let base = serde_json::json!({"id": "serial", "name": "uart", "transport": "serial",
+            "serial": {"port": "COM8", "baud_rate": 115200}});
+        for (key, value) in [
+            ("baud_rate", serde_json::json!(0)),
+            ("baud_rate", serde_json::json!(4000001)),
+            ("data_bits", serde_json::json!(4)),
+            ("data_bits", serde_json::json!(9)),
+            ("stop_bits", serde_json::json!(0)),
+            ("stop_bits", serde_json::json!(3)),
+            ("parity", serde_json::json!("invalid")),
+            ("flow_control", serde_json::json!("invalid")),
+        ] {
+            let mut payload = base.clone();
+            payload["serial"][key] = value;
+            assert!(
+                serde_json::from_value::<DeviceProfile>(payload)
+                    .map(|device| device.validate().is_err())
+                    .unwrap_or(true),
+                "{key}"
+            );
+        }
+        for bits in 5..=8 {
+            let mut payload = base.clone();
+            payload["serial"]["data_bits"] = serde_json::json!(bits);
+            payload["serial"]["stop_bits"] = serde_json::json!(2);
+            let device: DeviceProfile = serde_json::from_value(payload).unwrap();
+            device.validate().unwrap();
+        }
     }
 
     #[test]
@@ -496,11 +554,66 @@ mod tests {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SerialParity {
+    #[default]
+    None,
+    Odd,
+    Even,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SerialFlowControl {
+    #[default]
+    None,
+    Software,
+    Hardware,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SerialConfig {
     pub port: String,
-    #[serde(default = "default_baud_rate")]
     pub baud_rate: u32,
+    pub data_bits: u8,
+    pub parity: SerialParity,
+    pub stop_bits: u8,
+    pub flow_control: SerialFlowControl,
+}
+
+impl Default for SerialConfig {
+    fn default() -> Self {
+        Self {
+            port: String::new(),
+            baud_rate: default_baud_rate(),
+            data_bits: 8,
+            parity: SerialParity::None,
+            stop_bits: 1,
+            flow_control: SerialFlowControl::None,
+        }
+    }
+}
+
+impl SerialConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.port.trim().is_empty()
+            || self.port.contains(['\0', '\r', '\n'])
+            || self.baud_rate == 0
+            || self.baud_rate > 4_000_000
+        {
+            return Err(RunnerError::InvalidInput(
+                "serial port and baud rate (1–4000000) are required".into(),
+            ));
+        }
+        if !(5..=8).contains(&self.data_bits) || ![1, 2].contains(&self.stop_bits) {
+            return Err(RunnerError::InvalidInput(
+                "serial data bits must be 5–8 and stop bits must be 1 or 2".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// 本机 shell 直连配置。shell 为后端注册表中的 id（如 "pwsh"、"msys2"），
@@ -654,15 +767,7 @@ impl DeviceProfile {
                     .serial
                     .as_ref()
                     .ok_or_else(|| invalid("serial configuration is required"))?;
-                if serial.port.trim().is_empty()
-                    || serial.port.contains(['\0', '\r', '\n'])
-                    || serial.baud_rate == 0
-                    || serial.baud_rate > 4_000_000
-                {
-                    return Err(invalid(
-                        "serial port and baud rate (1–4000000) are required",
-                    ));
-                }
+                serial.validate()?;
             }
         }
         Ok(())
