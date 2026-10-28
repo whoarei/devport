@@ -24,7 +24,7 @@ version = "0.1.0"
 requires-python = ">=3.12.9,<3.13"
 dependencies = []
 
-[tool.remote-runner]
+[tool.devport]
 python-path = ["src"]
 dependency-groups = []
 extras = []
@@ -34,7 +34,7 @@ extras = []
 
 `python-path` 为经过验证的工作区内相对目录；groups/extras 必须已声明，默认不隐式安装项目 default groups。根项目不安装到依赖环境，源码从执行工作区加载。拒绝 uv workspace member、editable 和本地 path dependency；锁定的 Git/URL 依赖由 uv 处理。`uv.lock` 上限 8 MiB。
 
-旧 `[tool.remote-runner].entry/mode` 只供兼容调用及可见导入候选，不能覆盖当前右键入口，未运行不能伪造历史。版本、依赖、groups/extras、源码搜索路径始终由项目文件读取，不迁入 `.runner/config.json` 或历史命令。
+项目表使用 `[tool.devport]`，兼容旧 `[tool.remote-runner]`，同时存在时新表优先。表中的 `entry/mode` 只供兼容调用及可见导入候选，不能覆盖当前右键入口，未运行不能伪造历史。版本、依赖、groups/extras、源码搜索路径始终由项目文件读取，不迁入 `.runner/config.json` 或历史命令。
 
 ## 3. 运行时部署
 

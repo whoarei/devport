@@ -1,5 +1,5 @@
 //! Real SSH + SFTP on loopback. No physical device or user SSH credentials.
-use remote_runner::{
+use devport::{
     device::{AuthMethod, DeviceProfile, DeviceStore},
     file_transfer::{ConflictPolicy, Request, Task, TransferManager},
     workspace_ref::WorkspaceRef,
@@ -308,7 +308,7 @@ impl russh_sftp::server::Handler for Sftp {
 
 #[tokio::test]
 async fn workspace_sync_reuses_directory_recovers_interruption_and_preserves_results() {
-    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    use devport::{workspace_sync::Lease, workspace_upload::SSH};
     use std::sync::atomic::AtomicBool;
     let fixture = Fixture::new(Behavior {
         fail_workspace_commit_once: Some(Arc::new(AtomicBool::new(true))),
@@ -403,7 +403,7 @@ async fn workspace_sync_reuses_directory_recovers_interruption_and_preserves_res
 
 #[tokio::test]
 async fn workspace_sync_lease_queues_until_release_and_is_not_stolen_after_disconnect() {
-    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    use devport::{workspace_sync::Lease, workspace_upload::SSH};
     use std::sync::atomic::{AtomicBool, Ordering};
     let f = Fixture::new(Behavior::default()).await;
     let device = DeviceStore::new(&f.config).get("test").unwrap();
@@ -455,7 +455,7 @@ async fn workspace_sync_lease_queues_until_release_and_is_not_stolen_after_disco
 
 #[tokio::test]
 async fn changed_sources_inspect_remote_content_and_preserve_literal_paths() {
-    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    use devport::{workspace_sync::Lease, workspace_upload::SSH};
     let f = Fixture::new(Behavior {
         hash_exec: true,
         ..Default::default()
@@ -500,7 +500,7 @@ async fn changed_sources_inspect_remote_content_and_preserve_literal_paths() {
 
 #[tokio::test]
 async fn manifest_skips_unchanged_paths_and_batches_only_changed_sources() {
-    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    use devport::{workspace_sync::Lease, workspace_upload::SSH};
     use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
     let counts = Arc::new(Counts::default());
     let f = Fixture::new(Behavior {
@@ -568,7 +568,7 @@ async fn manifest_skips_unchanged_paths_and_batches_only_changed_sources() {
 
 #[tokio::test]
 async fn malformed_or_incompatible_batch_falls_back_for_changed_sources() {
-    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    use devport::{workspace_sync::Lease, workspace_upload::SSH};
     use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
     for incompatible in [false, true] {
         let counts = Arc::new(Counts::default());
@@ -631,7 +631,7 @@ async fn malformed_or_incompatible_batch_falls_back_for_changed_sources() {
 
 #[tokio::test]
 async fn missing_batch_entries_cannot_bypass_the_complete_conflict_preflight() {
-    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    use devport::{workspace_sync::Lease, workspace_upload::SSH};
     let f = Fixture::new(Behavior {
         hash_exec: true,
         hide_batch_path: true,
@@ -677,7 +677,7 @@ async fn missing_batch_entries_cannot_bypass_the_complete_conflict_preflight() {
 
 #[tokio::test]
 async fn canceling_a_pending_batch_keeps_the_connection_usable_for_lease_release() {
-    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    use devport::{workspace_sync::Lease, workspace_upload::SSH};
     use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
     let counts = Arc::new(Counts::default());
     let f = Fixture::new(Behavior {
@@ -717,7 +717,7 @@ async fn canceling_a_pending_batch_keeps_the_connection_usable_for_lease_release
 
 #[tokio::test]
 async fn run_reuses_the_authenticated_sync_connection_for_launch_checks_and_execution() {
-    use remote_runner::{
+    use devport::{
         runner::{RunManager, RunRequest},
         workspace_run,
     };
@@ -761,7 +761,7 @@ async fn run_reuses_the_authenticated_sync_connection_for_launch_checks_and_exec
     .unwrap();
     assert_eq!(
         status.state,
-        remote_runner::process::RunState::Exited,
+        devport::process::RunState::Exited,
         "{:?}",
         status.error
     );
@@ -774,7 +774,7 @@ async fn run_reuses_the_authenticated_sync_connection_for_launch_checks_and_exec
 
 #[tokio::test]
 async fn cross_device_workspace_identity_is_independent_of_local_staging_paths() {
-    use remote_runner::{remote_workspace::stage, workspace_sync::Lease, workspace_upload::SSH};
+    use devport::{remote_workspace::stage, workspace_sync::Lease, workspace_upload::SSH};
     let f = Fixture::new(Behavior::default()).await;
     fs::create_dir(f.remote.join("source")).unwrap();
     fs::write(f.remote.join("source/a.py"), b"first").unwrap();
@@ -842,7 +842,7 @@ async fn cross_device_workspace_identity_is_independent_of_local_staging_paths()
 
 #[tokio::test]
 async fn named_workspaces_never_merge_same_named_sources_or_existing_remote_directories() {
-    use remote_runner::{workspace_sync::Lease, workspace_upload::SSH};
+    use devport::{workspace_sync::Lease, workspace_upload::SSH};
     let f = Fixture::new(Behavior::default()).await;
     let device = DeviceStore::new(&f.config).get("test").unwrap();
     let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1097,7 +1097,7 @@ struct Fixture {
 
 #[tokio::test]
 async fn runner_metadata_is_source_owned_and_survives_reopening_over_sftp() {
-    use remote_runner::workspace_run::{Command, Config, Entry, Store};
+    use devport::workspace_run::{Command, Config, Entry, Store};
     let fixture = Fixture::new(Behavior::default()).await;
     let device = DeviceStore::new(&fixture.config).get("test").unwrap();
     let workspace = WorkspaceRef::device("test", "/data");
@@ -1223,7 +1223,7 @@ async fn finish(manager: &TransferManager, id: &str) -> Task {
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let task = manager.task(id).unwrap();
-            if !remote_runner::file_transfer::active(&task.state) {
+            if !devport::file_transfer::active(&task.state) {
                 return task;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;

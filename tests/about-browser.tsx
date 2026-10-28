@@ -46,7 +46,7 @@ const update: AppUpdateInfo = {
   latest_version: "0.24.0",
   notes: "更新内容示例 / Sample release notes\n\n改善界面布局与可读性。\nImprove layout and readability.\n\n".repeat(12),
   published_at: null,
-  download_url: "https://github.com/whoarei/remote-runner/releases/latest",
+  download_url: "https://github.com/whoarei/devport/releases/latest",
   can_auto_install: scenario !== "manual",
 };
 api.checkAppUpdate = async () => {

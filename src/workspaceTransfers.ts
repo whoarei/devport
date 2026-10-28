@@ -2,7 +2,7 @@ import type { WorkspaceRef } from "./api";
 import { sameTransferFilename, transferActive, workspaceTransferPath, type TransferSummary } from "./transferApi";
 
 export const INLINE_TRANSFER_NOTICE_MS = 30_000;
-const HIDDEN_KEY = "remote-runner.workspace-transfer-hidden.v1";
+const HIDDEN_KEY = "devport.workspace-transfer-hidden.v1";
 export interface WorkspaceTransferSelection { workspace: WorkspaceRef; path: string; directory: boolean; revision: string | null }
 
 export function loadHiddenTransfers(): string[] {

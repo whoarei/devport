@@ -47,7 +47,7 @@ pub fn setup(app: &tauri::App) -> tauri::Result<()> {
     TrayIconBuilder::with_id("main")
         // Embed the small icon directly, rather than resampling a bundle-sized image.
         .icon(tauri::include_image!("icons/32x32.png"))
-        .tooltip("Remote Runner")
+        .tooltip("DevPort")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id().as_ref() {

@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-const RELEASES_URL: &str = "https://github.com/whoarei/remote-runner/releases/latest";
+const RELEASES_URL: &str = "https://github.com/whoarei/devport/releases/latest";
 
 #[derive(Default)]
 pub struct UpdateState {
@@ -69,7 +69,7 @@ fn matches_installation(exe: &Path, location: &str, uninstaller: &str) -> bool {
     }
     match (
         exe.canonicalize(),
-        root.join("remote-runner.exe").canonicalize(),
+        root.join("devport.exe").canonicalize(),
         uninstall.canonicalize(),
         root.join("uninstall.exe").canonicalize(),
     ) {
@@ -91,7 +91,7 @@ fn current_exe_is_installed() -> bool {
         let root = RegKey::predef(HKEY_CURRENT_USER);
         for view in [KEY_WOW64_64KEY, KEY_WOW64_32KEY] {
             let Ok(key) = root.open_subkey_with_flags(
-                r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Remote Runner",
+                r"Software\Microsoft\Windows\CurrentVersion\Uninstall\DevPort",
                 KEY_READ | view,
             ) else {
                 continue;
@@ -114,12 +114,12 @@ fn newer_stable(current: &semver::Version, candidate: &semver::Version) -> bool 
 }
 
 fn validate_candidate(version: &str, url: &str, signature: &str) -> Result<()> {
-    let prefix = format!("https://github.com/whoarei/remote-runner/releases/download/v{version}/");
+    let prefix = format!("https://github.com/whoarei/devport/releases/download/v{version}/");
     let asset = url.strip_prefix(&prefix).unwrap_or_default();
     if signature.trim().is_empty()
         || asset.is_empty()
         || !asset.ends_with("-setup.exe")
-        || asset.contains(['/', '?', '#'])
+        || asset.contains(['/', '\\', '?', '#', '%'])
     {
         return Err(RunnerError::Update(
             "更新清单的安装包地址或签名无效，请使用下载页面".into(),
@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn validates_update_asset_origin_and_format() {
-        let valid = "https://github.com/whoarei/remote-runner/releases/download/v0.3.0/Remote.Runner_0.3.0_x64-setup.exe";
+        let valid = "https://github.com/whoarei/devport/releases/download/v0.3.0/DevPort_0.3.0_x64-setup.exe";
         assert!(validate_candidate("0.3.0", valid, "signature").is_ok());
         assert!(validate_candidate("0.3.0", valid, "").is_err());
         for invalid in [
@@ -289,6 +289,9 @@ mod tests {
             valid.replace("v0.3.0", "v0.4.0"),
             valid.replace("-setup.exe", "-portable.exe"),
             format!("{valid}?redirect=1"),
+            valid.replace("devport/", "remote-runner/"),
+            valid.replace("devport/", "devport-other/"),
+            valid.replace("DevPort_", "nested%2fDevPort_"),
         ] {
             assert!(validate_candidate("0.3.0", &invalid, "signature").is_err());
         }
@@ -312,7 +315,7 @@ mod tests {
     fn installation_requires_exact_registered_files() {
         let root = std::env::temp_dir().join(format!("rr-update-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
-        let exe = root.join("remote-runner.exe");
+        let exe = root.join("devport.exe");
         let uninstall = root.join("uninstall.exe");
         let portable = root.join("portable.exe");
         std::fs::write(&exe, b"test").unwrap();

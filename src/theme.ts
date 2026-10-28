@@ -3,7 +3,7 @@ import type { ITheme } from "@xterm/xterm";
 
 export type Theme = "light" | "dark";
 export type ThemePreference = Theme | "system";
-const STORAGE_KEY = "remote-runner.theme.v1";
+const STORAGE_KEY = "devport.theme.v1";
 
 export function loadThemePreference(): ThemePreference {
   try {

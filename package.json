@@ -1,5 +1,5 @@
 {
-  "name": "remote-runner",
+  "name": "devport",
   "private": true,
   "version": "0.24.2",
   "type": "module",
@@ -47,7 +47,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
+    "@tauri-apps/cli": "2.11.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",

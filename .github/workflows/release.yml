@@ -92,7 +92,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ steps.meta.outputs.tag }}
-          releaseName: "Remote Runner ${{ steps.meta.outputs.tag }}"
+          releaseName: "DevPort ${{ steps.meta.outputs.tag }}"
           # Keep uploads private until all assets and the updater manifest pass validation.
           releaseDraft: true
           prerelease: false
@@ -101,6 +101,10 @@ jobs:
           updaterJsonPreferNsis: true
           # Tauri 2 signs the NSIS exe directly. Avoid inline JSON shell quoting.
           args: --bundles nsis --target x86_64-pc-windows-msvc --config src-tauri/tauri.release.conf.json
+
+      - name: Verify isolated NSIS migration
+        shell: pwsh
+        run: ./scripts/test-installer-migration.ps1 -InstallerScript src-tauri/target/x86_64-pc-windows-msvc/release/nsis/x64/installer.nsi
 
       - name: Upload portable exe to release
         shell: pwsh
@@ -111,8 +115,8 @@ jobs:
         run: |
           $tag = $env:RELEASE_TAG
           $version = $env:RELEASE_VERSION
-          $exe = "src-tauri/target/x86_64-pc-windows-msvc/release/remote-runner.exe"
-          $portable = "Remote.Runner_${version}_x64-portable.exe"
+          $exe = "src-tauri/target/x86_64-pc-windows-msvc/release/devport.exe"
+          $portable = "DevPort_${version}_x64-portable.exe"
           Copy-Item $exe $portable
           gh release upload $tag $portable --clobber
 
@@ -125,9 +129,20 @@ jobs:
           New-Item -ItemType Directory -Force release-check | Out-Null
           gh release download $env:RELEASE_TAG --pattern latest.json --dir release-check --clobber
           if ($LASTEXITCODE -ne 0) { throw '缺少 latest.json' }
+          # Keep the old URL accepted by installed Remote Runner clients.
+          # GitHub redirects it to DevPort; installer bytes/signatures stay intact.
+          node scripts/release.mjs bridge release-check/latest.json $env:RELEASE_TAG
+          if ($LASTEXITCODE -ne 0) { throw '更新地址兼容处理失败' }
           gh release view $env:RELEASE_TAG --json assets | Set-Content release-check/assets.json
           if ($LASTEXITCODE -ne 0) { throw '无法读取 Release 产物' }
           node scripts/release.mjs verify release-check/latest.json release-check/assets.json $env:RELEASE_TAG
+          if ($LASTEXITCODE -ne 0) { throw '更新清单或产物校验失败' }
+          gh release upload $env:RELEASE_TAG release-check/latest.json release-check/devport-latest.json --clobber
+          if ($LASTEXITCODE -ne 0) { throw '无法上传兼容更新清单' }
+          gh release download $env:RELEASE_TAG --pattern '*latest.json' --dir release-check --clobber
+          if ($LASTEXITCODE -ne 0) { throw '无法回读更新清单' }
+          node scripts/release.mjs verify release-check/latest.json release-check/assets.json $env:RELEASE_TAG
+          if ($LASTEXITCODE -ne 0) { throw '已上传的更新清单校验失败' }
 
       - name: Publish release as Latest
         shell: pwsh
@@ -135,5 +150,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          gh release edit $env:RELEASE_TAG --draft=false --prerelease=false --latest
+          gh release edit $env:RELEASE_TAG --notes-file "docs/releases/$($env:RELEASE_TAG).md" --draft=false --prerelease=false --latest
           if ($LASTEXITCODE -ne 0) { throw '无法公开 Release 并设为 Latest' }

@@ -45,15 +45,15 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_Shel
 libc = "0.2"
 
 [package]
-name = "remote-runner"
+name = "devport"
 version = "0.24.2"
-description = "Embedded Linux Remote Script Runner"
+description = "DevPort development workbench"
 edition = "2021"
 build = "build.rs"
-default-run = "remote-runner"
+default-run = "devport"
 
 [[bin]]
-name = "remote-runner"
+name = "devport"
 path = "src/main.rs"
 
 [[bin]]

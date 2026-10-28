@@ -44,7 +44,7 @@ React 18 + TypeScript，Zustand 管理状态，CodeMirror 6 编辑文本，xterm
 | 运行 | 运行当前脚本、带参数运行当前脚本；按原配置重新运行、停止所选任务（当前运行页可见时） |
 | 视图 | 面板子菜单、侧栏显隐、聚焦编辑器、控制面板区显隐、新建默认设备终端、侧栏位置；放大、缩小、重置缩放；重置布局 |
 | 设置 | 语言、主题；Ctrl+Tab 切换顺序；终端 Ctrl+C 复制选区、Ctrl+V 粘贴、选中即复制；开机自启动 |
-| 帮助 | 快捷键一览、检查更新、关于 Remote Runner |
+| 帮助 | 快捷键一览、检查更新、关于 DevPort |
 
 “视图 → 面板”继续从注册表生成，侧栏面板与中心面板分组；编辑器不提供手动显隐项。显示侧栏面板会同时显示侧栏。“设备 → 文件传输”保留面板显隐勾选和首次打开时的目录初始化；“浏览设备文件”只列出 SSH / WSL 设备，无适用设备时禁用。USB 共享仍限 Windows 桌面，开机自启动、退出和更新仍要求 Tauri 环境。子菜单支持悬停、点击和聚焦后按 Enter 打开，Escape 关闭整组菜单。
 
@@ -176,15 +176,15 @@ xterm 显示实例跟随标签保留，重连只替换后台 session，沿用当
 
 | 键 | 归属 |
 | --- | --- |
-| `remote-runner.layout.v1` | 面板、侧栏与分割比例 |
-| `remote-runner.recent-workspaces.v2` | 最近 10 个 WorkspaceRef；旧 v1 本机路径列表迁移后删除旧键 |
-| `remote-runner.language.v1` / `.theme.v1` / `.ui-zoom.v1` | 语言、主题、缩放 |
-| `remote-runner.copy-on-select.v1` | 独立终端和运行控制台共用的选中即复制开关，缺省关闭 |
-| `remote-runner.copy-on-ctrl-c.v1` / `.paste-on-ctrl-v.v1` | 独立终端和运行控制台共用的 Ctrl+C 复制选区 / Ctrl+V 粘贴开关，缺省均开启 |
-| `remote-runner.presets.v1` | 全局预置命令，最多 100 条；不等于工作区命令历史 |
-| `remote-runner.transfer-directories.v1` | 本机及各设备上次成功打开的目录；不存勾选项 |
-| `remote-runner.workspace-transfer-hidden.v1` | 已手动清除行内状态的传输任务 ID（最多 100 项）；不删除后台历史或文件 |
-| `remote-runner.device-workspace-directories.v1` | 设备工作区按设备 ID 保存的上次成功浏览路径；独立于文件传输目录，切换设备、重新显示侧栏和重启后恢复 |
+| `devport.layout.v1` | 面板、侧栏与分割比例 |
+| `devport.recent-workspaces.v2` | 最近 10 个 WorkspaceRef；旧 v1 本机路径列表迁移后删除旧键 |
+| `devport.language.v1` / `.theme.v1` / `.ui-zoom.v1` | 语言、主题、缩放 |
+| `devport.copy-on-select.v1` | 独立终端和运行控制台共用的选中即复制开关，缺省关闭 |
+| `devport.copy-on-ctrl-c.v1` / `.paste-on-ctrl-v.v1` | 独立终端和运行控制台共用的 Ctrl+C 复制选区 / Ctrl+V 粘贴开关，缺省均开启 |
+| `devport.presets.v1` | 全局预置命令，最多 100 条；不等于工作区命令历史 |
+| `devport.transfer-directories.v1` | 本机及各设备上次成功打开的目录；不存勾选项 |
+| `devport.workspace-transfer-hidden.v1` | 已手动清除行内状态的传输任务 ID（最多 100 项）；不删除后台历史或文件 |
+| `devport.device-workspace-directories.v1` | 设备工作区按设备 ID 保存的上次成功浏览路径；独立于文件传输目录，切换设备、重新显示侧栏和重启后恢复 |
 | `runner.settings.v1:<workspace-key>` | 目标、按设备 Python/Bash 选择、env、模式、超时；cwd 来自源 `.runner` |
 
 偏好坏数据防御性回落，写入失败保留会话设置。客户端附加 env 会落在本机 WebView 偏好及运行快照中，不应描述为秘密保险箱。完成任务的 replay 足以在重启后按原配置重新提交；旧记录缺少 replay 时只允许查看已有输出，不能猜测目标或设置。源 `.runner/commands.json` 继续保存可共享的入口/参数索引，与本机每次运行的快照分开。准备弹框任务和长连接上下文仍只在当前会话保留。
@@ -235,3 +235,5 @@ xterm 显示实例跟随标签保留，重连只替换后台 session，沿用当
 当前没有统一数据重置入口。需要人工清理时先结束任务并备份：清理应用配置会移除设备/信任/草稿及同步客户端身份，清 WebView 会重置偏好，远端工作区/运行时及操作系统自启动项另行管理。不能因清本机数据就声称远端目录或 USB 共享已撤销。
 
 源码：[编辑模型](../src/editorDocument.ts)、[布局](../src/layoutState.ts)、[恢复编排](../src/workEnvironment.ts)、[Rust 快照](../src-tauri/src/work_environment.rs)、[窗口约束](../src/windowState.ts)、[生命周期](../src/appLifecycle.ts)、[托盘](../src-tauri/src/tray.rs)。
+
+1.0 首次启动迁移旧应用目录和 WebView Local Storage；偏好模块初始化前将 `remote-runner.*` 导入 `devport.*`，已有新值优先，成功标记防止重复覆盖。旧数据仅作备份，详见 [改名兼容](00008-development-and-release.md#devport-改名兼容)。

@@ -80,8 +80,8 @@ test("recent workspaces persist successful opens, reorder repeats, and survive f
   assert.equal(useAppStore.getState().workspace, beforeFailure.workspace);
   assert.deepEqual(loadWorkspaceHistory(), recent);
 
-  const v1Key = "remote-runner.recent-workspaces.v1";
-  const v2Key = "remote-runner.recent-workspaces.v2";
+  const v1Key = "devport.recent-workspaces.v1";
+  const v2Key = "devport.recent-workspaces.v2";
   stored.set(v2Key, "invalid JSON");
   assert.deepEqual(loadWorkspaceHistory(), []);
   stored.set(v2Key, JSON.stringify([null, 7, "", "  ", "/valid", "/valid"]));

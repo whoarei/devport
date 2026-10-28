@@ -1,7 +1,7 @@
 import type { WorkspaceRef } from "./api";
 import { isDevicePath } from "./directoryCompletion";
 
-export const DEVICE_WORKSPACE_DIRECTORIES_KEY = "remote-runner.device-workspace-directories.v1";
+export const DEVICE_WORKSPACE_DIRECTORIES_KEY = "devport.device-workspace-directories.v1";
 
 export function loadDeviceWorkspaceDirectories(): Map<string, string> {
   try {

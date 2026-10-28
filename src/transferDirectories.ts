@@ -1,6 +1,6 @@
 import type { WorkspaceRef } from "./api";
 
-export const TRANSFER_DIRECTORIES_KEY = "remote-runner.transfer-directories.v1";
+export const TRANSFER_DIRECTORIES_KEY = "devport.transfer-directories.v1";
 export interface TransferDirectories { local: string | null; devices: Record<string, string> }
 
 function validPath(value: unknown): value is string {

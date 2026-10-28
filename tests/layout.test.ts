@@ -110,7 +110,7 @@ test("saved layouts restore history visibility and discard obsolete sidebar spli
     { historyVisible: true, historyCollapsed: true, sideSplit: 0.7 },
     { panelVisible: { history: true, commands: false }, panelCollapsed: { history: true }, splits: { sidebar: 0.7, center: 0.4 } },
   ]) {
-    data.set("remote-runner.layout.v1", JSON.stringify({ sidebarWidth: 320, sidebarPosition: "right", ...oldFields }));
+    data.set("devport.layout.v1", JSON.stringify({ sidebarWidth: 320, sidebarPosition: "right", ...oldFields }));
     const layout = loadLayout();
     assert.equal(layout.panelVisible.history, oldFields.panelVisible?.history ?? oldFields.historyVisible ?? true);
     assert.equal(layout.panelCollapsed.history, oldFields.panelCollapsed?.history ?? oldFields.historyCollapsed ?? false);
@@ -121,7 +121,7 @@ test("saved layouts restore history visibility and discard obsolete sidebar spli
     assert.equal(layout.splits.center, oldFields.splits?.center ?? DEFAULT_LAYOUT.splits.center);
     saveLayout(layout);
     assert.deepEqual(loadLayout(), layout);
-    assert.doesNotMatch(data.get("remote-runner.layout.v1")!, /sideSplit/);
+    assert.doesNotMatch(data.get("devport.layout.v1")!, /sideSplit/);
   }
 });
 
@@ -203,11 +203,11 @@ test("loadLayout/saveLayout round-trip and survive corrupted storage", (t) => {
   assert.deepEqual(loadLayout(), custom);
 
   // 损坏的 JSON → 默认布局
-  data.set("remote-runner.layout.v1", "{not json");
+  data.set("devport.layout.v1", "{not json");
   assert.deepEqual(loadLayout(), DEFAULT_LAYOUT);
 
   // 合法 JSON 但字段越界 → normalize 后回落
-  data.set("remote-runner.layout.v1", JSON.stringify({ sidebarWidth: -100 }));
+  data.set("devport.layout.v1", JSON.stringify({ sidebarWidth: -100 }));
   assert.equal(loadLayout().sidebarWidth, SIDEBAR_MIN);
 });
 

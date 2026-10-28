@@ -1,10 +1,10 @@
-# Remote Runner
+# DevPort
 
-在本机、SSH 设备、串口设备和 WSL 中运行脚本与命令的桌面工作台。
+连接本机、SSH、串口和 WSL 的跨环境开发工作台。
 
-Remote Runner 将工作区编辑、Python 环境准备、脚本运行、交互终端和文件传输放在同一个界面中，适合远程开发、脚本调试和重复测试。运行目标可以是 Linux 服务器、开发板、虚拟机，也可以是本机 Shell 或 WSL 发行版。
+DevPort 将工作区编辑、Python 环境准备、脚本运行、交互终端和文件传输放在同一个界面中，适合远程开发、脚本调试和重复测试。运行目标可以是 Linux 服务器、开发板、虚拟机，也可以是本机 Shell 或 WSL 发行版。
 
-[下载版本](https://github.com/whoarei/remote-runner/releases/latest) · [快速上手](#快速上手) · [开发入门](#开发入门) · [文档](#文档)
+[下载版本](https://github.com/whoarei/devport/releases/latest) · [快速上手](#快速上手) · [开发入门](#开发入门) · [文档](#文档)
 
 ## 主要功能
 
@@ -32,12 +32,14 @@ Remote Runner 将工作区编辑、Python 环境准备、脚本运行、交互�
 
 ## 下载安装
 
-从 [GitHub Releases](https://github.com/whoarei/remote-runner/releases/latest) 下载。当前发布流程提供 Windows x64 的两种分发形式：
+从 [GitHub Releases](https://github.com/whoarei/devport/releases/latest) 下载。当前发布流程提供 Windows x64 的两种分发形式：
 
 | 版本 | 使用方式 |
 | --- | --- |
 | 安装包（NSIS） | 下载安装并启动，支持应用内签名更新 |
 | 便携版（文件名以 `-portable.exe` 结尾） | 直接运行；更新时手动下载新版本 |
+
+从 Remote Runner 升级到 DevPort 1.0 后，程序为 `devport.exe`，安装身份及配置独立使用 DevPort。首次启动自动导入原设备、历史、工作环境、草稿与界面偏好；请先退出旧版。旧配置目录保留一份迁移前备份，新版正常运行不读取它，确认数据完整后可自行删除。已有 DevPort 配置不会被旧数据覆盖。安装版支持原应用内更新，便携版手动下载新文件运行。
 
 Windows 运行需要 WebView2。Linux/macOS 需自行准备环境、构建并验证，当前正式发布流程未提供对应安装包。
 
@@ -118,8 +120,8 @@ project/
 ### 启动开发应用
 
 ```powershell
-git clone https://github.com/whoarei/remote-runner.git
-cd remote-runner
+git clone https://github.com/whoarei/devport.git
+cd devport
 git lfs pull
 npm ci
 npm run tauri dev

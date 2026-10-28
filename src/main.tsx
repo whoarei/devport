@@ -1,19 +1,16 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
-import "./i18n";
-import "./styles.css";
-import "./theme.css";
-import { initializeTheme } from "./theme";
+import { migrateBrowserStorage } from "./storageMigration";
 
-initializeTheme();
-
-// 捕获阶段禁用 WebView 默认菜单，覆盖会 stopPropagation 的输入框和按钮。
-// 仅阻止默认行为，继续传递事件，让各面板的自定义右键菜单正常打开。
-document.addEventListener("contextmenu", (event) => event.preventDefault(), true);
-
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+async function start() {
+  try {
+    migrateBrowserStorage(localStorage);
+  } catch (error) {
+    console.error("Could not import application preferences", error);
+    const { default: i18n } = await import("./i18n");
+    const root = document.getElementById("root");
+    if (root) { root.setAttribute("role", "alert"); root.textContent = i18n.t("migration.storageFailed"); }
+    return;
+  }
+  // Preference modules initialize only after their legacy values are imported.
+  await import("./renderApp");
+}
+void start();

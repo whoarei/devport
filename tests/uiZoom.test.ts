@@ -57,6 +57,6 @@ test("UI zoom preference persists and loads", (t) => {
   const data = mockLocalStorage(t);
   assert.equal(loadUiZoom(), DEFAULT_UI_ZOOM);
   saveUiZoom(130);
-  assert.equal(data.get("remote-runner.ui-zoom.v1"), "130");
+  assert.equal(data.get("devport.ui-zoom.v1"), "130");
   assert.equal(loadUiZoom(), 130);
 });

@@ -1,8 +1,8 @@
-# Remote Runner agent guide
+# DevPort agent guide
 
 ## Project scope
 
-Remote Runner is a Tauri desktop application for running Python, Shell, and command workloads on remote devices. Any device reachable through one of the supported transports (SSH, serial, etc.) can be used — it is not limited to embedded Linux devices; Linux servers, dev boards, VMs, and local WSL distributions all work. The frontend is React/TypeScript; the backend is Rust with Tokio.
+DevPort is a Tauri desktop application for running Python, Shell, and command workloads on remote devices. Any device reachable through one of the supported transports (SSH, serial, etc.) can be used — it is not limited to embedded Linux devices; Linux servers, dev boards, VMs, and local WSL distributions all work. The frontend is React/TypeScript; the backend is Rust with Tokio.
 
 The supported transports are:
 
@@ -69,6 +69,8 @@ cargo test --offline --lib wsl::tests -- --include-ignored
 ```
 
 ## Implementation rules
+
+- DevPort 1.0 uses `com.devport.app`, `devport.exe`, DevPort installer/autostart identity and `devport.*` preferences. Preserve the one-time legacy data/installation migration, original-data backup, updater signing key, legacy GitHub redirect and paired updater manifests. New projects use `[tool.devport]` while legacy project tables and remote resource identities remain compatible. See `docs/00008-development-and-release.md` and `src-tauri/windows/README.md` before changing migration or packaging.
 
 - Validate all device and run input at the Rust boundary. Do not rely on frontend validation for safety or path containment.
 - Preserve raw output bytes through the backend event boundary. Output events are base64 encoded before reaching the frontend.

@@ -3,6 +3,7 @@ pub mod device;
 pub mod error;
 pub mod events;
 pub mod file_transfer;
+pub mod identity_migration;
 pub mod local;
 pub mod process;
 pub mod remote_workspace;
@@ -37,6 +38,11 @@ pub fn run() {
         )
         .init();
 
+    if let Err(error) = identity_migration::prepare() {
+        identity_migration::report_failure(&error);
+        return;
+    }
+
     tauri::Builder::default()
         // Single instance must be registered first: a second launch exits
         // immediately and its callback runs in the already-running instance.
@@ -49,6 +55,7 @@ pub fn run() {
         }))
         .plugin(
             tauri_plugin_autostart::Builder::new()
+                .app_name("DevPort")
                 .args(["--minimized"])
                 .build(),
         )
@@ -57,10 +64,11 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::UpdateState::default())
         .setup(|app| {
-            let config_dir = app
-                .path()
-                .app_config_dir()
-                .unwrap_or_else(|_| dirs::config_dir().unwrap_or_default().join("remote-runner"));
+            let config_dir = app.path().app_config_dir().unwrap_or_else(|_| {
+                dirs::config_dir()
+                    .unwrap_or_default()
+                    .join(identity_migration::APP_ID)
+            });
             std::fs::create_dir_all(&config_dir).ok();
             tracing::info!("config dir: {}", config_dir.display());
 

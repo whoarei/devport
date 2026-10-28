@@ -6,7 +6,7 @@
 /** 切换顺序：sequential 按标签栏左右顺序；mru 按最近使用栈 */
 export type TabCycleOrder = "sequential" | "mru";
 
-const STORAGE_KEY = "remote-runner.tab-cycle-order.v1";
+const STORAGE_KEY = "devport.tab-cycle-order.v1";
 
 /** 读取持久化的顺序偏好；缺省或非法值回落 sequential。 */
 export function loadTabCycleOrder(): TabCycleOrder {

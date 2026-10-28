@@ -25,18 +25,18 @@ function environment(t: test.TestContext) {
 test("theme restores before rendering and persists an explicit choice", (t) => {
   const env = environment(t);
   assert.equal(loadThemePreference(), "dark");
-  env.data.set("remote-runner.theme.v1", "light");
+  env.data.set("devport.theme.v1", "light");
   const stop = initializeTheme();
   t.after(stop);
   assert.equal(env.document.documentElement.dataset.theme, "light");
   useThemeStore.getState().setPreference("dark");
   assert.equal(env.document.documentElement.dataset.theme, "dark");
-  assert.equal(env.data.get("remote-runner.theme.v1"), "dark");
+  assert.equal(env.data.get("devport.theme.v1"), "dark");
 });
 
 test("system theme follows live changes without overriding manual selection and unsubscribes", (t) => {
   const env = environment(t);
-  env.data.set("remote-runner.theme.v1", "system");
+  env.data.set("devport.theme.v1", "system");
   const stop = initializeTheme();
   assert.equal(env.document.documentElement.dataset.theme, "light");
   env.media.matches = true;
@@ -55,12 +55,12 @@ test("system theme follows live changes without overriding manual selection and 
 
 test("theme survives invalid or unavailable storage and receives preference changes from another window", (t) => {
   const env = environment(t);
-  env.data.set("remote-runner.theme.v1", "invalid");
+  env.data.set("devport.theme.v1", "invalid");
   const stop = initializeTheme();
   t.after(stop);
   assert.equal(useThemeStore.getState().theme, "dark");
-  env.data.set("remote-runner.theme.v1", "light");
-  const event = Object.assign(new Event("storage"), { key: "remote-runner.theme.v1", storageArea: env.storage });
+  env.data.set("devport.theme.v1", "light");
+  const event = Object.assign(new Event("storage"), { key: "devport.theme.v1", storageArea: env.storage });
   env.browserEvents.dispatchEvent(event);
   assert.equal(env.document.documentElement.dataset.theme, "light");
   Object.defineProperty(globalThis, "localStorage", { configurable: true, get: () => { throw new Error("blocked"); } });

@@ -4,7 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 export const DEFAULT_UI_ZOOM = 100;
 export const UI_ZOOM_LEVELS = [70, 80, 90, 100, 110, 120, 130, 140, 150, 175, 200] as const;
 
-const STORAGE_KEY = "remote-runner.ui-zoom.v1";
+const STORAGE_KEY = "devport.ui-zoom.v1";
 
 export type UiZoomAction = "in" | "out" | "reset";
 

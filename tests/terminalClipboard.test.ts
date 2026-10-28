@@ -57,7 +57,7 @@ test("clipboard switches default on, persist independently and retain session se
   for (const name of ["copyOnCtrlC", "pasteOnCtrlV"] as const) {
     for (const value of [null, "", "true", "0", "FALSE", '"false"']) {
       values.clear();
-      if (value !== null) values.set(name === "copyOnCtrlC" ? "remote-runner.copy-on-ctrl-c.v1" : "remote-runner.paste-on-ctrl-v.v1", value);
+      if (value !== null) values.set(name === "copyOnCtrlC" ? "devport.copy-on-ctrl-c.v1" : "devport.paste-on-ctrl-v.v1", value);
       assert.equal(loadTerminalClipboardPreference(name), true);
     }
     saveTerminalClipboardPreference(name, false);

@@ -1,6 +1,6 @@
 import type { ConsoleMode } from "./api";
 
-const STORAGE_KEY = "remote-runner.presets.v1";
+const STORAGE_KEY = "devport.presets.v1";
 export const MAX_PRESETS = 100;
 export const MAX_PRESET_NAME = 60;
 export const MAX_PRESET_COMMAND = 2000;

@@ -460,14 +460,14 @@ pub fn parse_inputs(
         ));
     }
 
-    // 5. [tool.remote-runner] 运行配置
+    // New projects use DevPort; legacy projects remain readable without rewriting them.
     let empty = toml::Table::new();
     let rr = pyproject
         .get("tool")
-        .and_then(|t| t.get("remote-runner"))
+        .and_then(|t| t.get("devport").or_else(|| t.get("remote-runner")))
         .and_then(toml::Value::as_table)
         .or_else(|| launch.map(|_| &empty))
-        .ok_or_else(|| invalid("pyproject.toml must have a [tool.remote-runner] table"))?;
+        .ok_or_else(|| invalid("pyproject.toml must have a [tool.devport] table"))?;
     let mode = if let Some((_, module)) = launch {
         if module {
             EntryMode::Module
@@ -664,7 +664,7 @@ pub fn template_project_name(dir: &Path) -> String {
 /// 模板本身不构成完整项目：uv.lock 与 .python-version 需要用户补齐。
 pub fn config_template(project_name: &str) -> String {
     format!(
-        r#"# Remote Runner 工作区配置（Managed Python，uv 项目契约）
+        r#"# DevPort 工作区配置（Managed Python，uv 项目契约）
 # 完整运行还需要两个文件（本模板不生成）：
 #   .python-version  CPython 次版本或补丁版本，如 3.12 或 3.12.9，须满足 requires-python
 #   uv.lock          在本目录执行 `uv lock` 生成
@@ -674,7 +674,7 @@ name = "{project_name}"
 requires-python = "==3.12.*"
 dependencies = []
 
-[tool.remote-runner]
+[tool.devport]
 # 入口：mode = "script" 时为工作区内脚本路径；
 #       mode = "module" 时为点分模块名（如 mypkg.main，模块目录含 __main__.py 时写包名）
 entry = "main.py"
@@ -755,14 +755,27 @@ python-path = ["src"]
         assert_eq!(p.python_path, vec!["src"]);
         assert!(p.lock_sha256.len() == 64);
         assert!(p.package_source_identity.len() == 64);
+        f.write(
+            "pyproject.toml",
+            &PYPROJECT.replace("[tool.remote-runner]", "[tool.devport]"),
+        );
+        assert_eq!(inspect(&f.0).unwrap().entry, p.entry);
+        f.write(
+            "pyproject.toml",
+            &format!(
+                "{}\n[tool.remote-runner]\nentry='missing.py'\n",
+                PYPROJECT.replace("[tool.remote-runner]", "[tool.devport]")
+            ),
+        );
+        assert_eq!(inspect(&f.0).unwrap().entry, p.entry);
     }
 
     #[test]
-    fn config_template_is_valid_toml_with_remote_runner_table() {
+    fn config_template_is_valid_toml_with_devport_table() {
         let text = config_template("audio-test");
         let parsed: toml::Table = text.parse().unwrap();
         assert_eq!(parsed["project"]["name"].as_str().unwrap(), "audio-test");
-        let rr = &parsed["tool"]["remote-runner"];
+        let rr = &parsed["tool"]["devport"];
         assert_eq!(rr["entry"].as_str().unwrap(), "main.py");
         assert_eq!(rr["mode"].as_str().unwrap(), "script");
         assert!(rr["python-path"].as_array().unwrap().is_empty());

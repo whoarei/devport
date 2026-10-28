@@ -1,6 +1,6 @@
-use remote_runner::device::{AuthMethod, DeviceProfile};
-use remote_runner::process::RunState;
-use remote_runner::runner::{RunEvent, RunManager, RunRequest, RunStatus};
+use devport::device::{AuthMethod, DeviceProfile};
+use devport::process::RunState;
+use devport::runner::{RunEvent, RunManager, RunRequest, RunStatus};
 use russh::{server, Channel, ChannelId};
 use std::sync::Arc;
 use std::time::Duration;
@@ -193,7 +193,7 @@ async fn run_case(behavior: Behavior, timeout: u64) -> (RunStatus, Vec<u8>) {
         },
         workspace_root: "/tmp/test".into(),
     };
-    let (tx, mut rx) = remote_runner::events::channel();
+    let (tx, mut rx) = devport::events::channel();
     let manager = RunManager::new(&root, tx);
     let request: RunRequest = serde_json::from_value(serde_json::json!({
         "device_id": "test", "kind": "command", "command": "test",

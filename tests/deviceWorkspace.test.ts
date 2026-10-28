@@ -432,7 +432,7 @@ function directoryStorage(t: test.TestContext) {
 
 test("path memory persists across reloads independently of transfer-browser preferences", async (t) => {
   const data = directoryStorage(t);
-  data.set("remote-runner.transfer-directories.v1", "unchanged transfer preferences");
+  data.set("devport.transfer-directories.v1", "unchanged transfer preferences");
   t.mock.method(transferApi, "listWithin", async (endpoint) => directory(endpoint));
   const browser = createDeviceWorkspaceStore(loadDeviceWorkspaceDirectories());
   await browser.getState().follow(device("a"));
@@ -441,7 +441,7 @@ test("path memory persists across reloads independently of transfer-browser pref
   await restored.getState().follow(device("a"));
   assert.deepEqual(restored.getState().root, deviceWorkspace("a", "/saved project/中文"));
   assert.deepEqual(JSON.parse(data.get(DEVICE_WORKSPACE_DIRECTORIES_KEY)!), { a: "/saved project/中文" });
-  assert.equal(data.get("remote-runner.transfer-directories.v1"), "unchanged transfer preferences");
+  assert.equal(data.get("devport.transfer-directories.v1"), "unchanged transfer preferences");
 });
 
 test("corrupt persisted paths are ignored and unavailable storage still permits session restoration", async (t) => {

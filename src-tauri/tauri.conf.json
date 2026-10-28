@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "com.devrunner.remote-runner",
-  "productName": "Remote Runner",
+  "identifier": "com.devport.app",
+  "productName": "DevPort",
   "version": "0.24.2",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Remote Runner",
+        "title": "DevPort",
         "decorations": false,
         "visible": false,
         "width": 1280,
@@ -37,7 +37,8 @@
     ],
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerHooks": "windows/migration.nsh"
       }
     }
   },
@@ -48,7 +49,7 @@
       },
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhGOUIzNEFCODRFOTE4ODMKUldTREdPbUVxelNiandxMlMxbm5EbnUrN3ZXekFEaXFIeUYvcHhxeTNaOHNVTUNzYzE5VkhrQS8K",
       "endpoints": [
-        "https://github.com/whoarei/remote-runner/releases/latest/download/latest.json"
+        "https://github.com/whoarei/devport/releases/latest/download/devport-latest.json"
       ]
     }
   }

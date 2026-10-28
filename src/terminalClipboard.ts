@@ -6,8 +6,8 @@ export interface TerminalClipboardPreferences {
 }
 
 const STORAGE_KEYS = {
-  copyOnCtrlC: "remote-runner.copy-on-ctrl-c.v1",
-  pasteOnCtrlV: "remote-runner.paste-on-ctrl-v.v1",
+  copyOnCtrlC: "devport.copy-on-ctrl-c.v1",
+  pasteOnCtrlV: "devport.paste-on-ctrl-v.v1",
 };
 
 export function loadTerminalClipboardPreference(name: keyof TerminalClipboardPreferences): boolean {

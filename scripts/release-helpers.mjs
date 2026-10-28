@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 // One stable channel; reject prereleases, build metadata, leading zeros and shell text.
 export function releaseVersion(tag) {
@@ -20,7 +21,7 @@ export function syncVersion(root, tag) {
   });
   for (const [file, pattern] of [
     ["src-tauri/Cargo.toml", /(\[package\][\s\S]*?\nversion\s*=\s*")[^"]+("\r?\n)/],
-    ["src-tauri/Cargo.lock", /(\[\[package\]\]\r?\nname = "remote-runner"\r?\nversion = ")[^"]+("\r?\n)/],
+    ["src-tauri/Cargo.lock", /(\[\[package\]\]\r?\nname = "devport"\r?\nversion = ")[^"]+("\r?\n)/],
   ]) {
     const source = readFileSync(join(root, file), "utf8");
     if (!pattern.test(source)) throw new Error(`找不到应用版本：${file}`);
@@ -30,16 +31,57 @@ export function syncVersion(root, tag) {
   return version;
 }
 
-export function validateManifest(manifest, assets, version) {
+const legacyRepository = "whoarei/remote-runner";
+const currentRepository = "whoarei/devport";
+
+function windowsPlatforms(manifest, version) {
   if (manifest.version !== version) throw new Error("更新清单版本与标签不一致");
-  const platform = manifest.platforms?.["windows-x86_64"] ?? manifest.platforms?.["windows-x86_64-nsis"];
+  const entries = Object.entries(manifest.platforms ?? {});
+  if (!entries.length || entries.some(([key]) => !["windows-x86_64", "windows-x86_64-nsis"].includes(key))) throw new Error("更新清单平台无效");
+  return entries.map(([, platform]) => platform);
+}
+
+function installerAsset(platform, version, repositories) {
   if (!platform?.signature?.trim()) throw new Error("更新清单缺少签名");
-  const url = new URL(platform.url);
-  const prefix = `/whoarei/remote-runner/releases/download/v${version}/`;
-  if (url.origin !== "https://github.com" || url.username || url.password || url.search || url.hash || !url.pathname.startsWith(prefix)) throw new Error("更新清单地址无效");
-  const name = decodeURIComponent(url.pathname.slice(prefix.length));
-  if (name.includes("/") || !name.endsWith("-setup.exe")) throw new Error("更新清单必须指向 NSIS exe");
-  for (const asset of [name, `${name}.sig`, `Remote.Runner_${version}_x64-portable.exe`]) {
-    if (!assets.some((entry) => entry.name === asset && entry.size > 0)) throw new Error(`Release 缺少产物：${asset}`);
+  const prefix = repositories.map((repo) => `https://github.com/${repo}/releases/download/v${version}/`).find((prefix) => platform.url?.startsWith(prefix));
+  if (!prefix) throw new Error("更新清单地址无效");
+  const name = platform.url.slice(prefix.length);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*-setup\.exe$/.test(name)) throw new Error("更新清单必须指向 NSIS exe");
+  return name;
+}
+
+// Versions through 0.24.2 only accept the old repository URL. GitHub redirects it
+// to DevPort; the signed installer bytes and signature are unchanged.
+export function bridgeUpdaterManifest(manifest, version) {
+  const bridged = structuredClone(manifest);
+  for (const platform of windowsPlatforms(bridged, version)) {
+    const name = installerAsset(platform, version, [currentRepository, legacyRepository]);
+    platform.url = `https://github.com/${legacyRepository}/releases/download/v${version}/${name}`;
   }
+  return bridged;
+}
+
+export function canonicalUpdaterManifest(manifest, version) {
+  const canonical = structuredClone(manifest);
+  for (const platform of windowsPlatforms(canonical, version)) {
+    const name = installerAsset(platform, version, [currentRepository, legacyRepository]);
+    platform.url = `https://github.com/${currentRepository}/releases/download/v${version}/${name}`;
+  }
+  return canonical;
+}
+
+export function validateManifest(manifest, assets, version, channel = "legacy") {
+  if (!["legacy", "devport"].includes(channel)) throw new Error("更新通道无效");
+  for (const platform of windowsPlatforms(manifest, version)) {
+    const name = installerAsset(platform, version, [channel === "legacy" ? legacyRepository : currentRepository]);
+    for (const asset of [name, `${name}.sig`, `DevPort_${version}_x64-portable.exe`]) {
+      if (!assets.some((entry) => entry.name === asset && entry.size > 0)) throw new Error(`Release 缺少产物：${asset}`);
+    }
+  }
+}
+
+export function validateUpdaterManifests(legacy, canonical, assets, version) {
+  validateManifest(legacy, assets, version);
+  validateManifest(canonical, assets, version, "devport");
+  if (!isDeepStrictEqual(bridgeUpdaterManifest(canonical, version), legacy)) throw new Error("新旧更新清单不一致");
 }

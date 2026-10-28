@@ -1,7 +1,7 @@
 import { localWorkspace, WorkspaceRef, workspaceRefEquals } from "./api";
 
-const STORAGE_KEY_V1 = "remote-runner.recent-workspaces.v1";
-const STORAGE_KEY = "remote-runner.recent-workspaces.v2";
+const STORAGE_KEY_V1 = "devport.recent-workspaces.v1";
+const STORAGE_KEY = "devport.recent-workspaces.v2";
 const MAX_RECENT_WORKSPACES = 10;
 
 /** 解析单个条目：v2 标记对象，或 v1 裸字符串（本机目录，自动迁移） */

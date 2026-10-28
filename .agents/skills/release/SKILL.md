@@ -1,9 +1,9 @@
 ---
 name: release
-description: Remote Runner 版本发布流程：先展示更新内容并确定版本号，再同步版本号、写发布说明、提交、打 tag 推送触发 GitHub Actions 构建、校验并自动发布为 Latest。当用户要求本项目发布/发版/release 时使用，版本号可以尚未指定。
+description: DevPort 版本发布流程：先展示更新内容并确定版本号，再同步版本号、写发布说明、提交、打 tag 推送触发 GitHub Actions 构建、校验并自动发布为 Latest。当用户要求本项目发布/发版/release 时使用，版本号可以尚未指定。
 ---
 
-# Remote Runner 发布流程
+# DevPort 发布流程
 
 发布一个稳定版本（tag 格式严格为 `vX.Y.Z`，禁止预发布后缀、前导零；各字段 ≤ 65535）。发布动作包含 git 提交、打 tag、推送；先在对话中展示本次更新内容，再确定版本号。版本号尚未明确时，展示后请用户确认；用户已明确指定版本号则按已有授权继续，不重复询问。
 
@@ -28,10 +28,10 @@ description: Remote Runner 版本发布流程：先展示更新内容并确定�
    该脚本更新 5 个文件：`package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`。不要手工改版本号。
 
 4. **写发布说明** `docs/releases/vX.Y.Z.md`，按 [开发、验证与发布](../../../docs/00008-development-and-release.md) 第 6 节模板编写（目录不存在时新建）：
-   - `# Remote Runner vX.Y.Z` 标题
+   - `# DevPort vX.Y.Z` 标题
    - `## 新功能` 和/或 `## 修复`：面向用户的要点
    - `## 验证范围`：跑了哪些测试、哪些行为需手动验证（如桌面/硬件相关）
-   - `## 升级说明`：便携版文件名写 `Remote.Runner_X.Y.Z_x64-portable.exe`；固定提醒 `latest.json` 与 `.exe.sig` 用于更新校验
+   - `## 升级说明`：便携版文件名写 `DevPort_X.Y.Z_x64-portable.exe`；固定提醒两套更新清单与 `.exe.sig` 用于更新校验
 
 5. **验证**：
    ```powershell
@@ -58,11 +58,13 @@ description: Remote Runner 版本发布流程：先展示更新内容并确定�
    gh run list --workflow=release.yml --limit 3
    gh run watch <run-id>
    ```
-   工作流产出 NSIS 安装包、`.exe.sig` 签名、`latest.json` 更新清单、`Remote.Runner_X.Y.Z_x64-portable.exe` 便携版，并自动校验清单与产物一致性（`scripts/release.mjs verify`）。上传期间保持草稿状态，校验通过后自动公开并设为 Latest；任何前置步骤失败均不会执行公开步骤。
+   工作流产出 NSIS 安装包、`.exe.sig` 签名、`latest.json` / `devport-latest.json` 更新清单、`DevPort_X.Y.Z_x64-portable.exe` 便携版，并自动校验清单与产物一致性（`scripts/release.mjs verify`）。上传期间保持草稿状态，校验通过后自动公开并设为 Latest；任何前置步骤失败均不会执行公开步骤。
 
 9. **核实并告知用户**：确认工作流成功、Release 已公开且为 Latest，核对安装包、便携版、签名和更新清单齐全，再提供发布页链接。无需用户手动 Publish；若仍为草稿或发布步骤失败，明确报告未完成发布。
 
 ## 注意事项
+
+- DevPort 兼容旧版更新依赖 `whoarei/remote-runner` 的 GitHub 重定向；禁止占用旧仓库名。CI 必须在草稿阶段执行 `release.mjs bridge`、校验并重传 `latest.json` 和 `devport-latest.json`、通过隔离安装器测试后才能公开，详见 [改名兼容](../../../docs/00008-development-and-release.md#devport-改名兼容)。保持 1.0 的 DevPort 身份、签名公钥和旧版迁移入口；不得让旧数据覆盖新配置。
 
 - 签名私钥在仓库 Secrets（`TAURI_SIGNING_PRIVATE_KEY`），本地无法构建带签名的发布产物；发布必须走 CI。
 - 工作流内也会执行一次 `release.mjs sync`，但仓库里的版本提交仍要提前做（安装包「关于」页等读取的是仓库版本）。

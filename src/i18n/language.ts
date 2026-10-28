@@ -5,7 +5,7 @@ export type Language = "zh" | "en";
 /** 语言偏好：具体语言，或跟随系统（system 为未选择时的默认） */
 export type LanguagePreference = Language | "system";
 
-const STORAGE_KEY = "remote-runner.language.v1";
+const STORAGE_KEY = "devport.language.v1";
 
 /** 跟随系统：zh 开头用中文，其余英文；无法检测时回落中文。 */
 export function detectLanguage(): Language {

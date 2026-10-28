@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Remote Runner 产品方案：需求、工作台交互、跨设备运行、环境管理及能力边界。">
-<title>00001 · 产品方案 — Remote Runner</title>
+<meta name="description" content="DevPort 产品方案：需求、工作台交互、跨设备运行、环境管理及能力边界。">
+<title>00001 · 产品方案 — DevPort</title>
 <style>
 :root{color-scheme:light;--ink:#172536;--muted:#536579;--line:#dce5e9;--paper:#fff;--bg:#f3f6f7;--accent:#087b72;--soft:#e9f5f2;--nav:#102e35}
 *{box-sizing:border-box}
@@ -142,7 +142,7 @@ pre{background:#eee;color:#111}
 
 <section id="position">
 <h2><small>01 / POSITIONING</small>定位、用户与需求</h2>
-<p>Remote Runner 面向需要反复在不同运行环境中执行 Python、Bash 或 Shell 命令的开发者和测试人员。目标可以是 Linux 服务器、开发板、虚拟机、可达的 SSH 设备、已登录 Shell 的串口设备、本机 WSL 或本机 Shell。</p>
+<p>DevPort 面向需要反复在不同运行环境中执行 Python、Bash 或 Shell 命令的开发者和测试人员。目标可以是 Linux 服务器、开发板、虚拟机、可达的 SSH 设备、已登录 Shell 的串口设备、本机 WSL 或本机 Shell。</p>
 <div class="grid">
 <article class="card"><span class="num">P01 · 开发调试</span>
 <h3>减少重复搬运与启动操作</h3>
@@ -349,7 +349,7 @@ pre{background:#eee;color:#111}
 <p>验收需区分自动化模拟、真实本机进程、显式 WSL 和硬件实测。普通套件不依赖物理串口或 USB；相关硬件能力需单独验证，见 <a href="00008-development-and-release.md">开发、验证与发布</a>。</p>
 <p>后续优先围绕当前使用阻力评估：运行产物浏览与获取、可靠清理与锁恢复、真实目标兼容性、离线/镜像交付、更多运行时及 Serial Agent。它们是候选方向，没有在本方案中承诺版本或日期；新增需求先补产品行为，再补技术设计。</p>
 </section>
-<footer class="footer"><span>Remote Runner · 00001 · 2026-10-20</span><a href="00002-architecture.html">继续阅读：技术方案 →</a></footer>
+<footer class="footer"><span>DevPort · 00001 · 2026-10-20</span><a href="00002-architecture.html">继续阅读：技术方案 →</a></footer>
 </main>
 <script>
 const links=[...document.querySelectorAll('nav a')];if('IntersectionObserver'in window){const observer=new IntersectionObserver(entries=>{const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top);if(visible[0])links.forEach(a=>a.classList.toggle('active',a.hash==='#'+visible[0].target.id))},{rootMargin:'-10% 0px -65% 0px'});document.querySelectorAll('main section[id]').forEach(s=>observer.observe(s));}

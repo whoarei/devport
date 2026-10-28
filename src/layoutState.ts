@@ -1,6 +1,6 @@
 import { PANELS, type PanelId } from "./panels/registry";
 
-const STORAGE_KEY = "remote-runner.layout.v1";
+const STORAGE_KEY = "devport.layout.v1";
 
 export const SIDEBAR_MIN = 200;
 export const SIDEBAR_MAX = 480;

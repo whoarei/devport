@@ -90,10 +90,10 @@ test("loadPresets/savePresets round-trip and survive corrupted storage", (t) => 
   assert.deepEqual(loadPresets(), presets);
 
   // 损坏的 JSON → 空列表
-  data.set("remote-runner.presets.v1", "{not json");
+  data.set("devport.presets.v1", "{not json");
   assert.deepEqual(loadPresets(), []);
 
   // 合法 JSON 但含无效条目 → 过滤
-  data.set("remote-runner.presets.v1", JSON.stringify([{ id: "a", name: "x", command: "y" }, { name: "" }]));
+  data.set("devport.presets.v1", JSON.stringify([{ id: "a", name: "x", command: "y" }, { name: "" }]));
   assert.equal(loadPresets().length, 1);
 });

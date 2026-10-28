@@ -1125,6 +1125,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "devport"
+version = "0.24.2"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "dirs 5.0.1",
+ "flate2",
+ "futures",
+ "libc",
+ "parking_lot",
+ "portable-pty",
+ "reqwest",
+ "russh",
+ "russh-sftp",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-serial",
+ "toml 0.8.2",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "windows-sys 0.61.2",
+ "winreg 0.55.0",
+ "zip",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4044,45 +4083,6 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
-
-[[package]]
-name = "remote-runner"
-version = "0.24.2"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "dirs 5.0.1",
- "flate2",
- "futures",
- "libc",
- "parking_lot",
- "portable-pty",
- "reqwest",
- "russh",
- "russh-sftp",
- "semver",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tar",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "thiserror 1.0.69",
- "tokio",
- "tokio-serial",
- "toml 0.8.2",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "windows-sys 0.61.2",
- "winreg 0.55.0",
- "zip",
-]
 
 [[package]]
 name = "reqwest"

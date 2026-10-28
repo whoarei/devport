@@ -7,9 +7,9 @@
 //!
 //! 默认 host=172.16.0.67 user=root（密钥认证，使用 ~/.ssh 下的默认私钥）
 
-use remote_runner::device::{AuthMethod, DeviceProfile};
-use remote_runner::runner::{RunEvent, RunManager, RunRequest, ScriptKind};
-use remote_runner::ssh::session::ConsoleMode;
+use devport::device::{AuthMethod, DeviceProfile};
+use devport::runner::{RunEvent, RunManager, RunRequest, ScriptKind};
+use devport::ssh::session::ConsoleMode;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -52,7 +52,7 @@ async fn main() {
         let interact = mode == "interact-test";
         let config_dir = dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("remote-runner");
+            .join("devport-cli");
         std::fs::create_dir_all(&config_dir).ok();
 
         // 准备临时工作区
@@ -76,16 +76,16 @@ async fn main() {
             port: 22,
             username: user.clone(),
             auth: AuthMethod::Key { key_path: None },
-            workspace_root: remote_runner::device::default_workspace_root(),
+            workspace_root: devport::device::default_workspace_root(),
         };
 
-        let (event_tx, mut event_rx) = remote_runner::events::channel();
+        let (event_tx, mut event_rx) = devport::events::channel();
         let manager = RunManager::new(&config_dir, event_tx);
 
         let request = if interact {
             RunRequest {
                 device_id: device.id.clone(),
-                workspace: Some(remote_runner::workspace_ref::WorkspaceRef::local(
+                workspace: Some(devport::workspace_ref::WorkspaceRef::local(
                     ws.to_string_lossy(),
                 )),
                 kind: ScriptKind::Python,
@@ -230,7 +230,7 @@ async fn main() {
 
     let config_dir = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("remote-runner");
+        .join("devport-cli");
     std::fs::create_dir_all(&config_dir).ok();
 
     let device = DeviceProfile {
@@ -245,17 +245,17 @@ async fn main() {
         port: 22,
         username: user,
         auth: AuthMethod::Key { key_path: None },
-        workspace_root: remote_runner::device::default_workspace_root(),
+        workspace_root: devport::device::default_workspace_root(),
     };
 
-    let (event_tx, mut event_rx) = remote_runner::events::channel();
+    let (event_tx, mut event_rx) = devport::events::channel();
     let manager = RunManager::new(&config_dir, event_tx);
 
     let run_id = manager
         .start(
             RunRequest {
                 device_id: device.id.clone(),
-                workspace: workspace.map(remote_runner::workspace_ref::WorkspaceRef::local),
+                workspace: workspace.map(devport::workspace_ref::WorkspaceRef::local),
                 kind,
                 entry,
                 args: run_args,

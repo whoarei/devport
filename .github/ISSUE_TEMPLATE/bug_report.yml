@@ -1,5 +1,5 @@
 name: Bug 报告
-description: 报告 Remote Runner 的异常行为，帮助我们定位和修复问题。
+description: 报告 DevPort 的异常行为，帮助我们定位和修复问题。
 title: "[Bug] "
 labels: ["bug"]
 body:
@@ -18,7 +18,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Remote Runner 版本
+      label: DevPort 版本
       description: 请填写发布版本号；如果从源码运行，请填写 commit SHA。
       placeholder: 版本号或 commit SHA
     validations:
@@ -27,7 +27,7 @@ body:
     id: operating-system
     attributes:
       label: 本机操作系统
-      description: 运行 Remote Runner 的系统、版本和架构。
+      description: 运行 DevPort 的系统、版本和架构。
       placeholder: 例如 Windows 11 24H2 x64
     validations:
       required: true

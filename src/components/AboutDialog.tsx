@@ -12,7 +12,7 @@ import { useAppStore } from "../store";
 import { transferActive } from "../transferApi";
 import { useTransferStore } from "../transferStore";
 
-const PROJECT_URL = "https://github.com/whoarei/remote-runner";
+const PROJECT_URL = "https://github.com/whoarei/devport";
 const RELEASES_URL = `${PROJECT_URL}/releases/latest`;
 
 type UpdatePhase =

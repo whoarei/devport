@@ -1,6 +1,6 @@
 import type { Terminal } from "@xterm/xterm";
 
-const STORAGE_KEY = "remote-runner.copy-on-select.v1";
+const STORAGE_KEY = "devport.copy-on-select.v1";
 
 export function loadCopyOnSelect(): boolean {
   try { return typeof localStorage !== "undefined" && localStorage.getItem(STORAGE_KEY) === "true"; }
