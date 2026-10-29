@@ -28,7 +28,13 @@
 !macro DevPortInstallDirectoryMenu DIRECTORY ARGUMENT
   WriteRegStr HKCU "${DEVPORT_CONTEXT_ROOT}\${DIRECTORY}\shell\${DEVPORT_CONTEXT_VERB}" "" "$3"
   WriteRegStr HKCU "${DEVPORT_CONTEXT_ROOT}\${DIRECTORY}\shell\${DEVPORT_CONTEXT_VERB}" "Icon" '$\"$INSTDIR\${MAINBINARYNAME}.exe$\",0'
-  WriteRegStr HKCU "${DEVPORT_CONTEXT_ROOT}\${DIRECTORY}\shell\${DEVPORT_CONTEXT_VERB}" "MultiSelectModel" "Single"
+  !if "${DIRECTORY}" == "Directory"
+    WriteRegStr HKCU "${DEVPORT_CONTEXT_ROOT}\${DIRECTORY}\shell\${DEVPORT_CONTEXT_VERB}" "MultiSelectModel" "Single"
+  !else
+    ; A background menu has zero selected items: Single hides the verb entirely.
+    ; Delete the value too, so upgrades repair the registration written by 1.1.0.
+    DeleteRegValue HKCU "${DEVPORT_CONTEXT_ROOT}\${DIRECTORY}\shell\${DEVPORT_CONTEXT_VERB}" "MultiSelectModel"
+  !endif
   ; The dot keeps a drive root's trailing backslash from escaping its closing quote.
   WriteRegStr HKCU "${DEVPORT_CONTEXT_ROOT}\${DIRECTORY}\shell\${DEVPORT_CONTEXT_VERB}\command" "" '$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --open-workspace $\"${ARGUMENT}\.$\"'
 !macroend

@@ -34,14 +34,22 @@ function Compile([string]$script) {
   Assert ($LASTEXITCODE -eq 0) 'NSIS fixture compilation failed'
 }
 function DefaultRegistryValue([string]$key) { return (Get-Item -LiteralPath $key).GetValue('') }
+Add-Type -Path (Join-Path $PSScriptRoot 'directory-menu-probe.cs')
+function BackgroundMenuVisible {
+  $label = DefaultRegistryValue $backgroundMenu
+  $entries = [DevPortDirectoryMenuProbe]::ReadBackground($root, "$contextRoot\Directory\Background")
+  return $entries -contains $label
+}
 function AssertDirectoryMenus {
   Assert ((DefaultRegistryValue "$directoryMenu\command") -eq "`"$newDir\$newBinary`" --open-workspace `"%1\.`"") 'Directory command is not safely quoted'
   Assert ((DefaultRegistryValue "$backgroundMenu\command") -eq "`"$newDir\$newBinary`" --open-workspace `"%V\.`"") 'Background command is not safely quoted'
   foreach ($menu in @($directoryMenu, $backgroundMenu)) {
     Assert ((DefaultRegistryValue $menu) -in @('使用 DevPort 打开', 'Open with DevPort')) 'Directory menu label missing'
     Assert ((Get-ItemPropertyValue -LiteralPath $menu -Name Icon) -eq "`"$newDir\$newBinary`",0") 'Directory menu icon missing'
-    Assert ((Get-ItemPropertyValue -LiteralPath $menu -Name MultiSelectModel) -eq 'Single') 'Directory menu must select one workspace'
   }
+  Assert ((Get-ItemPropertyValue -LiteralPath $directoryMenu -Name MultiSelectModel) -eq 'Single') 'Directory menu must select one workspace'
+  Assert ((Get-Item -LiteralPath $backgroundMenu).GetValueNames() -notcontains 'MultiSelectModel') 'Background menu must allow zero selected items'
+  Assert (BackgroundMenuVisible) 'Windows Shell hides the installed background menu'
 }
 
 try {
@@ -124,6 +132,9 @@ SectionEnd
     Assert (Test-Path -LiteralPath (Join-Path $directory "$name.lnk")) 'New shortcut missing'
     Assert (!(Test-Path -LiteralPath (Join-Path $directory "$legacyName.lnk"))) 'Old shortcut retained'
   }
+  # Reproduce 1.1.0's hidden background verb and require an upgrade to remove it.
+  Set-ItemProperty -LiteralPath $backgroundMenu -Name MultiSelectModel -Value Single
+  Assert (!(BackgroundMenuVisible)) 'Windows Shell probe must reproduce the hidden 1.1.0 background menu'
   RunInstaller $out @('/S', '/UPDATE', "/D=$newDir")
   Assert ((Get-ItemPropertyValue -LiteralPath $runKey -Name $name) -eq $newRun) 'Repeat installation changed autostart'
   AssertDirectoryMenus

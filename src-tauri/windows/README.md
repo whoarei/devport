@@ -47,7 +47,19 @@ work-environment recovery and uses the normal unsaved-file guard. Only directori
 accepted by the Rust workspace validator can be opened. Portable builds support
 the argument but do not register Explorer menus automatically.
 
+Only the selected-directory verb sets `MultiSelectModel=Single`. A background has
+zero selected items, so that value hides its verb. Post-install explicitly removes
+the background value to repair installations upgraded from 1.1.0.
+
 Install/update rewrites both verbs to the current installation. Uninstall removes
 only verbs whose complete command still matches that installation. The smoke test
 redirects all menu keys below its UUID namespace, validates commands, icons, update
 reinstallation and cleanup, and checks that another installation's verb is kept.
+The [Shell menu probe](../../scripts/directory-menu-probe.cs) uses
+`SHCreateDefaultContextMenu` with the fixture's registry key and zero selected
+items, without displaying a menu or invoking commands. It checks that the installed
+background verb appears, reproduces the hidden 1.1.0 registration, and verifies
+that reinstalling removes the restriction and restores the verb.
+For manual verification, inspect Explorer's visible menu as well. If it disagrees
+with an in-process probe, compare the registry from a normal external process:
+a tool host may use an isolated registry view.
