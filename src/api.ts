@@ -288,6 +288,10 @@ export interface WorkspaceEntry {
   is_dir: boolean;
 }
 
+export type WorkspaceOpenRequest =
+  | { type: "open"; workspace: WorkspaceRef }
+  | { type: "error"; message: string };
+
 export type WorkspaceEntryKind = "file" | "dir";
 
 export interface WorkspaceDocument {
@@ -322,6 +326,7 @@ export function errorMessage(error: unknown): string {
 }
 
 export const api = {
+  takeWorkspaceLaunch: () => invoke<WorkspaceOpenRequest | null>("take_workspace_launch"),
   readWorkEnvironment: () => invoke<WorkEnvironment | null>("read_work_environment"),
   saveWorkEnvironment: (snapshot: WorkEnvironment) => invoke<void>("save_work_environment", { snapshot }),
   readRunnerConfig: (workspace: WorkspaceRef) => invoke<RunnerConfigState>("read_runner_config", { workspace }),

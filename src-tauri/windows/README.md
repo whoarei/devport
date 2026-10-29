@@ -36,3 +36,18 @@ real application data. Test definitions override legacy identifiers only in the
 fixture, including process names, so it cannot close a user's running application.
 CI runs this check before publishing. Artifacts remain for audit; fixture registry
 entries and links are cleaned. This is not a real-user-profile migration test.
+
+The post-install hook registers current-user Explorer verbs for directories and
+directory backgrounds under `Software\Classes`: “使用 DevPort 打开” on Chinese
+Windows, “Open with DevPort” otherwise. Windows 11 exposes these classic verbs in
+“Show more options”. Both invoke the quoted executable with
+`--open-workspace "<directory>\."`; the dot protects trailing backslashes at drive
+roots. Relaunches forward the request to the existing instance, which waits for
+work-environment recovery and uses the normal unsaved-file guard. Only directories
+accepted by the Rust workspace validator can be opened. Portable builds support
+the argument but do not register Explorer menus automatically.
+
+Install/update rewrites both verbs to the current installation. Uninstall removes
+only verbs whose complete command still matches that installation. The smoke test
+redirects all menu keys below its UUID namespace, validates commands, icons, update
+reinstallation and cleanup, and checks that another installation's verb is kept.

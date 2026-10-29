@@ -15,6 +15,9 @@ $registryRoot = "Software\DevPortInstallerTests\$id"
 $oldKey = "$registryRoot\legacy-uninstall"
 $oldInstallKey = "$registryRoot\legacy-location"
 $newKey = "$registryRoot\new-uninstall"
+$contextRoot = "$registryRoot\Classes"
+$directoryMenu = "Registry::HKEY_CURRENT_USER\$contextRoot\Directory\shell\$name"
+$backgroundMenu = "Registry::HKEY_CURRENT_USER\$contextRoot\Directory\Background\shell\$name"
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $desktop = [Environment]::GetFolderPath('Desktop')
 $programs = [Environment]::GetFolderPath('Programs')
@@ -29,6 +32,16 @@ function RunInstaller([string]$file, [string[]]$arguments) {
 function Compile([string]$script) {
   & $compiler /V2 $script | Out-Host
   Assert ($LASTEXITCODE -eq 0) 'NSIS fixture compilation failed'
+}
+function DefaultRegistryValue([string]$key) { return (Get-Item -LiteralPath $key).GetValue('') }
+function AssertDirectoryMenus {
+  Assert ((DefaultRegistryValue "$directoryMenu\command") -eq "`"$newDir\$newBinary`" --open-workspace `"%1\.`"") 'Directory command is not safely quoted'
+  Assert ((DefaultRegistryValue "$backgroundMenu\command") -eq "`"$newDir\$newBinary`" --open-workspace `"%V\.`"") 'Background command is not safely quoted'
+  foreach ($menu in @($directoryMenu, $backgroundMenu)) {
+    Assert ((DefaultRegistryValue $menu) -in @('使用 DevPort 打开', 'Open with DevPort')) 'Directory menu label missing'
+    Assert ((Get-ItemPropertyValue -LiteralPath $menu -Name Icon) -eq "`"$newDir\$newBinary`",0") 'Directory menu icon missing'
+    Assert ((Get-ItemPropertyValue -LiteralPath $menu -Name MultiSelectModel) -eq 'Single') 'Directory menu must select one workspace'
+  }
 }
 
 try {
@@ -90,6 +103,8 @@ SectionEnd
 !define DEVPORT_LEGACY_RUNNAME "$legacyName"
 !define DEVPORT_LEGACY_BINARY "$oldBinary"
 !define DEVPORT_LEGACY_SHORTCUT "$legacyName"
+!define DEVPORT_CONTEXT_ROOT "$(NsisString $contextRoot)"
+!define DEVPORT_CONTEXT_VERB "$name"
 "@
   $upgradeFile = Join-Path $root 'upgrade.nsi'
   Set-Content -LiteralPath $upgradeFile -Value ($prefix + "`n" + $script) -Encoding utf8
@@ -99,6 +114,7 @@ SectionEnd
   Assert (!(Test-Path -LiteralPath (Join-Path $oldDir $oldBinary))) 'Old binary retained'
   Assert (Test-Path -LiteralPath (Join-Path $oldDir 'personal.keep')) 'Unrelated old directory content was removed'
   Assert (Test-Path -LiteralPath "Registry::HKEY_CURRENT_USER\$newKey") 'New install identity missing'
+  AssertDirectoryMenus
   Assert (!(Test-Path -LiteralPath "Registry::HKEY_CURRENT_USER\$oldKey")) 'Old uninstall identity retained'
   Assert (!(Test-Path -LiteralPath "Registry::HKEY_CURRENT_USER\$oldInstallKey")) 'Old install location retained'
   $newRun = Get-ItemPropertyValue -LiteralPath $runKey -Name $name
@@ -110,9 +126,24 @@ SectionEnd
   }
   RunInstaller $out @('/S', '/UPDATE', "/D=$newDir")
   Assert ((Get-ItemPropertyValue -LiteralPath $runKey -Name $name) -eq $newRun) 'Repeat installation changed autostart'
+  AssertDirectoryMenus
+  RunInstaller (Join-Path $newDir 'uninstall.exe') @('/S', '/UPDATE')
+  Assert (!(Test-Path -LiteralPath $directoryMenu)) 'Update uninstall left directory menu'
+  Assert (!(Test-Path -LiteralPath $backgroundMenu)) 'Update uninstall left background menu'
+  RunInstaller $out @('/S', '/UPDATE', "/D=$newDir")
+  AssertDirectoryMenus
+  RunInstaller (Join-Path $newDir 'uninstall.exe') @('/S')
+  Assert (!(Test-Path -LiteralPath $directoryMenu)) 'Uninstall left directory menu'
+  Assert (!(Test-Path -LiteralPath $backgroundMenu)) 'Uninstall left background menu'
+  # A different install can take over the same verb; the old uninstaller must retain it.
+  RunInstaller $out @('/S', '/UPDATE', "/D=$newDir")
+  $foreignCommand = '"C:\unrelated\other.exe" "%1"'
+  Set-Item -LiteralPath "$directoryMenu\command" -Value $foreignCommand
   RunInstaller (Join-Path $newDir 'uninstall.exe') @('/S')
   Assert (!(Test-Path -LiteralPath "Registry::HKEY_CURRENT_USER\$newKey")) 'Uninstall left new identity'
-  Set-Content -LiteralPath (Join-Path $root 'result.txt') -Value 'PASS: isolated legacy upgrade, identity, binary, autostart, shortcuts, repeated install and uninstall'
+  Assert ((DefaultRegistryValue "$directoryMenu\command") -eq $foreignCommand) 'Uninstall removed another installation menu'
+  Assert (!(Test-Path -LiteralPath $backgroundMenu)) 'Uninstall left owned background menu'
+  Set-Content -LiteralPath (Join-Path $root 'result.txt') -Value 'PASS: isolated legacy upgrade, identity, binary, autostart, shortcuts, directory menus, quoted commands, repeated install, update uninstall and menu ownership'
   Write-Output "PASS: installer migration ($root)"
 } finally {
   # Only UUID-namespaced test keys and links are removed. Preserve files for audit.

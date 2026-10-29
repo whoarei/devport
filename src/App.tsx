@@ -30,6 +30,7 @@ import { checkForAvailableUpdate } from "./updateStatus";
 import { trackEditorTabUsage } from "./editorTabCycle";
 import { applyUiZoom, changeUiZoom, loadUiZoom, saveUiZoom, type UiZoomAction } from "./uiZoom";
 import { restoreWorkEnvironment } from "./workEnvironment";
+import { listenForWorkspaceLaunches } from "./workspaceLaunch";
 import { loadDeletedDeviceEvents } from "./deviceActions";
 import { loadDeletedRunHistoryEvents } from "./runHistoryStore";
 import { endAppTabCycle, handleAppKeyDown, handleAppKeyUp } from "./appShortcuts";
@@ -70,9 +71,11 @@ export default function App() {
     const report = (error: unknown) => useAppStore.setState({ editorError: errorMessage(error) });
     const devicesReady = loadDevices().catch(report);
     void loadDeletedDeviceEvents();
-    restoreWorkEnvironment(devicesReady);
+    const restored = restoreWorkEnvironment(devicesReady);
+    const stopWorkspaceLaunches = isTauri() ? listenForWorkspaceLaunches(restored) : () => {};
     void loadRuns().catch(report);
-    return onRunEvents((events) => { handleRunEvents(events); useWorkspaceRunStore.getState().events(events); }, report);
+    const stopRunEvents = onRunEvents((events) => { handleRunEvents(events); useWorkspaceRunStore.getState().events(events); }, report);
+    return () => { stopWorkspaceLaunches(); stopRunEvents(); };
   }, [loadDevices, loadRuns, handleRunEvents]);
 
   useEffect(() => {

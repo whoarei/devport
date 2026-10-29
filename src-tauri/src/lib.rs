@@ -19,6 +19,7 @@ pub mod verbatim;
 pub mod work_environment;
 pub mod workspace;
 pub mod workspace_commands;
+pub mod workspace_launch;
 pub mod workspace_probe;
 pub mod workspace_ref;
 pub mod workspace_run;
@@ -43,13 +44,20 @@ pub fn run() {
         return;
     }
 
+    // Seed before plugins and the WebView start so an early relaunch can replace it.
+    let launch = workspace_launch::WorkspaceLaunchState::new(
+        &std::env::args().collect::<Vec<_>>(),
+        &std::env::current_dir().unwrap_or_default(),
+    );
     tauri::Builder::default()
+        .manage(launch)
         // Single instance must be registered first: a second launch exits
         // immediately and its callback runs in the already-running instance.
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             // An autostart relaunch (`--minimized`) must not pop the window;
             // a manual launch activates the existing main window instead.
             if !tray::start_minimized(&args) {
+                workspace_launch::receive(app, &args, std::path::Path::new(&cwd));
                 tray::show_main_window(app);
             }
         }))
@@ -119,6 +127,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            workspace_launch::take_workspace_launch,
             work_environment::read_work_environment,
             work_environment::save_work_environment,
             workspace_commands::read_runner_config,

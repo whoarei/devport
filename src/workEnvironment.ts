@@ -153,10 +153,12 @@ export function createEnvironmentController(storage = { read: api.readWorkEnviro
 }
 
 let controller: ReturnType<typeof createEnvironmentController> | undefined;
-export function restoreWorkEnvironment(devicesReady: Promise<unknown>): void {
-  if (controller) return;
+let restoration: Promise<void> | undefined;
+export function restoreWorkEnvironment(devicesReady: Promise<unknown>): Promise<void> {
+  if (restoration) return restoration;
   controller = createEnvironmentController();
-  void controller.start(devicesReady).catch((error) => useAppStore.setState({ environmentError: errorMessage(error) }));
+  restoration = controller.start(devicesReady).catch((error) => { useAppStore.setState({ environmentError: errorMessage(error) }); });
+  return restoration;
 }
 export async function flushWorkEnvironment(): Promise<void> {
   try {

@@ -105,6 +105,8 @@ GitHub 仓库原地重命名为 `whoarei/devport`，旧地址依赖 GitHub 重�
 
 Windows 使用 Tauri 默认 NSIS 模板及 [迁移 hooks](../src-tauri/windows/README.md)。核对旧安装的路径、卸载命令和主程序记录后，使用旧卸载器的 `/S /UPDATE` 模式保留数据，安装新程序并迁移明确属于本应用的快捷方式与自启动；旧安装目录只做已知文件删除和空目录清理，不递归删除未知内容。自启动迁移保留 Windows StartupApproved 禁用状态。便携版首启也会导入配置及已识别的自启动项。
 
+NSIS 安装/升级在当前用户 `Software\Classes\Directory\shell\DevPort` 和 `Directory\Background\shell\DevPort` 注册打开工作区菜单，包含图标和单目录选择模型，按 Windows 界面语言显示中英文。命令对程序路径及 `%1` / `%V` 加引号，并在目录末尾追加 `\.`，避免盘符根目录末尾的反斜杠吞掉结束引号。卸载（含 `/UPDATE`）只清除完整命令仍指向自身安装的菜单，保留被另一安装接管的条目；升级后重新写入新路径。隔离安装验收将菜单注册表根重定向至 UUID 测试命名空间，覆盖命令、图标、重复安装、升级卸载、正常卸载及所有权保护。
+
 发布包含两套清单：`devport-latest.json` 使用新仓库地址供 1.0+ 客户端；`latest.json` 保留旧仓库前缀供 0.24.2 及更早客户端。CI 在草稿阶段生成、校验并回读两套清单，要求版本、签名及安装包完全一致，仅 URL 前缀不同。处理或上传失败不得公开；旧客户端仍可跳过中间版本直接升级。新版更新校验只接受 DevPort 仓库下载地址。
 
 `update.rs` 从新清单检查稳定版本，验证版本、平台和下载 URL。Windows 已安装 release 可通过 Tauri updater 验证签名并安装；portable、debug、非支持平台或安装识别失败回退手动下载。修改 hooks 后执行 `./scripts/test-installer-migration.ps1`；该脚本使用唯一临时目录、独立注册表键和快捷方式，验证安装身份、二进制、自启动、快捷方式、重复安装及卸载，不操作真实安装。CI 在公开前同样执行该检查。自动化验证不等于对真实用户完整数据和各平台的升级实测。

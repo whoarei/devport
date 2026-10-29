@@ -17,6 +17,29 @@
 !define DEVPORT_LEGACY_SHORTCUT "Remote Runner"
 !endif
 
+; The smoke test redirects these entries away from Explorer's real menu.
+!ifndef DEVPORT_CONTEXT_ROOT
+!define DEVPORT_CONTEXT_ROOT "Software\Classes"
+!endif
+!ifndef DEVPORT_CONTEXT_VERB
+!define DEVPORT_CONTEXT_VERB "DevPort"
+!endif
+
+!macro DevPortInstallDirectoryMenu DIRECTORY ARGUMENT
+  WriteRegStr HKCU "${DEVPORT_CONTEXT_ROOT}\${DIRECTORY}\shell\${DEVPORT_CONTEXT_VERB}" "" "$3"
+  WriteRegStr HKCU "${DEVPORT_CONTEXT_ROOT}\${DIRECTORY}\shell\${DEVPORT_CONTEXT_VERB}" "Icon" '$\"$INSTDIR\${MAINBINARYNAME}.exe$\",0'
+  WriteRegStr HKCU "${DEVPORT_CONTEXT_ROOT}\${DIRECTORY}\shell\${DEVPORT_CONTEXT_VERB}" "MultiSelectModel" "Single"
+  ; The dot keeps a drive root's trailing backslash from escaping its closing quote.
+  WriteRegStr HKCU "${DEVPORT_CONTEXT_ROOT}\${DIRECTORY}\shell\${DEVPORT_CONTEXT_VERB}\command" "" '$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --open-workspace $\"${ARGUMENT}\.$\"'
+!macroend
+
+!macro DevPortRemoveDirectoryMenu DIRECTORY ARGUMENT
+  ReadRegStr $0 HKCU "${DEVPORT_CONTEXT_ROOT}\${DIRECTORY}\shell\${DEVPORT_CONTEXT_VERB}\command" ""
+  ${If} $0 == '$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --open-workspace $\"${ARGUMENT}\.$\"'
+    DeleteRegKey HKCU "${DEVPORT_CONTEXT_ROOT}\${DIRECTORY}\shell\${DEVPORT_CONTEXT_VERB}"
+  ${EndIf}
+!macroend
+
 Var LegacyInstallDir
 Var LegacyAutostart
 Var LegacyMigrated
@@ -71,6 +94,14 @@ Var LegacyMigrated
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  StrCpy $3 "Open with DevPort"
+  System::Call 'kernel32::GetUserDefaultUILanguage() i .r0'
+  IntOp $0 $0 & 0x3ff
+  ${If} $0 = 4
+    StrCpy $3 "使用 DevPort 打开"
+  ${EndIf}
+  !insertmacro DevPortInstallDirectoryMenu "Directory" "%1"
+  !insertmacro DevPortInstallDirectoryMenu "Directory\Background" "%V"
   ${If} $LegacyMigrated = 1
     !insertmacro DevPortMigrateShortcut "$SMPROGRAMS"
     !insertmacro DevPortMigrateShortcut "$DESKTOP"
@@ -89,4 +120,9 @@ Var LegacyMigrated
       RMDir "$LegacyInstallDir"
     ${EndIf}
   ${EndIf}
+!macroend
+
+!macro NSIS_HOOK_POSTUNINSTALL
+  !insertmacro DevPortRemoveDirectoryMenu "Directory" "%1"
+  !insertmacro DevPortRemoveDirectoryMenu "Directory\Background" "%V"
 !macroend
