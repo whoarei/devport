@@ -876,7 +876,6 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .terminal-failed { color: var(--danger, #eda4a4); }
 .terminal-dot { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: currentColor; display: inline-block; margin-right: 7px; vertical-align: middle; }
 .terminal-tab-label { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
-.terminal-number { flex-shrink: 0; color: var(--text-muted); font-size: 10px; margin-left: 7px; padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; line-height: 16px; }
 .terminal-error { color: var(--danger, #eda4a4); background: var(--danger-surface, #302328); padding: 6px 12px; font-size: 12px; overflow-wrap: anywhere; max-height: 72px; overflow: auto; }
 .run-toolbar {
   display: flex;

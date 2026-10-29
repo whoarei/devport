@@ -135,18 +135,18 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
         select(next); document.getElementById(`tab-${next}`)?.focus();
       }}>
         <button role="tab" id="tab-run" data-active-tab={activeTab === "run"} aria-controls="panel-run" aria-selected={activeTab === "run"} tabIndex={activeTab === "run" ? 0 : -1} onClick={() => selectTab("run")}>{t("console.runTab")}</button>
-        {tabs.map((tab, index) => {
+        {tabs.map((tab) => {
           const device = devices.find((candidate) => candidate.id === tab.deviceId);
           const deviceName = device?.name.trim() || tab.deviceName;
           const label = terminalTabLabel(tab, device, deviceNames.get(tab.deviceId));
-          const title = t("console.terminalTitle", { name: tab.title ?? deviceName, device: deviceName, index: index + 1 });
+          const title = t("console.terminalTitle", { name: tab.title ?? deviceName, device: deviceName });
           return <div className={`console-tab${activeTab === tab.id ? " active" : ""}`} data-active-tab={activeTab === tab.id} key={tab.id} onContextMenu={(event) => openTabMenu(event, tab)}>
             <button role="tab" id={`tab-${tab.id}`} aria-controls={`panel-${tab.id}`} aria-selected={activeTab === tab.id} tabIndex={activeTab === tab.id ? 0 : -1}
               onClick={() => selectTab(tab.id)} title={title} aria-label={title}>
               <span className={`terminal-dot terminal-${tab.status?.state ?? "connecting"}`} aria-hidden="true" />
-              <span className="terminal-tab-label">{t("console.terminalTab", { name: label })}</span><span className="terminal-number">{index + 1}</span>
+              <span className="terminal-tab-label">{t("console.terminalTab", { name: label })}</span>
             </button>
-            <button className="terminal-tab-close" tabIndex={activeTab === tab.id ? 0 : -1} disabled={tab.busy} aria-label={t("console.closeTerminalAria", { name: label, index: index + 1 })} onMouseDown={preserveContentFocus} onClick={() => void preserveLayoutFocus(() => useTerminalStore.getState().close(tab.id))}><Icon name="close" /></button>
+            <button className="terminal-tab-close" tabIndex={activeTab === tab.id ? 0 : -1} disabled={tab.busy} aria-label={t("console.closeTerminalAria", { name: label })} onMouseDown={preserveContentFocus} onClick={() => void preserveLayoutFocus(() => useTerminalStore.getState().close(tab.id))}><Icon name="close" /></button>
           </div>;
         })}
       </div>

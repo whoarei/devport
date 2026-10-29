@@ -127,7 +127,7 @@ test("compacting a terminal label keeps the full original title available for ho
   const titled = useTerminalStore.getState().tabs[0];
   assert.equal(terminalTabLabel(titled), "pwsh");
   assert.equal(titled.title, raw);
-  assert.ok(i18n.t("console.terminalTitle", { name: titled.title, device: titled.deviceName, index: 1 }).includes(raw));
+  assert.ok(i18n.t("console.terminalTitle", { name: titled.title, device: titled.deviceName }).includes(raw));
   s.setTitle(tab.id, "stale-session", "old shell");
   assert.equal(useTerminalStore.getState().tabs[0].title, raw);
   s.setTitle(tab.id, "local", "   ");
