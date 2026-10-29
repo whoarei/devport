@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { api, deviceWorkspace, localWorkspace, type TerminalStatus, type WorkspaceRef } from "../src/api";
+import { api, deviceWorkspace, localWorkspace, type DeviceProfile, type TerminalStatus, type WorkspaceRef } from "../src/api";
 import { useTerminalStore, terminalActive } from "../src/terminalStore";
 import { terminalInput, readTerminal } from "../src/terminalIO";
 import { createTerminalReconnectKey } from "../src/terminalReconnect";
@@ -22,6 +22,11 @@ test.before(async () => { await i18n.changeLanguage("zh"); });
 const status = (id: string, state: TerminalStatus["state"] = "connected"): TerminalStatus =>
   ({ session_id: id, device_name: id, state, exit_code: null, error: null });
 const delay = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
+const localDevice: DeviceProfile = {
+  id: "local", name: "本机", transport: "local", is_default: true,
+  local: { shell: "pwsh" }, host: "", port: 22, username: "",
+  auth: { type: "password", password: "" }, workspace_root: "",
+};
 test("device labels disambiguate WSL users and duplicate custom names", () => {
   const names = deviceDisplayNames([
     { id: "a", name: "wsl-root@Ubuntu", transport: "wsl" },
@@ -197,8 +202,53 @@ test("reconnect retires the old session before opening another; stale events can
   assert.equal(useTerminalStore.getState().tabs.length, 0);
 });
 
-test("workspace terminals open with the workspace cwd and reconnect replays it", async (t) => {
+test("new local terminals follow the current workspace and reconnect keeps the original directory", async (t) => {
+  const s = reset(t), app = useAppStore.getState();
+  t.after(() => useAppStore.setState(app));
+  const workspace = localWorkspace(String.raw`C:\项目\my workspace`);
+  useAppStore.setState({ devices: [localDevice], workspace });
+  const open = t.mock.method(api, "openWorkspaceTerminal", async () => status("local-session", "exited"));
+  const fallback = t.mock.method(api, "openTerminal", async () => status("default"));
+  t.mock.method(api, "closeTerminal", async () => {});
+  await s.open("local", "本机");
+  const tab = useTerminalStore.getState().tabs[0];
+  assert.deepEqual(tab.workspace, { workspace, subdir: "" });
+  assert.deepEqual(open.mock.calls[0].arguments, ["local", workspace, ""]);
+
+  const nextWorkspace = localWorkspace("/another-project");
+  useAppStore.setState({ workspace: nextWorkspace });
+  await s.reconnect(tab.id);
+  assert.deepEqual(open.mock.calls[1].arguments, ["local", workspace, ""]);
+  await s.open("local", "本机");
+  assert.deepEqual(open.mock.calls[2].arguments, ["local", nextWorkspace, ""]);
+  assert.equal(fallback.mock.callCount(), 0);
+});
+
+test("local terminals without a local workspace and other transports keep the default directory", async (t) => {
+  const s = reset(t), app = useAppStore.getState();
+  t.after(() => useAppStore.setState(app));
+  const devices = (["local", "ssh", "wsl", "serial"] as const).map((transport) => ({ ...localDevice, id: transport, transport }));
+  useAppStore.setState({ devices, workspace: null });
+  const fallback = t.mock.method(api, "openTerminal", async () => status("default", "exited"));
+  const open = t.mock.method(api, "openWorkspaceTerminal", async () => status("workspace"));
+  t.mock.method(api, "closeTerminal", async () => {});
+  await s.open("local", "本机");
+  const defaultTab = useTerminalStore.getState().tabs[0];
+  useAppStore.setState({ workspace: deviceWorkspace("wsl", "/home/dev/project") });
+  await s.open("local", "本机");
+  useAppStore.setState({ workspace: localWorkspace("/work") });
+  for (const id of ["ssh", "wsl", "serial"]) await s.open(id, id);
+  await s.reconnect(defaultTab.id);
+  assert.deepEqual(fallback.mock.calls.map((call) => call.arguments), [["local"], ["local"], ["ssh"], ["wsl"], ["serial"], ["local"]]);
+  assert.equal(open.mock.callCount(), 0);
+  assert.ok(useTerminalStore.getState().tabs.every((tab) => tab.workspace === undefined));
+});
+
+test("workspace terminals open with the explicit workspace cwd and reconnect replays it", async (t) => {
   const s = reset(t);
+  const app = useAppStore.getState();
+  t.after(() => useAppStore.setState(app));
+  useAppStore.setState({ devices: [localDevice], workspace: localWorkspace("/current-workspace") });
   const calls: Array<{ id: string; workspace: WorkspaceRef; subdir: string }> = [];
   // 以 exited 状态打开：reconnect 对活跃会话是 no-op，只有非活跃会话才会重开
   t.mock.method(api, "openWorkspaceTerminal", async (id: string, workspace: WorkspaceRef, subdir: string) => {

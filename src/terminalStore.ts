@@ -82,9 +82,14 @@ export const useTerminalStore = create<TerminalStore>((set, get) => {
       if (id === "run" || get().tabs.some((t) => t.id === id)) set({ activeTab: id });
     },
     open: (deviceId, deviceName, workspace) => {
-      if (useAppStore.getState().updating) return Promise.reject(new Error(i18n.t("run.errorUpdating")));
+      const app = useAppStore.getState();
+      if (app.updating) return Promise.reject(new Error(i18n.t("run.errorUpdating")));
       if (get().shuttingDown) return Promise.reject(new Error(i18n.t("terminal.closingAll")));
       if (get().tabs.length >= 8) return Promise.reject(new Error(i18n.t("terminal.maxTabs")));
+      // 只在新建本机终端时跟随当前本机工作区；显式目录优先，并随标签保留供重连。
+      if (!workspace && app.workspace?.type === "local" && app.devices.some((device) => device.id === deviceId && device.transport === "local")) {
+        workspace = { workspace: app.workspace, subdir: "" };
+      }
       const id = crypto.randomUUID();
       set((s) => ({ tabs: [...s.tabs, { id, deviceId, deviceName, workspace, busy: true }], activeTab: id, mru: touchMru(s.mru, id) }));
       return track((async () => {
