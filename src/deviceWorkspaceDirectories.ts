@@ -2,6 +2,12 @@ import type { WorkspaceRef } from "./api";
 import { isDevicePath } from "./directoryCompletion";
 
 export const DEVICE_WORKSPACE_DIRECTORIES_KEY = "devport.device-workspace-directories.v1";
+const listeners = new Set<() => void>();
+
+export function subscribeDeviceWorkspaceDirectories(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
 
 export function loadDeviceWorkspaceDirectories(): Map<string, string> {
   try {
@@ -17,9 +23,11 @@ export function loadDeviceWorkspaceDirectories(): Map<string, string> {
 /** Save only resolved, successfully opened roots; tree expansion does not change the current path. */
 export function rememberDeviceWorkspaceDirectory(directories: Map<string, string>, endpoint: WorkspaceRef): void {
   if (endpoint.type !== "device" || !endpoint.device_id || !isDevicePath(endpoint.path)) return;
+  const changed = directories.get(endpoint.device_id) !== endpoint.path;
   directories.set(endpoint.device_id, endpoint.path);
   try { localStorage.setItem(DEVICE_WORKSPACE_DIRECTORIES_KEY, JSON.stringify(Object.fromEntries(directories))); }
   catch { /* Shared session memory still survives sidebar unmounts when storage is unavailable. */ }
+  if (changed && directories === deviceWorkspaceDirectories) for (const listener of listeners) listener();
 }
 
 /** Shared across mounted sidebar instances; kept separate from transfer-browser preferences. */

@@ -15,6 +15,7 @@ import { deviceLabel } from "./DeviceEditor";
 import { openWorkspace } from "../workspacePicker";
 import { UI_ZOOM_LEVELS, type UiZoomAction } from "../uiZoom";
 import { useThemeStore } from "../theme";
+import { useTitlebarPreferences } from "../titlebarPreferences";
 import { useShallow } from "zustand/react/shallow";
 import { useRunHistoryStore } from "../runHistoryStore";
 import { appCommandEnabled, executeAppCommand } from "../appCommands";
@@ -108,6 +109,8 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
   const barRef = useRef<HTMLDivElement>(null);
   const themePreference = useThemeStore((state) => state.preference);
   const chooseTheme = useThemeStore((state) => state.setPreference);
+  const pathDisplay = useTitlebarPreferences((state) => state.pathDisplay);
+  const setPathDisplay = useTitlebarPreferences((state) => state.setPathDisplay);
   const layout = useAppStore((state) => state.layout);
   const setLayout = useAppStore((state) => state.setLayout);
   const resetLayout = useAppStore((state) => state.resetLayout);
@@ -297,6 +300,13 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
           ],
         },
         { type: "separator" },
+        {
+          label: t("menu.titlebarPathDisplay"),
+          children: [
+            { type: "checkbox", label: t("menu.shortPath"), checked: pathDisplay === "short", onSelect: () => setPathDisplay("short") },
+            { type: "checkbox", label: t("menu.fullPath"), checked: pathDisplay === "full", onSelect: () => setPathDisplay("full") },
+          ],
+        },
         {
           label: t("menu.tabCycleOrder"),
           children: [

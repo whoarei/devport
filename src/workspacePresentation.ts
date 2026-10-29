@@ -1,6 +1,7 @@
 import type { DeviceProfile, WorkspaceRef } from "./api";
 
 type NamedDevice = Pick<DeviceProfile, "id" | "name" | "transport">;
+export type WorkspacePathDisplay = "short" | "full";
 
 /** Only shorten the generated prefix; user-chosen names remain recognizable. */
 export function compactDeviceName(name: string, transport?: DeviceProfile["transport"]): string {
@@ -29,10 +30,19 @@ export function deviceDisplayNames(devices: NamedDevice[]): Map<string, string> 
   }));
 }
 
-export function workspacePresentation(workspace: WorkspaceRef, devices: NamedDevice[]) {
+export function workspacePresentation(workspace: WorkspaceRef, devices: NamedDevice[], pathDisplay: WorkspacePathDisplay = "short") {
   const path = workspace.type === "local" ? workspace.dir : workspace.path;
-  const trimmed = path.replace(/[\\/]+$/, "");
-  const name = /^[a-z]:$/i.test(trimmed) ? path : trimmed.split(/[\\/]/).pop() || path;
+  const separator = workspace.type === "local" ? /[\\/]/ : /\//;
+  const trimmed = workspace.type === "local" ? path.replace(/[\\/]+$/, "") : path.replace(/\/+$/, "");
+  const name = pathDisplay === "full" || workspace.type === "local" && /^[a-z]:$/i.test(trimmed)
+    ? path : trimmed.split(separator).pop() || path;
   const device = workspace.type === "device" ? devices.find((item) => item.id === workspace.device_id) : undefined;
   return { name, path, device: device ? deviceDisplayNames(devices).get(device.id)! : null, transport: device?.transport };
+}
+
+/** The selected device's browser directory is independent of the source workspace. */
+export function titlebarDeviceWorkspace(device: DeviceProfile | undefined, directories: ReadonlyMap<string, string>): WorkspaceRef | null {
+  if (!device || !["ssh", "wsl"].includes(device.transport)) return null;
+  const path = directories.get(device.id) ?? device.workspace_root;
+  return path.trim() ? { type: "device", device_id: device.id, path } : null;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -18,7 +18,9 @@ import appIcon from "../../src-tauri/icons/18x18.png";
 import appIcon2x from "../../src-tauri/icons/36x36.png";
 import appIcon3x from "../../src-tauri/icons/54x54.png";
 import type { UiZoomAction } from "../uiZoom";
-import { workspacePresentation } from "../workspacePresentation";
+import { titlebarDeviceWorkspace, workspacePresentation } from "../workspacePresentation";
+import { deviceWorkspaceDirectories, subscribeDeviceWorkspaceDirectories } from "../deviceWorkspaceDirectories";
+import { useTitlebarPreferences } from "../titlebarPreferences";
 import { Icon } from "./Icon";
 import { preserveContentFocus, preserveLayoutFocus } from "../focus";
 import { shortcutContext } from "../appShortcuts";
@@ -37,6 +39,9 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
   const { t } = useTranslation();
   const workspace = useAppStore((state) => state.workspace);
   const devices = useAppStore((state) => state.devices);
+  const selectedDeviceId = useAppStore((state) => state.selectedDeviceId);
+  const pathDisplay = useTitlebarPreferences((state) => state.pathDisplay);
+  useSyncExternalStore(subscribeDeviceWorkspaceDirectories, () => selectedDeviceId ? deviceWorkspaceDirectories.get(selectedDeviceId) : undefined);
   const availableUpdate = useAppStore((state) => state.availableUpdate);
   const layout = useAppStore((state) => state.layout);
   const guarding = useAppStore((state) => state.guarding);
@@ -47,7 +52,11 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
   const [updatePhase, setUpdatePhase] = useState<UpdateButtonPhase | null>(null);
   const desktop = isTauri();
   const label = workspaceLabel(workspace, devices);
-  const presentation = workspace ? workspacePresentation(workspace, devices) : null;
+  const presentation = workspace ? workspacePresentation(workspace, devices, pathDisplay) : null;
+  const deviceWorkspace = titlebarDeviceWorkspace(devices.find((device) => device.id === selectedDeviceId), deviceWorkspaceDirectories);
+  const devicePresentation = deviceWorkspace ? workspacePresentation(deviceWorkspace, devices, pathDisplay) : null;
+  const workspaceName = presentation?.device ? `${presentation.device}:${presentation.name}` : presentation?.name;
+  const deviceWorkspaceName = devicePresentation ? `${devicePresentation.device}:${devicePresentation.name}` : null;
 
   useEffect(() => {
     if (!desktop) return;
@@ -83,11 +92,19 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
       </div>
       <MenuBar uiZoom={uiZoom} onUiZoom={onUiZoom} onAbout={onAbout} onCheckUpdate={onCheckUpdate} />
       <div className="titlebar-drag" data-tauri-drag-region onMouseDown={preserveContentFocus}>
-        <div className="titlebar-workspace" data-tauri-drag-region title={label ?? t("titlebar.noWorkspaceTitle")}>
-          {presentation && <Icon name={workspace?.type === "device" ? "server" : "folder"} />}
-          <span className="titlebar-workspace-name">{presentation?.name ?? t("titlebar.noWorkspace")}</span>
-          {presentation?.device && <span className="titlebar-workspace-context">{presentation.device}</span>}
-          {dirty && <span className="titlebar-dirty" role="img" aria-label={t("titlebar.unsavedChanges")} />}
+        <div className="titlebar-workspaces" data-tauri-drag-region>
+          <div className="titlebar-workspace" data-tauri-drag-region title={label ? `${t("workspace.title")}: ${label}` : t("titlebar.noWorkspaceTitle")}>
+            {presentation && <Icon name="folder" />}
+            <span className="titlebar-workspace-name">{workspaceName ?? t("titlebar.noWorkspace")}</span>
+            {dirty && <span className="titlebar-dirty" role="img" aria-label={t("titlebar.unsavedChanges")} />}
+          </div>
+          {devicePresentation && <>
+            <span className="titlebar-workspace-separator" aria-hidden="true">·</span>
+            <div className="titlebar-workspace titlebar-device-workspace" data-tauri-drag-region title={`${t("deviceWorkspace.title")}: ${workspaceLabel(deviceWorkspace, devices)}`}>
+              <Icon name="server" />
+              <span className="titlebar-workspace-name">{deviceWorkspaceName}</span>
+            </div>
+          </>}
         </div>
       </div>
       <div className="titlebar-controls" role="group" aria-label={t("titlebar.windowControls")}>
