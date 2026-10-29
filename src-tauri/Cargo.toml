@@ -46,7 +46,7 @@ libc = "0.2"
 
 [package]
 name = "devport"
-version = "1.1.0"
+version = "1.1.1"
 description = "DevPort development workbench"
 edition = "2021"
 build = "build.rs"
