@@ -17,7 +17,7 @@ React 18 + TypeScript，Zustand 管理状态，CodeMirror 6 编辑文本，xterm
 | USB 设备与操作 | `usbStore.ts` |
 | 工作环境快照编排 | `workEnvironment.ts`；窗口由 `windowState.ts` 约束 |
 
-面板由 `panels/registry.tsx` 元数据和 `panels/components.ts` 懒加载映射注册，避免组件与布局模块循环依赖。侧栏为 Workspace / Device Workspace / Commands / Runtime / History，中心为 Editor / Console / Transfer；Device Workspace、Runtime 和 Transfer 默认隐藏，编辑器随文件打开出现。历史命令位于侧栏底部，默认高 260px，可拖动调整，保存范围 120–600px；旧布局缺失该面板时默认显示。侧栏左右切换、宽度、面板显隐/折叠和中心分割比例归一化后持久化。隐藏/折叠保持需要保活的编辑器、终端实例。
+面板由 `panels/registry.tsx` 元数据和 `panels/components.ts` 懒加载映射注册，避免组件与布局模块循环依赖。侧栏为 Workspace / Device Workspace / Commands / Runtime / History，中心为 Editor / Console / Transfer；Device Workspace、Runtime 和 Transfer 默认隐藏，编辑器随文件打开出现。侧栏各面板的标题栏及操作按钮固定在各自面板顶部，内容滚动时保持可见，标题栏不被压缩；该规则同时适用于左侧栏和右侧栏。历史命令位于侧栏底部，默认高 260px，可拖动调整，保存范围 120–600px；旧布局缺失该面板时默认显示。侧栏左右切换、宽度、面板显隐/折叠和中心分割比例归一化后持久化。隐藏/折叠保持需要保活的编辑器、终端实例。
 
 “设备工作区”是 Workspace 下方的独立侧栏面板，默认隐藏，通过“视图 → 面板”显示，显隐/折叠偏好随布局保存。标题下直接显示路径导航，不重复显示设备名称、路径和协议摘要。它跟随运行目标的 SSH / WSL 设备，选中串口、本机 Shell 或没有有效设备时不渲染整个区域；这种条件隐藏不改写布局偏好。隐藏侧栏时卸载浏览器，使过期读取失效；折叠面板保留浏览状态。目录及编辑交互见 [00004](00004-workspace-and-sync.md)。
 
