@@ -3,7 +3,7 @@ import { api, errorMessage, workspaceRefEquals, type CommandSource, type PythonS
 import { getWorkspaceGeneration, useAppStore } from "./store";
 import { workspaceEditorDirty } from "./editorSources";
 import { workspaceKey, workspaceSourceRevision, commandLabel, pythonVersionMatches } from "./workspaceRun";
-import { revealConsolePanel } from "./consoleTabs";
+import { focusRunConsole, revealConsolePanel } from "./consoleTabs";
 import { useTerminalStore } from "./terminalStore";
 import i18n from "./i18n";
 import { isActiveRun, newestStatus } from "./runState";
@@ -135,7 +135,7 @@ export const useWorkspaceRunStore = create<State>((set, get) => ({
         const status = await api.getRunStatus(id).catch(() => null);
         if (status) useAppStore.getState().handleRunEvent({ type: "status", status });
       }
-      if (operation === "run") { useAppStore.getState().setActiveRun(id); revealConsolePanel(); useTerminalStore.getState().select("run"); }
+      if (operation === "run") { useAppStore.getState().setActiveRun(id); focusRunConsole(); }
       else get().syncPreparation();
       void get().recover(id);
       return id;

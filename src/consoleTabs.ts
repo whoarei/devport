@@ -1,5 +1,6 @@
 import { useAppStore } from "./store";
 import { useTerminalStore } from "./terminalStore";
+import { useCommandUiStore } from "./commandUiStore";
 import { panelCollapsePatch, panelVisibilityPatch } from "./layoutState";
 import { mruCycleOrder, nextMruId, nextSequentialId } from "./tabCycle";
 
@@ -16,6 +17,13 @@ export function revealConsolePanel(): void {
   if (!layout.panelVisible.console || layout.panelCollapsed.console) {
     setLayout({ ...panelVisibilityPatch(layout, "console", true), ...panelCollapsePatch(layout, "console", false) });
   }
+}
+
+/** 任务启动成功后显示运行页，并将输入焦点交给运行控制台。 */
+export function focusRunConsole(): void {
+  revealConsolePanel();
+  useTerminalStore.getState().select("run");
+  useCommandUiStore.setState({ focus: "console" });
 }
 
 /**

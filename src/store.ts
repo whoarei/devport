@@ -8,6 +8,7 @@ import { loadWorkspaceHistory, rememberWorkspace, saveWorkspaceHistory } from ".
 import { LayoutState, loadLayout, normalizeLayout, panelCollapsePatch, panelVisibilityPatch, saveLayout } from "./layoutState";
 import { collectScripts, dropSubtree, isWithin, joinPath, nameOf, parentOf, rekeySubtree, rootTree, withNode, WORKSPACE_ROOT, WorkspacePath, WorkspaceTree } from "./workspaceTree";
 import { workspaceSourceRevision } from "./workspaceRun";
+import { focusRunConsole } from "./consoleTabs";
 import { applyDeviceEditorMutation, deviceEditorTargets, editorFileKey, editorFileSource, editorFileTitle, editorSourceCurrent, editorPathInWorkspace, workspaceEditorDirty, type EditorFileSource } from "./editorSources";
 
 interface AppState {
@@ -727,6 +728,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         } } }));
       }
       get().setActiveRun(runId);
+      focusRunConsole();
       return runId;
     } finally { set({ starting: false }); }
   },

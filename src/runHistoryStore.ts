@@ -3,8 +3,7 @@ import { api, errorMessage, workspaceRefEquals, type DeletedRunHistory, type Run
 import { workspaceEditorDirty } from "./editorSources";
 import { getWorkspaceGeneration, useAppStore } from "./store";
 import { useWorkspaceRunStore } from "./workspaceRunStore";
-import { useTerminalStore } from "./terminalStore";
-import { revealConsolePanel } from "./consoleTabs";
+import { focusRunConsole } from "./consoleTabs";
 import { historyDraft, historySettings, historyWorkspace, type HistoryRunDraft } from "./runHistory";
 import { isActiveRun, latestExecution } from "./runState";
 import { workspaceSourceRevision } from "./workspaceRun";
@@ -157,7 +156,7 @@ export async function submitHistoryRun(draft: HistoryRunDraft): Promise<string |
     const status = await api.getRunStatus(id).catch(() => null);
     if (status) useAppStore.getState().handleRunEvent({ type: "status", status });
     useAppStore.getState().setActiveRun(id);
-    revealConsolePanel(); useTerminalStore.getState().select("run");
+    focusRunConsole();
     return id;
   } finally { useAppStore.setState({ starting: false }); }
 }
