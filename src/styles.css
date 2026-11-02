@@ -663,6 +663,7 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 
 /* ---------- editor ---------- */
 .editor {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -761,6 +762,23 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .editor-status-save:hover:not(:disabled) { background: transparent; color: var(--accent, #a5c4f0); }
 .editor-error { width: 100%; padding: 8px 12px; color: var(--danger, #fca5a5); background: var(--danger-surface, #351f27); font-size: 12px; overflow-wrap: anywhere; }
 .editor-error button { margin-left: 12px; }
+.editor-error.editor-toast {
+  position: absolute;
+  top: calc(var(--center-header-height) + 8px);
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-control);
+  box-shadow: 0 4px 14px #0002;
+}
+.editor-toast > span { min-width: 0; }
+.editor-toast > button { display: inline-flex; flex-shrink: 0; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; }
+.editor-toast > button .ui-icon { width: 14px; height: 14px; }
 .confirm-dialog,
 .unsaved-dialog { color: var(--text-primary, #ddd); background: var(--surface-raised, #23252d); border: 1px solid var(--border-strong, #555); border-radius: var(--radius-dialog); max-width: 480px; padding: 20px; }
 .confirm-dialog::backdrop,

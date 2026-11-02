@@ -217,6 +217,15 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
   const panelId = (name: string) => `editor-panel-${encodeURIComponent(name)}`;
   const locked = state.loading || state.starting || state.guarding;
   const active = state.tabs.find((tab) => tab.name === state.activeFile);
+  const actionableError = !!active?.conflict || active?.loaded === false;
+  useEffect(() => {
+    const message = state.error;
+    if (!message || actionableError) return;
+    const timer = window.setTimeout(() => {
+      if (useAppStore.getState().editorError === message) useAppStore.setState({ editorError: null });
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [state.error, actionableError]);
   const deviceNames = deviceDisplayNames(state.devices);
   const closeLocked = locked || state.saving || state.workspaceMutating;
   const menuCurrent = () => {
@@ -255,9 +264,11 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
     closeEntry("all", "editor.closeAll"),
   ] } : null;
   return <div className={`editor${state.tabs.length === 0 ? " empty" : ""}`}>
-    {state.error && <div className="editor-error" role="alert">{state.error}
+    {state.error && <div className={`editor-error${actionableError ? "" : " editor-toast"}`} role="alert"><span>{state.error}</span>
       {active?.conflict && <button disabled={locked || state.saving} onMouseDown={preserveContentFocus} onClick={() => void useAppStore.getState().reloadFile()}>{t("editor.reloadDisk")}</button>}
       {active?.loaded === false && <button disabled={locked} onMouseDown={preserveContentFocus} onClick={() => void useAppStore.getState().openWorkspaceFile(active.name)}>{t("environment.retry")}</button>}
+      {!actionableError && <button aria-label={t("workspace.close")} title={t("workspace.close")} onMouseDown={preserveContentFocus}
+        onClick={() => useAppStore.setState({ editorError: null })}><Icon name="close" /></button>}
     </div>}
     {state.tabs.length === 0 ? <EmptyState icon="code" title={state.loading ? t("editor.opening") : t("editor.emptyTitle")} description={t("editor.placeholder")}>
       {state.workspace ? <span className="empty-state-shortcut">{t("editor.previewHint")}</span> : <span className="empty-state-shortcut"><kbd>{shortcutLabel("openWorkspace")}</kbd>{t("shortcuts.openWorkspace")}</span>}
