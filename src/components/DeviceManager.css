@@ -3,6 +3,11 @@
   height: min(680px, calc(100vh / var(--browser-ui-zoom, 1) - 48px));
   max-height: calc(100vh / var(--browser-ui-zoom, 1) - 32px);
 }
+.ssh-host-key-dialog { width: min(520px, calc(100vw / var(--browser-ui-zoom, 1) - 48px)); max-width: 520px; }
+.ssh-host-key-dialog dl { margin: 18px 0; }
+.ssh-host-key-dialog dt { color: var(--text-secondary); margin-top: 12px; font-size: 12px; }
+.ssh-host-key-dialog dd { margin: 4px 0 0; overflow-wrap: anywhere; user-select: text; }
+.ssh-host-key-dialog code { font-size: 12px; }
 .device-manager .device-dialog-header { padding: 14px 18px; gap: 10px; }
 .device-manager .device-heading-icon { width: 32px; height: 32px; border-radius: 8px; }
 .device-manager .device-heading h3 { font-size: 16px; font-weight: 500; }

@@ -26,7 +26,7 @@ const devices: DeviceProfile[] = [
 ];
 const deleted = new Map<string, { device: DeviceProfile; deleted_at: string }>();
 let nextDeviceId = 1;
-const fixture = { failReorder: false, failSave: false, reorderDelay: 0, reorderCalls: 0, snapshot: () => structuredClone(devices) };
+const fixture = { failReorder: false, failSave: false, reorderDelay: 0, reorderCalls: 0, changedHostKey: new URLSearchParams(location.search).has("hostKey"), testCalls: 0, replacements: 0, snapshot: () => structuredClone(devices) };
 Object.assign(window, { deviceFixture: fixture });
 api.listDevices = async () => devices.map((device) => ({ ...device }));
 api.reorderDevices = async (ids) => {
@@ -40,7 +40,16 @@ api.reorderDevices = async (ids) => {
 api.listSerialPorts = async () => ["COM8", "/dev/ttyUSB0"];
 api.listWslDistributions = async () => ["Ubuntu-24.04"];
 api.listLocalShells = async () => [{ id: "pwsh", label: "PowerShell", path: "C:/tools/pwsh.exe" }];
-api.testDevice = async (device) => `测试连接名称：${device.name}`;
+api.testDevice = async (device, confirmation) => {
+  fixture.testCalls++;
+  if (device.transport === "ssh" && fixture.changedHostKey) {
+    const change = { addr: `${device.host}:${device.port}`, saved_fingerprint: "SHA256:abcdefghijklmnopqrstuvwxyz0123456789OldKey00", received_fingerprint: "SHA256:0123456789abcdefghijklmnopqrstuvwxyzNewKey00" };
+    if (JSON.stringify(confirmation) !== JSON.stringify(change)) throw { code: "ssh_host_key_changed", ...change };
+    fixture.changedHostKey = false;
+    fixture.replacements++;
+  }
+  return `测试连接名称：${device.name}`;
+};
 api.deleteDevice = async (id) => {
   const index = devices.findIndex((device) => device.id === id);
   if (index < 0) throw new Error("设备不存在");

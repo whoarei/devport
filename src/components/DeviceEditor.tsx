@@ -1,8 +1,10 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { api, DeviceProfile, LocalShellInfo, type SerialConfig } from "../api";
+import { api, errorMessage, DeviceProfile, LocalShellInfo, type HostKeyChange, type SerialConfig } from "../api";
 import { useUsbStore } from "../usbStore";
 import { automaticDeviceName } from "../deviceNaming";
+import { testDeviceConnection } from "../deviceConnection";
+import { SshHostKeyDialog, type HostKeyPrompt } from "./SshHostKeyDialog";
 
 const SERIAL_BAUD_RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 1500000, 2000000, 3000000, 4000000];
 const defaultSerialConfig = (): SerialConfig => ({ port: "", baud_rate: 115200, data_bits: 8, parity: "none", stop_bits: 1, flow_control: "none" });
@@ -64,6 +66,8 @@ interface DeviceEditorProps {
 export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange: update, onSave, onDelete, dirty, busy, testing, onTesting, status }: DeviceEditorProps) {
   const { t } = useTranslation();
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [hostKeyPrompt, setHostKeyPrompt] = useState<HostKeyPrompt | null>(null);
+  const hostKeyResponse = useRef<((confirmed: boolean) => void) | null>(null);
   const [ports, setPorts] = useState<string[]>([]);
   const [distributions, setDistributions] = useState<string[]>([]);
   const [shells, setShells] = useState<LocalShellInfo[]>([]);
@@ -80,6 +84,7 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
 
   useEffect(() => {
     (editing.id ? nameInput.current : connectionInput.current)?.focus();
+    return () => { hostKeyResponse.current?.(false); };
   }, []);
 
   useEffect(() => {
@@ -114,9 +119,19 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
     setTestResult(t("device.connecting"));
     onTesting(true);
     try {
-      setTestResult(await api.testDevice(d));
+      const result = await testDeviceConnection(d, (change: HostKeyChange) => new Promise<boolean>((resolve) => {
+        const respond = (confirmed: boolean) => {
+          if (hostKeyResponse.current !== respond) return;
+          hostKeyResponse.current = null;
+          setHostKeyPrompt(null);
+          resolve(confirmed);
+        };
+        hostKeyResponse.current = respond;
+        setHostKeyPrompt({ change, respond });
+      }));
+      setTestResult(result ?? t("device.testCanceled"));
     } catch (e) {
-      setTestResult(t("device.testFailed", { message: String(e) }));
+      setTestResult(t("device.testFailed", { message: errorMessage(e) }));
     } finally { onTesting(false); }
   };
 
@@ -331,5 +346,6 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
           onClick={onSave}>{t(editing.id ? "device.saveChanges" : "device.addTitle")}</button>
       </div>
     </footer>
+    <SshHostKeyDialog request={hostKeyPrompt} />
   </>;
 }

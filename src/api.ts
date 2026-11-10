@@ -30,6 +30,12 @@ export interface DeviceProfile {
   workspace_root: string;
 }
 
+export interface HostKeyChange {
+  addr: string;
+  saved_fingerprint: string;
+  received_fingerprint: string;
+}
+
 /** 后端探测到的可用本机 shell */
 export interface LocalShellInfo {
   id: string;
@@ -358,8 +364,8 @@ export const api = {
   listDeletedDevices: () => invoke<DeletedDevice[]>("list_deleted_devices"),
   restoreDevice: (id: string) => invoke<DeviceProfile>("restore_device", { id }),
   purgeDeletedDevice: (id: string, deletedAt: string) => invoke<void>("purge_deleted_device", { id, deletedAt }),
-  testDevice: (device: DeviceProfile) =>
-    invoke<string>("test_device", { device }),
+  testDevice: (device: DeviceProfile, hostKeyConfirmation?: HostKeyChange) =>
+    invoke<string>("test_device", { device, hostKeyConfirmation }),
   listSerialPorts: () => invoke<string[]>("list_serial_ports"),
   listWslDistributions: () => invoke<string[]>("list_wsl_distributions"),
   usbSnapshot: () => invoke<UsbSnapshot>("usb_snapshot"),

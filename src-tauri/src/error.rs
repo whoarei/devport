@@ -1,5 +1,13 @@
 use thiserror::Error;
 
+#[derive(Error, Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[error("{addr}: saved {saved_fingerprint}, got {received_fingerprint}")]
+pub struct HostKeyChange {
+    pub addr: String,
+    pub saved_fingerprint: String,
+    pub received_fingerprint: String,
+}
+
 #[derive(Error, Debug)]
 pub enum RunnerError {
     #[error("io error: {0}")]
@@ -21,7 +29,7 @@ pub enum RunnerError {
     AuthFailed(String),
 
     #[error("host key mismatch for {0}")]
-    HostKeyMismatch(String),
+    HostKeyMismatch(HostKeyChange),
 
     #[error("device not found: {0}")]
     DeviceNotFound(String),

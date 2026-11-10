@@ -190,8 +190,33 @@ pub fn purge_deleted_device(
 pub async fn test_device(
     state: tauri::State<'_, AppState>,
     device: DeviceProfile,
+    host_key_confirmation: Option<crate::error::HostKeyChange>,
+) -> std::result::Result<String, serde_json::Value> {
+    test_device_connection(&device, &state.config_dir, host_key_confirmation)
+        .await
+        .map_err(|error| match error {
+            crate::error::RunnerError::HostKeyMismatch(change) => serde_json::json!({
+                "code": "ssh_host_key_changed",
+                "message": format!("SSH host key changed for {change}"),
+                "addr": change.addr,
+                "saved_fingerprint": change.saved_fingerprint,
+                "received_fingerprint": change.received_fingerprint,
+            }),
+            other => serde_json::json!(other.to_string()),
+        })
+}
+
+async fn test_device_connection(
+    device: &DeviceProfile,
+    config_dir: &std::path::Path,
+    host_key_confirmation: Option<crate::error::HostKeyChange>,
 ) -> Result<String> {
     device.validate()?;
+    if host_key_confirmation.is_some() && device.transport != crate::device::TransportKind::Ssh {
+        return Err(crate::error::RunnerError::InvalidInput(
+            "host key confirmation is only supported for SSH".into(),
+        ));
+    }
     if device.transport == crate::device::TransportKind::Local {
         return crate::local::test_device(device.local.as_ref().unwrap()).await;
     }
@@ -199,9 +224,14 @@ pub async fn test_device(
         return crate::wsl::test_device(device.wsl.as_ref().unwrap()).await;
     }
     if device.transport == crate::device::TransportKind::Serial {
-        return crate::serial::test_device(&device).await;
+        return crate::serial::test_device(device).await;
     }
-    let conn = crate::ssh::client::SshConnection::connect(&device, &state.config_dir).await?;
+    let conn = crate::ssh::client::SshConnection::connect_confirmed(
+        device,
+        config_dir,
+        host_key_confirmation,
+    )
+    .await?;
     let channel = conn.handle.channel_open_session().await?;
     channel
         .exec(true, "uname -a && python3 --version 2>&1; echo EXIT:$?")
