@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, typ
 import { useStore } from "zustand";
 import { useTranslation } from "react-i18next";
 import { errorMessage, workspaceRefEquals } from "../api";
-import { createDeviceWorkspaceStore, deviceWorkspaceKey, deviceWorkspaceNode } from "../deviceWorkspaceStore";
+import { createDeviceWorkspaceStore, deviceWorkspaceKey, deviceWorkspaceNode, registerDeviceWorkspaceTarget } from "../deviceWorkspaceStore";
 import { deviceWorkspaceContextCurrent, deviceWorkspaceEndpoint, deviceWorkspaceFileBlocker, deviceWorkspaceFileContext, mutateDeviceWorkspaceFile, type DeviceWorkspaceFileContext } from "../deviceWorkspaceActions";
 import { useAppStore } from "../store";
 import { useTransferStore } from "../transferStore";
@@ -23,6 +23,7 @@ import { TransferFileDialog, type TransferFileRequest } from "./TransferFileDial
 import "../fileTransfer.css";
 import { WorkspaceEntryRow, workspaceEntryRunPath } from "./WorkspaceEntryRow";
 import { appCommandEnabled, executeAppCommand } from "../appCommands";
+import { WorkspaceTransferFeedback } from "./WorkspaceTransferFeedback";
 
 export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: PanelComponentProps) {
   const { t } = useTranslation();
@@ -44,6 +45,7 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
   const [pathDraft, setPathDraft] = useState("");
   const [fileRequest, setFileRequest] = useState<{ request: TransferFileRequest; context: DeviceWorkspaceFileContext } | null>(null);
   const sourceKey = deviceWorkspaceKey(device);
+  useEffect(() => registerDeviceWorkspaceTarget(browser), [browser]);
   useEffect(() => {
     closeMenu();
     setActionError(null);
@@ -134,8 +136,8 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
       entries.unshift({ label: t("run.run"), disabled: unavailable || !appCommandEnabled("runFile", context),
         onSelect: () => { if (sourceCurrent() && workspaceRefEquals(runWorkspace, useAppStore.getState().workspace)) void executeAppCommand("runFile", context); } });
     }
-    if (path) entries.splice(1, 0, { label: `${t("transfer.download")}…`, disabled: unavailable,
-      onSelect: () => { if (sourceCurrent()) useTransferStore.getState().requestWorkspaceTransfer(root, path, directory); } });
+    if (path) entries.splice(1, 0, { label: t("transfer.download"), disabled: unavailable || transferBusy,
+      onSelect: () => { if (sourceCurrent()) void useTransferStore.getState().requestWorkspaceTransfer(root, path, directory); } });
     if (directory) {
       if (path) entries.push({ label: t("deviceWorkspace.enterDirectory"), disabled: unavailable, onSelect: () => navigate((endpoint(path) as { path: string }).path) });
       entries.push("separator", ...createEntries(path));
@@ -203,6 +205,7 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
           onClick={() => navigate(pathDraft)}><Icon name="arrowRight" /></button>
       </div>
       {actionError && <div className="workspace-error" role="alert"><span>{actionError}</span></div>}
+      <WorkspaceTransferFeedback workspace={root} />
       {error && <div className="workspace-error" role="alert"><span>{error}</span><button onClick={() => browser.setState({ error: null })}>{t("workspace.close")}</button></div>}
       {navigating && <div className="workspace-empty" role="status">{t("transfer.loading")}</div>}
       {current && level("", 0)}

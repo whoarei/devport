@@ -29,6 +29,10 @@ export const en: Messages = {
   runnerEntry: {"entryPath":"Relative script path","editEntry":"Edit Entry…",cached:"Cached · verified on launch",notPrepared:"Needs preparation",useLegacy:"Use Legacy Entry as a Run Candidate…",needsEdit:"Review or edit this entry"},
   pathCompletion: { suggestions: "Folder suggestions", empty: "No matching folders", failed: "Cannot read folder suggestions: {{message}}" },
   transfer: {
+    openBothWorkspaces: "Open the other workspace and check its destination directory first.",
+    deviceWorkspaceNotOpen: "Device workspace is not open. Open it before uploading.",
+    selectDeviceFirst: "Select an SSH / WSL device, then open its device workspace.",
+    openLocalWorkspaceFirst: "Open a local workspace as the download destination first.",
     clearStatus: "Clear Transfer Status", clearFor: "Clear transfer status for {{name}}", retryFor: "Retry {{name}}", cancelFor: "Cancel transfer of {{name}}",
     uploadTitle: "Upload to Device", downloadTitle: "Download to This Computer", next: "Next",
     entryCount: "{{count}} entries", readFailed: "Cannot read directory", chooseDeviceHint: "Select a device to browse the files you want to transfer.", chooseDirectoryHint: "Enter a directory path and press Enter, or use the folder picker.",

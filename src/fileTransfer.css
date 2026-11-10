@@ -138,3 +138,7 @@
   .queue-actions-column { width: 92px; }
   .transfer-queue-row td, .transfer-queue-table th { padding-left: 4px; padding-right: 4px; }
 }
+.transfer-conflict-list { max-height: 160px; overflow: auto; overflow-wrap: anywhere; padding-left: 20px; font-size: 12px; }
+.workspace-transfer-notice { position: fixed; right: 24px; bottom: 24px; z-index: 50; display: flex; align-items: center; gap: 10px; max-width: min(420px, calc(100vw - 48px)); padding: 12px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-control); background: var(--surface-raised); color: var(--text-primary); box-shadow: 0 4px 14px #0002; font-size: 13px; overflow-wrap: anywhere; }
+.workspace-transfer-notice > .ui-icon { flex-shrink: 0; color: var(--accent); }
+.workspace-transfer-notice > button { display: flex; flex-shrink: 0; padding: 0; border: 0; background: transparent; color: var(--text-secondary); }

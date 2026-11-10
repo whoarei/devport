@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useTranslation } from "react-i18next";
-import { errorMessage, type WorkspaceRef } from "../api";
+import { errorMessage, workspaceRefEquals, type WorkspaceRef } from "../api";
 import { useTransferStore } from "../transferStore";
 import { inlineTransferFor } from "../workspaceTransfers";
 import { canRetryTransfer, transferPercent, transferQueueState, transferTaskName } from "../transferQueue";
@@ -11,9 +11,10 @@ import { Icon } from "./Icon";
 
 export function WorkspaceTransferRow({ workspace, path, children, actions }: { workspace: WorkspaceRef; path: string; children: ReactNode; actions?: ReactNode }) {
   const { t } = useTranslation();
-  const { tasks, inlineHiddenIds, completionNotices, inlineOrigins, blocked } = useTransferStore(useShallow((s) => ({
+  const { tasks, inlineHiddenIds, completionNotices, inlineOrigins, blocked, preparing } = useTransferStore(useShallow((s) => ({
     tasks: s.tasks, inlineHiddenIds: s.inlineHiddenIds, completionNotices: s.completionNotices, inlineOrigins: s.inlineOrigins,
     blocked: s.planning || !!s.plan || !!s.workspaceTransfer || s.deviceMutating,
+    preparing: s.workspaceTransfer,
   })));
   const [now, setNow] = useState(Date.now);
   const [working, setWorking] = useState(false);
@@ -24,6 +25,7 @@ export function WorkspaceTransferRow({ workspace, path, children, actions }: { w
     const timer = setTimeout(() => setNow(Date.now()), Math.max(0, until - Date.now()));
     return () => clearTimeout(timer);
   }, [until]);
+  if (preparing?.path === path && workspaceRefEquals(preparing.workspace, workspace)) return <>{children}<span className="workspace-transfer-status" role="status">{t("transfer.scanning")}</span></>;
   if (!match) return <>{children}{actions}</>;
   const { task, nested } = match;
   const active = transferActive(task.state), state = transferQueueState(task);

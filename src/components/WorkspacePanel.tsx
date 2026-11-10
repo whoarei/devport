@@ -10,6 +10,7 @@ import { useTerminalStore } from "../terminalStore";
 import { useCommandUiStore } from "../commandUiStore";
 import { revealConsolePanel } from "../consoleTabs";
 import { useTransferStore } from "../transferStore";
+import { WorkspaceTransferFeedback } from "./WorkspaceTransferFeedback";
 import { openWorkspace } from "../workspacePicker";
 import { joinPath, WORKSPACE_ROOT, WorkspacePath, WorkspaceTree } from "../workspaceTree";
 import { ConfirmDialog, ConfirmRequest } from "./ConfirmDialog";
@@ -349,11 +350,11 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     void useWorkspaceRunStore.getState().refreshCommands();
     const entries: MenuEntry[] = await workspaceRunMenu(workspace, path, !entry || entry.is_dir);
     if (epoch !== menuEpoch.current || workspace !== useAppStore.getState().workspace || sourceRevision !== workspaceSourceRevision(workspace, useAppStore.getState().devices)) return;
-    if (entry) entries.push({ label: `${t(workspace.type === "local" ? "transfer.upload" : "transfer.download")}…`,
+    if (entry) entries.push({ label: t(workspace.type === "local" ? "transfer.upload" : "transfer.download"),
       disabled: useTransferStore.getState().planning || !!useTransferStore.getState().plan || !!useTransferStore.getState().workspaceTransfer,
       onSelect: () => {
         if (workspace !== useAppStore.getState().workspace || sourceRevision !== workspaceSourceRevision(workspace, useAppStore.getState().devices)) return;
-        useTransferStore.getState().requestWorkspaceTransfer(workspace, path, entry.is_dir);
+        void useTransferStore.getState().requestWorkspaceTransfer(workspace, path, entry.is_dir);
       } });
     entries.push(workspaceTransferMenuEntry(t, workspace, entry ? path : undefined));
     if (!entry) entries.push({ label: t("workspace.refresh"), onSelect: () => void useAppStore.getState().loadWorkspaceDir(dir) });
@@ -428,6 +429,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
             </div>
             {presentation.transport && <span className="workspace-transport">{presentation.transport.toUpperCase()}</span>}
           </div>}
+          <WorkspaceTransferFeedback workspace={workspace} />
           {workspaceError && <div className="workspace-error" role="alert">
             <span>{workspaceError}</span>
             <button onMouseDown={preserveContentFocus} onClick={() => useAppStore.getState().dismissWorkspaceError()}>{t("workspace.close")}</button>

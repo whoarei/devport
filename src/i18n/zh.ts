@@ -30,6 +30,10 @@ export const zh = {
   runnerEntry: {"entryPath":"脚本相对路径","editEntry":"编辑入口…",cached:"已有缓存 · 启动前校验",notPrepared:"需要准备",useLegacy:"采用旧入口作为运行候选…",needsEdit:"入口需确认或编辑"},
   pathCompletion: { suggestions: "目录补全", empty: "没有匹配的目录", failed: "无法读取补全目录：{{message}}" },
   transfer: {
+    openBothWorkspaces: "先打开另一侧工作区，并核对传输目录。",
+    deviceWorkspaceNotOpen: "设备工作区未打开，请先打开设备工作区后再上传。",
+    selectDeviceFirst: "请先选择 SSH / WSL 设备，再打开设备工作区。",
+    openLocalWorkspaceFirst: "请先打开本机工作区，作为下载目标。",
     clearStatus: "清除传输状态", clearFor: "清除 {{name}} 的传输状态", retryFor: "重试 {{name}}", cancelFor: "取消传输 {{name}}",
     uploadTitle: "上传到设备", downloadTitle: "下载到本机", next: "下一步",
     entryCount: "{{count}} 个条目", readFailed: "无法读取目录", chooseDeviceHint: "选择设备后，浏览需要传输的目录。", chooseDirectoryHint: "输入目录路径并按 Enter，或使用目录选择按钮。",

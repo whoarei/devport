@@ -140,3 +140,29 @@ function sortedEntries(entries: TransferEntry[]) {
 }
 
 export type DeviceWorkspaceStore = ReturnType<typeof createDeviceWorkspaceStore>;
+
+/** Share only the mounted sidebar's resolved root, not its tree or editing connection. */
+export const deviceWorkspaceTarget = createStore<{
+  root: WorkspaceRef | null; key: string | null; generation: number; ready: boolean;
+}>(() => ({ root: null, key: null, generation: 0, ready: false }));
+
+let targetOwner: object | null = null;
+export function registerDeviceWorkspaceTarget(browser: DeviceWorkspaceStore): () => void {
+  const owner = {};
+  targetOwner = owner;
+  const publish = () => {
+    if (targetOwner !== owner) return;
+    const state = browser.getState(), root = deviceWorkspaceNode(state.tree, "");
+    deviceWorkspaceTarget.setState({ root: state.root, key: state.key, generation: state.generation,
+      ready: !!root?.loaded && !root.loading && !root.error && !state.navigating && !state.mutating });
+  };
+  const unsubscribe = browser.subscribe(publish);
+  publish();
+  return () => {
+    unsubscribe();
+    if (targetOwner === owner) {
+      targetOwner = null;
+      deviceWorkspaceTarget.setState({ root: null, key: null, generation: 0, ready: false });
+    }
+  };
+}

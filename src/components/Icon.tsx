@@ -20,6 +20,7 @@ const paths = {
   arrowLeft: <path d="M16 10H4m5-5-5 5 5 5" />,
   refresh: <path d="M16.5 8A7 7 0 1 0 17 12M17 3v5h-5" />,
   alert: <><circle cx="10" cy="10" r="7.5" /><path d="M10 6v5m0 3h.01" /></>,
+  info: <><circle cx="10" cy="10" r="7.5" /><path d="M10 9v5m0-8h.01" /></>,
   play: <path d="m7 4 9 6-9 6Z" />,
   check: <path d="m4 10 4 4 8-8" />,
   more: <><circle cx="4" cy="10" r=".7" /><circle cx="10" cy="10" r=".7" /><circle cx="16" cy="10" r=".7" /></>,

@@ -176,7 +176,7 @@ useAppStore.setState({ layout: { ...DEFAULT_LAYOUT, panelVisible: { ...DEFAULT_L
 const width = Number(params.get("width"));
 if (width >= 640) document.getElementById("root")!.style.cssText = `width:min(${width}px,100vw);margin:auto;border-inline:1px solid var(--border);`;
 // Inline-transfer interactions use the real UI and store, with an entirely in-memory backend.
-if (params.has("inlineTransfers")) {
+if (params.has("inlineTransfers") || params.has("directTransfers")) {
   base.workspace_root = "/home/dev/projects/remote-runner-demo";
   const remote: WorkspaceRef = { type: "device", device_id: base.id, path: base.workspace_root };
   const local: WorkspaceRef = workspace.type === "local" ? workspace : { type: "local", dir: "C:\\projects\\workspace-source" };
@@ -191,11 +191,12 @@ if (params.has("inlineTransfers")) {
     item_count: 1, completed: state === "completed" ? 1 : 0, skipped: 0, failed: state === "failed" ? 1 : 0,
     pending_count: state === "transferring" ? 1 : 0, unknown_count: 0, residual_count: 0, warning_count: 0,
   });
-  let tasks = [task("upload-file", "main.py", local, remote, "transferring", 440_402), task("upload-folder", "output", local, remote, "transferring", 713_031), task("failed-download", "README.md", remote, local, "failed", 300_000)];
+  let tasks = params.has("directTransfers") ? [] : [task("upload-file", "main.py", local, remote, "transferring", 440_402), task("upload-folder", "output", local, remote, "transferring", 713_031), task("failed-download", "README.md", remote, local, "failed", 300_000)];
   const plans = new Map<string, TransferPlan>(), retries = new Map<string, string>(), animated = new Set<string>();
   transferApi.plan = async request => {
-    const plan: TransferPlan = { id: crypto.randomUUID(), request, total_bytes: attributes.size, conflicts: 0, warnings: [], overwrite: true, keep_both: true,
-      items: request.paths.map(path => ({ path, attrs: attributes, target_attrs: null, state: "pending", target_path: null, error: null })) };
+    const conflicts = params.has("transferConflicts") ? request.paths.length : 0;
+    const plan: TransferPlan = { id: crypto.randomUUID(), request, total_bytes: attributes.size, conflicts, warnings: [], overwrite: true, keep_both: true,
+      items: request.paths.map(path => ({ path, attrs: attributes, target_attrs: conflicts ? attributes : null, state: "pending", target_path: null, error: null })) };
     plans.set(plan.id, plan); return plan;
   };
   transferApi.retry = async id => {
@@ -243,7 +244,7 @@ if (params.has("rowActions")) {
 function Fixture() {
   const layout = useAppStore(s => s.layout);
   React.useEffect(() => {
-    if (!params.has("inlineTransfers")) return;
+    if (!params.has("inlineTransfers") && !params.has("directTransfers")) return;
     const timer = setInterval(() => { void useTransferStore.getState().refresh(); }, 500);
     return () => clearInterval(timer);
   }, []);
