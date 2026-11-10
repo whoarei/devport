@@ -4,7 +4,7 @@ import { deviceLabel, emptyDevice } from "../src/components/DeviceEditor";
 import { api, DeviceProfile } from "../src/api";
 import { selectedDeviceAfterLoad, useAppStore } from "../src/store";
 import { automaticDeviceName } from "../src/deviceNaming";
-import { deleteDevice, loadDeletedDeviceEvents, reorderDevices, saveDevice } from "../src/deviceActions";
+import { copyDeviceDraft, deleteDevice, loadDeletedDeviceEvents, reorderDevices, saveDevice } from "../src/deviceActions";
 import { eventText, useEventStore } from "../src/eventStore";
 import i18n from "../src/i18n";
 
@@ -303,4 +303,69 @@ test("device save, reorder and deletion serialize and recover after a failed ope
   await deleting;
   assert.deepEqual(calls, ["save", "order", "delete"]);
   assert.equal(useAppStore.getState().devices[0].name, "updated");
+});
+test("device copies preserve each transport's settings without sharing identity or nested objects", () => {
+  for (const transport of ["ssh", "serial", "wsl", "local"] as const) {
+    const original: DeviceProfile = { ...emptyDevice(), id: "source", revision: "v7", name: "source", is_default: true, transport,
+      host: "example.com", port: 2222, username: "alice", workspace_root: "/srv/project",
+      auth: { type: "password", password: "test-password" },
+      serial: { port: "COM8", baud_rate: 9600, data_bits: 7, parity: "even", stop_bits: 2, flow_control: "hardware" },
+      wsl: { distribution: "Ubuntu-24.04", user: "dev" }, local: { shell: "pwsh", path: "C:/tools/pwsh.exe", no_profile: true } };
+    const draft = copyDeviceDraft(original, [original]);
+    assert.equal(draft.id, "");
+    assert.equal("revision" in draft, false);
+    assert.equal(draft.is_default, false);
+    assert.equal(draft.transport, transport);
+    assert.equal(draft.host, original.host);
+    assert.equal(draft.port, original.port);
+    assert.equal(draft.username, original.username);
+    assert.equal(draft.workspace_root, original.workspace_root);
+    for (const key of ["auth", "serial", "wsl", "local"] as const) {
+      assert.deepEqual(draft[key], original[key]);
+      assert.notEqual(draft[key], original[key]);
+    }
+    draft.auth = { type: "key", key_path: "other" };
+    draft.serial!.port = "COM99";
+    draft.wsl!.user = "root";
+    draft.local!.no_profile = false;
+    assert.equal(original.serial!.port, "COM8");
+    assert.equal(original.wsl!.user, "dev");
+    assert.equal(original.local!.no_profile, true);
+    assert.equal(original.id, "source");
+    assert.equal(original.is_default, true);
+  }
+});
+
+test("device copies get distinct translated names", async () => {
+  const language = i18n.language;
+  const source = { ...emptyDevice(), id: "source", name: "box" };
+  try {
+    for (const [locale, suffix] of [["zh", "副本"], ["en", "Copy"]]) {
+      await i18n.changeLanguage(locale);
+      const first = copyDeviceDraft(source, [source]);
+      assert.equal(first.name, `box ${suffix}`);
+      const second = copyDeviceDraft(source, [source, first, { ...first, name: `${first.name} (2)` }]);
+      assert.equal(second.name, `${first.name} (3)`);
+    }
+  } finally { await i18n.changeLanguage(language); }
+});
+
+test("saving a copied draft adds a new device and keeps the source and default selection", async (t) => {
+  const { first, second } = resetDeviceActions(t);
+  const draft = copyDeviceDraft(first, [first, second]);
+  let devices = [first, second];
+  t.mock.method(api, "saveDevice", async (payload) => {
+    assert.equal(payload.id, "");
+    assert.equal(payload.is_default, false);
+    const saved = { ...payload, id: "new-copy", revision: "new-revision" };
+    devices = [...devices, saved];
+    return saved;
+  });
+  t.mock.method(api, "listDevices", async () => devices);
+  const saved = await saveDevice(draft);
+  assert.equal(saved.id, "new-copy");
+  assert.deepEqual(useAppStore.getState().devices.map((device) => device.id), [first.id, second.id, "new-copy"]);
+  assert.equal(useAppStore.getState().devices[0], first);
+  assert.equal(useAppStore.getState().devices.find((device) => device.is_default)?.id, first.id);
+  assert.equal(useAppStore.getState().selectedDeviceId, first.id);
 });

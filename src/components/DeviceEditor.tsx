@@ -9,7 +9,7 @@ import { SshHostKeyDialog, type HostKeyPrompt } from "./SshHostKeyDialog";
 const SERIAL_BAUD_RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 1500000, 2000000, 3000000, 4000000];
 const defaultSerialConfig = (): SerialConfig => ({ port: "", baud_rate: 115200, data_bits: 8, parity: "none", stop_bits: 1, flow_control: "none" });
 
-export function DeviceIcon({ name }: { name: "ssh" | "serial" | "wsl" | "local" | "close" | "refresh" | "info" | "grip" | "plus" | "up" | "down" | "delete" | "check" }) {
+export function DeviceIcon({ name }: { name: "ssh" | "serial" | "wsl" | "local" | "close" | "refresh" | "info" | "grip" | "plus" | "up" | "down" | "delete" | "check" | "copy" }) {
   const paths = {
     ssh: <><rect x="4" y="3" width="16" height="7" rx="2" /><rect x="4" y="14" width="16" height="7" rx="2" /><path d="M8 6.5h.01M8 17.5h.01M12 6.5h5M12 17.5h5" /></>,
     serial: <><path d="M8 3v4m8-4v4M6 7h12v5a6 6 0 0 1-12 0V7Zm6 11v3" /></>,
@@ -24,6 +24,7 @@ export function DeviceIcon({ name }: { name: "ssh" | "serial" | "wsl" | "local" 
     down: <path d="m6 13 6 6 6-6M12 5v14" />,
     delete: <><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7" /></>,
     check: <path d="m5 12 4 4L19 6" />,
+    copy: <><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3" /></>,
   };
   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -55,6 +56,7 @@ interface DeviceEditorProps {
   onChange: (patch: Partial<DeviceProfile>) => void;
   onSave: () => void;
   onDelete: () => void;
+  onCopy: () => void;
   dirty: boolean;
   busy: boolean;
   testing: boolean;
@@ -63,7 +65,7 @@ interface DeviceEditorProps {
 }
 
 /** Attribute form; the manager owns the draft, persistence and navigation guards. */
-export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange: update, onSave, onDelete, dirty, busy, testing, onTesting, status }: DeviceEditorProps) {
+export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange: update, onSave, onDelete, onCopy, dirty, busy, testing, onTesting, status }: DeviceEditorProps) {
   const { t } = useTranslation();
   const [testResult, setTestResult] = useState<string | null>(null);
   const [hostKeyPrompt, setHostKeyPrompt] = useState<HostKeyPrompt | null>(null);
@@ -83,7 +85,8 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
   const updateSerial = (patch: Partial<SerialConfig>) => update({ serial: { ...defaultSerialConfig(), ...editing.serial, ...patch } });
 
   useEffect(() => {
-    (editing.id ? nameInput.current : connectionInput.current)?.focus();
+    (editing.id || editing.name ? nameInput.current : connectionInput.current)?.focus();
+    if (!editing.id && editing.name) nameInput.current?.select();
     return () => { hostKeyResponse.current?.(false); };
   }, []);
 
@@ -151,6 +154,7 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
             <label htmlFor="device-name">{t("device.name")}</label>
             <div className="device-name-actions">
               <button type="button" className="device-name-reset" disabled={automaticName} onClick={() => onAutomaticName(true)}>{t("device.restoreAutomaticName")}</button>
+              {editing.id && <button type="button" className="device-icon-button" disabled={busy} aria-label={t("device.copy")} title={t("device.copy")} onClick={onCopy}><DeviceIcon name="copy" /></button>}
               {editing.id && <button type="button" className="device-icon-button device-delete" disabled={busy} aria-label={t("device.delete")} title={t("device.delete")} onClick={onDelete}><DeviceIcon name="delete" /></button>}
             </div>
           </div>

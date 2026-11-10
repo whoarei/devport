@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { errorMessage, type DeviceProfile } from "../api";
-import { deleteDevice, reorderDevices, saveDevice } from "../deviceActions";
+import { copyDeviceDraft, deleteDevice, reorderDevices, saveDevice } from "../deviceActions";
 import { automaticDeviceName } from "../deviceNaming";
 import { useAppStore } from "../store";
 import { DeviceEditor, DeviceIcon, deviceLabel, emptyDevice } from "./DeviceEditor";
@@ -94,6 +94,18 @@ function DeviceManagerDialog() {
   };
   const close = () => navigate(() => useAppStore.getState().closeDeviceManager());
   const add = () => navigate(() => choose({ ...emptyDevice(), is_default: useAppStore.getState().devices.length === 0 }));
+  const copy = () => {
+    const id = editing?.id;
+    if (!id) return;
+    navigate(() => {
+      const devices = useAppStore.getState().devices;
+      const source = devices.find((item) => item.id === id);
+      if (!source) return;
+      choose(copyDeviceDraft(source, devices));
+      setBaseline("");
+      setError(null);
+    });
+  };
 
   const save = async (): Promise<boolean> => {
     if (!device || locked.current || testing) return false;
@@ -258,7 +270,7 @@ function DeviceManagerDialog() {
           </div></div>
         </aside>
         {editing ? <DeviceEditor key={`${editing.id || "new"}:${editorSession}`} editing={editing} automaticName={automaticName} onAutomaticName={setAutomaticName}
-          onChange={(patch) => setEditing((current) => current ? { ...current, ...patch } : current)} onSave={() => { void save(); }} onDelete={remove}
+          onChange={(patch) => setEditing((current) => current ? { ...current, ...patch } : current)} onSave={() => { void save(); }} onDelete={remove} onCopy={copy}
           dirty={dirty} busy={busy} testing={testing} onTesting={setTesting}
           status={operation ? t(operation === "order" ? "device.orderSaving" : "device.saving") : !dirty && notice ? t(`device.${notice}`) : null} />
           : <div className="device-manager-empty-editor"><DeviceIcon name="ssh" /><p>{t("device.emptyDescription")}</p><button type="button" onClick={add}>{t("device.addTitle")}</button></div>}

@@ -6,6 +6,16 @@ import i18n from "./i18n";
 let operations: Promise<unknown> = Promise.resolve();
 const deletedEventId = (id: string) => `device-deleted:${id}`;
 
+/** A copy is an independent new-device draft; saving assigns its identity in Rust. */
+export function copyDeviceDraft(device: DeviceProfile, devices: DeviceProfile[]): DeviceProfile {
+  const { revision: _revision, ...draft } = structuredClone(device);
+  const base = i18n.t("device.copyName", { name: device.name });
+  const names = new Set(devices.map((item) => item.name));
+  let name = base;
+  for (let index = 2; names.has(name); index++) name = `${base} (${index})`;
+  return { ...draft, id: "", name, is_default: false };
+}
+
 function withDefault(devices: DeviceProfile[]): DeviceProfile[] {
   const id = devices.find((device) => device.is_default)?.id ?? devices[0]?.id;
   return devices.map((device) => ({ ...device, is_default: device.id === id }));

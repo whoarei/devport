@@ -396,6 +396,8 @@ export const en: Messages = {
     advancedSettings: "More settings",
     namePlaceholder: "Generated from connection settings; editable",
     restoreAutomaticName: "Restore automatic name",
+    copy: "Duplicate Device",
+    copyName: "{{name}} Copy",
     host: "Host address",
     hostPlaceholder: "IP address or hostname",
     keyPathPlaceholder: "Leave empty for SSH agent or default keys",

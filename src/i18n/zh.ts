@@ -397,6 +397,8 @@ export const zh = {
     advancedSettings: "更多设置",
     namePlaceholder: "填写连接信息后自动生成，可自定义",
     restoreAutomaticName: "恢复自动命名",
+    copy: "复制设备",
+    copyName: "{{name}} 副本",
     host: "主机地址",
     hostPlaceholder: "IP 地址或主机名",
     keyPathPlaceholder: "留空使用 SSH agent 或默认密钥",
