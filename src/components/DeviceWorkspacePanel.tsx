@@ -6,6 +6,8 @@ import { createDeviceWorkspaceStore, deviceWorkspaceKey, deviceWorkspaceNode, re
 import { deviceWorkspaceContextCurrent, deviceWorkspaceEndpoint, deviceWorkspaceFileBlocker, deviceWorkspaceFileContext, mutateDeviceWorkspaceFile, type DeviceWorkspaceFileContext } from "../deviceWorkspaceActions";
 import { useAppStore } from "../store";
 import { useTransferStore } from "../transferStore";
+import { useTerminalStore } from "../terminalStore";
+import { revealConsolePanel } from "../consoleTabs";
 import { transferActive } from "../transferApi";
 import { deviceFileOperationBlocker } from "../transferFileActions";
 import { openWorkspace } from "../workspacePicker";
@@ -77,6 +79,17 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
     return browser.getState().key === sourceKey && sourceKey === deviceWorkspaceKey(app.devices.find((d) => d.id === app.selectedDeviceId));
   };
   const openAsWorkspace = (dir: string) => { if (!unavailable && sourceCurrent()) void openWorkspace(endpoint(dir)); };
+  const openInTerminal = async (dir: string) => {
+    if (unavailable || root?.type !== "device" || !device || !sourceCurrent()
+        || browser.getState().generation !== generation || !workspaceRefEquals(root, browser.getState().root)) return;
+    setActionError(null);
+    revealConsolePanel();
+    try {
+      await useTerminalStore.getState().open(root.device_id, device.name, { workspace: root, subdir: dir });
+    } catch (error) {
+      if (sourceCurrent() && browser.getState().generation === generation) setActionError(errorMessage(error));
+    }
+  };
   const navigate = (path: string) => {
     if (navigatingDisabled || !sourceCurrent()) return;
     closeMenu(); setFileRequest(null); setActionError(null);
@@ -139,6 +152,9 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
     if (path) entries.splice(1, 0, { label: t("transfer.download"), disabled: unavailable || transferBusy,
       onSelect: () => { if (sourceCurrent()) void useTransferStore.getState().requestWorkspaceTransfer(root, path, directory); } });
     if (directory) {
+      const terminals = useTerminalStore.getState();
+      entries.push({ label: t("workspace.openInTerminal"), disabled: unavailable || terminals.tabs.length >= 8 || terminals.shuttingDown,
+        onSelect: () => void openInTerminal(path) });
       if (path) entries.push({ label: t("deviceWorkspace.enterDirectory"), disabled: unavailable, onSelect: () => navigate((endpoint(path) as { path: string }).path) });
       entries.push("separator", ...createEntries(path));
     }

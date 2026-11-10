@@ -74,13 +74,24 @@ api.listWorkspaceCommands = async () => ({ entries: [], revision: "demo" });
 api.inspectWorkspacePython = async () => ({ python_version: "3.12.9", python_path: [], project: null, legacy_entry: null, legacy_module: false });
 api.getWorkspaceRun = async () => null;
 const sent = new Set<string>();
+const terminalDirectories = new Map<string, { name: string; path: string }>();
 api.readTerminal = async id => {
   await new Promise(resolve => setTimeout(resolve, 200));
-  const data = sent.has(id) ? "" : btoa("\x1b[36mdev@ubuntu\x1b[0m \x1b[34m~/projects/remote-runner-demo\x1b[0m\r\n$ python --version\r\nPython 3.12.9\r\n$ ");
+  const terminal = terminalDirectories.get(id);
+  const output = terminal ? `\x1b]2;${terminal.path}\x07Fixture terminal cwd: ${terminal.path}\r\n$ `
+    : "\x1b[36mdev@ubuntu\x1b[0m \x1b[34m~/projects/remote-runner-demo\x1b[0m\r\n$ python --version\r\nPython 3.12.9\r\n$ ";
+  const data = sent.has(id) ? "" : btoa(Array.from(new TextEncoder().encode(output), (byte) => String.fromCharCode(byte)).join(""));
   sent.add(id);
-  return { status: { session_id: id, device_name: base.name, state: "connected", exit_code: null, error: null }, data };
+  return { status: { session_id: id, device_name: terminal?.name ?? base.name, state: "connected", exit_code: null, error: null }, data };
 };
 api.openTerminal = async () => ({ session_id: crypto.randomUUID(), device_name: base.name, state: "connected", exit_code: null, error: null });
+api.openWorkspaceTerminal = async (deviceId, root, subdir) => {
+  const host = devices.find((device) => device.id === deviceId)!;
+  const path = `${root.type === "device" ? root.path : root.dir}${subdir ? `/${subdir}` : ""}`;
+  const id = crypto.randomUUID();
+  terminalDirectories.set(id, { name: host.name, path });
+  return { session_id: id, device_name: host.name, state: "connected", exit_code: null, error: null };
+};
 transferApi.list = async endpoint => {
   if (params.has("deviceWorkspace") && endpoint.type === "device") return transferApi.listWithin(endpoint, "");
   if (params.has("error") && endpoint.type === "device") throw new Error("目录不存在，请检查路径或重新选择目录。");
