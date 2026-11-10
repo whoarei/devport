@@ -3,7 +3,7 @@ import { useAppStore, getWorkspaceGeneration } from "./store";
 import { useTerminalStore } from "./terminalStore";
 import { useTransferStore } from "./transferStore";
 import { panelVisibilityPatch } from "./layoutState";
-import { captureFile, captureWorkspace, emptyEnvironment, environmentKey, restoredTab, type WorkspaceSession } from "./environmentState";
+import { captureFile, captureWorkspace, emptyEnvironment, environmentKey, persistentEnvironment, restoredTab, type WorkspaceSession } from "./environmentState";
 import { flushWindowGeometry, trackWindow } from "./windowState";
 import i18n from "./i18n";
 
@@ -35,7 +35,7 @@ export function createEnvironmentController(storage = { read: api.readWorkEnviro
     clearTimeout(timer);
     if (!enabled || stopped || revision === written) return;
     if (saving) { await saving; return flush(); }
-    const target = revision, snapshot = structuredClone(environment);
+    const target = revision, snapshot = structuredClone(persistentEnvironment(environment, useAppStore.getState().devices));
     saving = storage.write(snapshot).then(() => { written = target; useAppStore.setState({ environmentError: null }); });
     try { await saving; } finally { saving = undefined; }
     if (revision !== written) await flush();
@@ -108,7 +108,7 @@ export function createEnvironmentController(storage = { read: api.readWorkEnviro
     enabled = true;
     unlisten.push(useAppStore.subscribe((state, previous) => {
       if (restoring || stopped || (state.workspace === previous.workspace && state.openTabs === previous.openTabs
-        && state.workspaceTree === previous.workspaceTree && state.workspaceScroll === previous.workspaceScroll)) return;
+        && state.workspaceTree === previous.workspaceTree && state.workspaceScroll === previous.workspaceScroll && state.devices === previous.devices)) return;
       const changed = !workspaceRefEquals(state.workspace, previous.workspace);
       const saved = changed && state.workspace ? environment.workspaces.find((w) => environmentKey(w.workspace) === environmentKey(state.workspace!)) : undefined;
       if (saved && !state.openTabs.some((tab) => !tab.source)) {

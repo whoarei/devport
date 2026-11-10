@@ -8,7 +8,7 @@ const deletedEventId = (id: string) => `device-deleted:${id}`;
 
 /** A copy is an independent new-device draft; saving assigns its identity in Rust. */
 export function copyDeviceDraft(device: DeviceProfile, devices: DeviceProfile[]): DeviceProfile {
-  const { revision: _revision, ...draft } = structuredClone(device);
+  const { revision: _revision, temporary: _temporary, ...draft } = structuredClone(device);
   const base = i18n.t("device.copyName", { name: device.name });
   const names = new Set(devices.map((item) => item.name));
   let name = base;
@@ -17,7 +17,7 @@ export function copyDeviceDraft(device: DeviceProfile, devices: DeviceProfile[])
 }
 
 function withDefault(devices: DeviceProfile[]): DeviceProfile[] {
-  const id = devices.find((device) => device.is_default)?.id ?? devices[0]?.id;
+  const id = devices.find((device) => !device.temporary && device.is_default)?.id ?? devices.find((device) => !device.temporary)?.id;
   return devices.map((device) => ({ ...device, is_default: device.id === id }));
 }
 
@@ -105,6 +105,22 @@ export function saveDevice(device: DeviceProfile): Promise<DeviceProfile> {
     state.setDevices(withDefault(devices));
     await refreshDevices();
     return useAppStore.getState().devices.find((item) => item.id === saved.id) ?? saved;
+  });
+}
+
+export function saveTemporaryDevice(id: string): Promise<void> {
+  return serialize(async () => {
+    const previous = useAppStore.getState().devices.find((device) => device.id === id);
+    if (!previous?.temporary) return;
+    const saved = await api.saveTemporaryDevice(id);
+    const state = useAppStore.getState();
+    // Promotion preserves the connection and identity. A first saved device gains
+    // the default flag, which also changes its profile revision.
+    useAppStore.setState({ openTabs: state.openTabs.map((tab) => tab.source?.workspace.type === "device" &&
+      tab.source.workspace.device_id === id && tab.source.device_revision === previous.revision
+      ? { ...tab, source: { ...tab.source, device_revision: saved.revision } } : tab) });
+    state.setDevices(withDefault(state.devices.map((device) => device.id === id ? saved : device)));
+    await refreshDevices();
   });
 }
 

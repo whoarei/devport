@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 
 const directory = await mkdtemp(join(tmpdir(), "devport-tests-"));
 const entries = ["store", "editorTabs", "editorLanguages", "shortcuts", "layout", "review", "workspace", "workspaceLaunch", "workspaceRun", "runHistory", "remoteWorkspace", "deviceWorkspace", "deviceEditor", "deviceConnection", "appUpdate", "storageMigration", "release", "terminal", "terminalCopyOnSelect", "terminalClipboard", "ipcContract", "presetCommands", "device", "eventStore", "uiZoom", "theme", "environment", "usb", "fileTransfer", "workspaceTransfers"];
+entries.push("quickSsh");
 try {
   await build({
     entryPoints: entries.map((name) => `tests/${name}.test.ts`),

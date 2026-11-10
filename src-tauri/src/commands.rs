@@ -128,7 +128,12 @@ pub fn list_devices(
         .device_store
         .list()?
         .into_iter()
-        .map(crate::workspace_commands::device_snapshot)
+        .map(|device| {
+            let temporary = state.device_store.is_temporary(&device.id);
+            let mut snapshot = crate::workspace_commands::device_snapshot(device);
+            snapshot.temporary = temporary;
+            snapshot
+        })
         .collect())
 }
 
@@ -148,12 +153,54 @@ pub fn reorder_devices(
     state: tauri::State<'_, AppState>,
     ids: Vec<String>,
 ) -> Result<Vec<crate::workspace_commands::DeviceSnapshot>> {
-    Ok(state
+    state.device_store.reorder(&ids)?;
+    list_devices(state)
+}
+
+#[tauri::command]
+pub fn save_temporary_device(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<crate::workspace_commands::DeviceSnapshot> {
+    state
         .device_store
-        .reorder(&ids)?
-        .into_iter()
+        .save_temporary(&id)
         .map(crate::workspace_commands::device_snapshot)
-        .collect())
+}
+
+#[tauri::command]
+pub async fn quick_connect_ssh(
+    state: tauri::State<'_, AppState>,
+    updates: tauri::State<'_, crate::update::UpdateState>,
+    request: crate::quick_ssh::Request,
+    host_key_confirmation: Option<crate::error::HostKeyChange>,
+) -> std::result::Result<crate::workspace_commands::DeviceSnapshot, serde_json::Value> {
+    let result = async {
+        {
+            let _gate = updates.allow_run()?;
+        }
+        let device = request.profile()?;
+        let connection = crate::ssh::client::SshConnection::connect_confirmed(
+            &device,
+            &state.config_dir,
+            host_key_confirmation,
+        )
+        .await?;
+        let _ = connection
+            .handle
+            .disconnect(russh::Disconnect::ByApplication, "connection verified", "")
+            .await;
+        let _gate = updates.allow_run()?;
+        let profile = state.device_store.register_temporary(device)?;
+        let mut snapshot = crate::workspace_commands::device_snapshot(profile);
+        snapshot.temporary = true;
+        Ok(snapshot)
+    }
+    .await;
+    result.map_err(|error| match error {
+        crate::error::RunnerError::AuthFailed(message) => serde_json::json!({"code":"ssh_auth_failed", "message":format!("authentication failed for user {message}")}),
+        other => connection_error(other),
+    })
 }
 
 #[tauri::command]
@@ -194,16 +241,20 @@ pub async fn test_device(
 ) -> std::result::Result<String, serde_json::Value> {
     test_device_connection(&device, &state.config_dir, host_key_confirmation)
         .await
-        .map_err(|error| match error {
-            crate::error::RunnerError::HostKeyMismatch(change) => serde_json::json!({
-                "code": "ssh_host_key_changed",
-                "message": format!("SSH host key changed for {change}"),
-                "addr": change.addr,
-                "saved_fingerprint": change.saved_fingerprint,
-                "received_fingerprint": change.received_fingerprint,
-            }),
-            other => serde_json::json!(other.to_string()),
-        })
+        .map_err(connection_error)
+}
+
+fn connection_error(error: crate::error::RunnerError) -> serde_json::Value {
+    match error {
+        crate::error::RunnerError::HostKeyMismatch(change) => serde_json::json!({
+            "code": "ssh_host_key_changed",
+            "message": format!("SSH host key changed for {change}"),
+            "addr": change.addr,
+            "saved_fingerprint": change.saved_fingerprint,
+            "received_fingerprint": change.received_fingerprint,
+        }),
+        other => serde_json::json!(other.to_string()),
+    }
 }
 
 async fn test_device_connection(

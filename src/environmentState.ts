@@ -1,4 +1,4 @@
-import type { WorkspaceRef } from "./api";
+import type { DeviceProfile, WorkspaceRef } from "./api";
 import type { EditorLanguage, EditorTab } from "./editorDocument";
 import { editorFileKey, type EditorFileSource } from "./editorSources";
 
@@ -23,6 +23,19 @@ export interface WorkEnvironment {
 export const emptyEnvironment = (): WorkEnvironment => ({ version: 1, current: null, workspaces: [],
   terminals: [], active_terminal: null, transfer: { device_id: null, hidden: false, exclude: false }, window: null });
 export const environmentKey = (workspace: WorkspaceRef) => JSON.stringify(workspace);
+
+/** Session-only devices must never leave broken terminals, workspaces or drafts on restart. */
+export function persistentEnvironment(environment: WorkEnvironment, devices: DeviceProfile[]): WorkEnvironment {
+  const temporary = new Set(devices.filter((device) => device.temporary).map((device) => device.id));
+  const keep = (workspace: WorkspaceRef | null) => workspace?.type !== "device" || !temporary.has(workspace.device_id);
+  const terminals = environment.terminals.filter((tab) => !temporary.has(tab.device_id) && (!tab.workspace || keep(tab.workspace.workspace)));
+  const files = environment.device_files?.filter((file) => !file.source || keep(file.source.workspace));
+  return { ...environment, current: keep(environment.current) ? environment.current : null,
+    workspaces: environment.workspaces.filter((view) => keep(view.workspace)),
+    terminals, active_terminal: terminals.some((tab) => tab.id === environment.active_terminal) ? environment.active_terminal : null,
+    transfer: { ...environment.transfer, device_id: temporary.has(environment.transfer.device_id ?? "") ? null : environment.transfer.device_id },
+    ...(files ? { device_files: files, active_device_file: files.some((file) => file.name === environment.active_device_file) ? environment.active_device_file : null } : {}) };
+}
 
 export function restoredTab(file: FileSession): EditorTab {
   return { name: file.source ? editorFileKey(file.source) : file.name, ...(file.source ? { source: file.source } : {}), language: file.language, view: file.view, recovery: file.draft, loaded: false,

@@ -206,8 +206,13 @@ pub struct DeviceSnapshot {
     #[serde(flatten)]
     pub device: crate::device::DeviceProfile,
     pub revision: String,
+    pub temporary: bool,
 }
 pub fn device_snapshot(device: crate::device::DeviceProfile) -> DeviceSnapshot {
     let revision = model::device_revision(&device);
-    DeviceSnapshot { device, revision }
+    DeviceSnapshot {
+        device,
+        revision,
+        temporary: false,
+    }
 }

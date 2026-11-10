@@ -21,6 +21,7 @@ import { useRunHistoryStore } from "../runHistoryStore";
 import { appCommandEnabled, executeAppCommand } from "../appCommands";
 import { shortcutLabel, type AppCommandId, type ShortcutContext } from "../shortcuts";
 import { useCommandUiStore } from "../commandUiStore";
+import { openQuickSsh } from "../quickSsh";
 
 interface MenuEntry {
   type?: "item" | "checkbox" | "separator";
@@ -209,6 +210,7 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
     {
       label: t("menu.devices"),
       entries: [
+        { label: t("quickSsh.title"), disabled: commandState.updating, onSelect: openQuickSsh },
         { label: t("menu.manageDevices"), onSelect: () => useAppStore.getState().openDeviceManager() },
         { type: "separator" },
         { type: "checkbox", label: t("transfer.title"), checked: layout.panelVisible.transfer, onSelect: () => {

@@ -20,6 +20,7 @@ import { type PanelId } from "../src/panels/registry";
 import { CommandsPanel } from "../src/components/CommandsPanel";
 import { CenterDock } from "../src/components/CenterDock";
 import { DeviceManager } from "../src/components/DeviceManager";
+import { QuickSshDialog } from "../src/components/QuickSshDialog";
 import { WorkspaceRunDialogs } from "../src/components/WorkspaceRunDialogs";
 import { UnsavedDialog } from "../src/components/UnsavedDialog";
 import i18n from "../src/i18n";
@@ -43,6 +44,22 @@ const workspace: WorkspaceRef = params.has("local") ? { type: "local", dir: "C:\
   : { type: "device", device_id: "ubuntu", path: "/home/dev/projects/remote-runner-demo" };
 const source = '# 数据采集与远程运行\nfrom pathlib import Path\nimport json\n\ndef collect_samples(count: int = 10):\n    """Collect device measurements and write a report."""\n    samples = []\n    for index in range(count):\n        value = 23.5 + index * 0.1\n        samples.append({"index": index, "value": value})\n        print(f"[{index + 1:02d}/{count}] temperature: {value:.1f} °C")\n    return samples\n\nif __name__ == "__main__":\n    report = collect_samples()\n    Path("output").mkdir(exist_ok=True)\n    Path("output/report.json").write_text(json.dumps(report, indent=2))\n    print("Report saved to output/report.json")\n';
 api.listDevices = async () => devices;
+if (params.has("quickSsh")) {
+  devices.splice(0);
+  api.quickConnectSsh = async (request, confirmation) => {
+    if (request.auth.type !== "password") throw { code: "ssh_auth_failed" };
+    if (params.has("hostKey") && !confirmation) throw { code: "ssh_host_key_changed", addr: "server:2222", saved_fingerprint: "SHA256:old", received_fingerprint: "SHA256:new" };
+    const profile: DeviceProfile = { ...base, id: `temp-ssh-${crypto.randomUUID()}`, revision: "temporary-revision", name: "ssh-dev@server:2222",
+      transport: "ssh", host: "server", port: 2222, username: "dev", workspace_root: "~/", auth: request.auth, is_default: false, temporary: true };
+    devices.push(profile);
+    return profile;
+  };
+  api.saveTemporaryDevice = async (id) => {
+    const profile = devices.find((device) => device.id === id)!;
+    Object.assign(profile, { temporary: false, is_default: true, revision: "saved-revision" });
+    return { ...profile };
+  };
+}
 api.listDeletedDevices = async () => [];
 api.listLocalShells = async () => [{ id: "pwsh", label: "PowerShell", path: "C:/Program Files/PowerShell/7/pwsh.exe" }];
 api.listWslDistributions = async () => ["Ubuntu-24.04"];
@@ -134,7 +151,7 @@ api.deleteWorkspaceEntry = async (root, name) => {
   for (const key of [...deviceFiles.keys()]) if (key === path || key.startsWith(`${path}/`)) deviceFiles.delete(key);
 };
 api.renameWorkspaceCommands = async () => {};
-useAppStore.setState({ devices, selectedDeviceId: "ubuntu", workspace: empty ? null : workspace, environmentReady: false,
+useAppStore.setState({ devices, selectedDeviceId: params.has("quickSsh") ? null : "ubuntu", workspace: empty ? null : workspace, environmentReady: false,
   workspaceTree: rootTree([{ name: "output", is_dir: true }, { name: "tools", is_dir: true }, { name: "main.py", is_dir: false }, { name: "pyproject.toml", is_dir: false }, { name: "README.md", is_dir: false }, { name: "run.sh", is_dir: false }]),
   openTabs: empty ? [] : [{ name: "main.py", fileContent: source, savedContent: source, revision: "demo", eol: "lf", bom: false, language: "python", conflict: false, generation: 1 },
     { name: "pyproject.toml", fileContent: '[project]\nname = "remote-runner-demo"\nversion = "1.0.0"\n', savedContent: "", revision: "demo", eol: "lf", bom: false, language: "toml", conflict: false, generation: 1 }], activeFile: empty ? null : "main.py" });
@@ -270,7 +287,7 @@ function Fixture() {
       </aside>}
       <CenterDock />
     </main>
-    <DeviceManager /><WorkspaceRunDialogs /><UnsavedDialog /><WorkspaceTransferDialogs />
+    <DeviceManager /><QuickSshDialog /><WorkspaceRunDialogs /><UnsavedDialog /><WorkspaceTransferDialogs />
   </div>;
 }
 const root = createRoot(document.getElementById("root")!);

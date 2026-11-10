@@ -2,6 +2,14 @@ import type { Messages } from "./zh";
 
 /** 英文字典：key 集合与 zh 完全一致（typeof zh 约束，漏翻编译报错）。 */
 export const en: Messages = {
+  quickSsh: {
+    title: "SSH Quick Connect", description: "Connect to an address without adding a device first.",
+    address: "Address", addressHint: "Use [user@]host[:port] or ssh://user@host:port. Defaults: root, port 22. Use brackets for IPv6.",
+    key: "SSH agent / default keys", customKey: "Use a specific private key", keyPath: "Private key path", keyPathHint: "Leave empty for SSH agent or default keys",
+    privacy: "Connections and passwords are temporary until you save as a device. Recent connections store addresses only; saving a device stores its configuration and credentials.",
+    connect: "Connect", connecting: "Connecting…", authFailed: "Authentication failed. Enter a password or check your private key and try again.",
+    temporary: "Temporary", save: "Save as Device", saving: "Saving…",
+  },
   shortcuts: {
     title: "Keyboard Shortcuts", action: "Action", keys: "Shortcut", scope: "Where it works", runMenu: "Run",
     hint: "Shortcuts work inside the application window. Background actions pause during dialogs and IME composition. Action shortcuts do not run while typing in forms.",

@@ -13,6 +13,7 @@ import { deviceFileOperationBlocker } from "../transferFileActions";
 import { openWorkspace } from "../workspacePicker";
 import { joinPath, nameOf, parentOf } from "../workspaceTree";
 import { parentDevicePath } from "../directoryCompletion";
+import { SaveTemporaryDevice } from "./SaveTemporaryDevice";
 import { uploadBusy } from "../editorDocument";
 import { preserveContentFocus } from "../focus";
 import type { PanelComponentProps } from "../panels/components";
@@ -209,6 +210,7 @@ export function DeviceWorkspacePanel({ visible, collapsed, onToggleCollapse }: P
         onClick={() => openAsWorkspace("")}><Icon name="folderOpen" /></button>
     </PanelTitle>
     {!collapsed && <>
+      {device?.temporary && <SaveTemporaryDevice device={device} />}
       <div className="device-workspace-navigation" onContextMenu={(event) => event.stopPropagation()}>
         <button className="device-workspace-action" disabled={navigatingDisabled || navigating || root?.type !== "device" || root.path === "/"} title={t("transfer.up")} aria-label={t("transfer.up")}
           onClick={() => root?.type === "device" && navigate(parentDevicePath(root.path))}><Icon name="arrowUp" /></button>

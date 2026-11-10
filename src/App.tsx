@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { onRunEvents, api } from "./api";
 import { useAppStore } from "./store";
 import { DeviceManager } from "./components/DeviceManager";
+import { QuickSshDialog } from "./components/QuickSshDialog";
 import { UsbDialog } from "./components/UsbDialog";
 import { RemoteWorkspaceDialog } from "./components/RemoteWorkspaceDialog";
 import { WorkspaceTransferDialogs } from "./components/WorkspaceTransferDialogs";
@@ -204,6 +205,7 @@ export default function App() {
       <AboutDialog dialogRef={aboutDialog} autoCheckNonce={aboutAutoCheck} />
       <UpdateConfirmDialog />
       <DeviceManager />
+      <QuickSshDialog />
       <UsbDialog />
       <RemoteWorkspaceDialog />
       <WorkspaceTransferDialogs />

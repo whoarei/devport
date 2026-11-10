@@ -6,6 +6,7 @@ pub mod file_transfer;
 pub mod identity_migration;
 pub mod local;
 pub mod process;
+pub mod quick_ssh;
 pub mod remote_workspace;
 pub mod runner;
 pub mod runtime;
@@ -162,6 +163,8 @@ pub fn run() {
             commands::restore_device,
             commands::purge_deleted_device,
             commands::test_device,
+            commands::quick_connect_ssh,
+            commands::save_temporary_device,
             commands::list_serial_ports,
             commands::list_wsl_distributions,
             commands::usb_snapshot,

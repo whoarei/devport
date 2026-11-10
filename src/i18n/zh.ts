@@ -3,6 +3,14 @@
  * en.ts 通过 typeof zh 约束保持 key 集合一致，漏翻会编译报错。
  */
 export const zh = {
+  quickSsh: {
+    title: "SSH 快速连接", description: "输入地址即可连接，无需先添加设备。",
+    address: "连接地址", addressHint: "支持 [用户@]主机[:端口] 或 ssh://用户@主机:端口；默认 root、22 端口。IPv6 请使用方括号。",
+    key: "SSH agent / 默认密钥", customKey: "使用指定私钥", keyPath: "私钥路径", keyPathHint: "留空使用 SSH agent 或默认密钥",
+    privacy: "默认临时使用，退出后不保留连接和密码。最近连接仅记录地址；点击“保存为设备”后才保存配置及所用凭据。",
+    connect: "连接", connecting: "正在连接…", authFailed: "认证失败，请输入密码后重试，或检查私钥。",
+    temporary: "临时连接", save: "保存为设备", saving: "正在保存…",
+  },
   shortcuts: {
     title: "快捷键一览", action: "操作", keys: "快捷键", scope: "生效区域", runMenu: "运行",
     hint: "快捷键只在应用窗口内生效。弹框和输入法组词期间暂停后台操作，普通表单输入不触发操作快捷键。",

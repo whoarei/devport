@@ -16,6 +16,7 @@ export interface SerialConfig {
 
 export interface DeviceProfile {
   revision?: string;
+  temporary?: boolean;
   id: string;
   name: string;
   is_default: boolean;
@@ -357,6 +358,9 @@ export const api = {
   closeTerminal: (sessionId: string) => invoke<void>("close_terminal", { sessionId }),
   closeAllTerminals: () => invoke<void>("close_all_terminals"),
   listDevices: () => invoke<DeviceProfile[]>("list_devices"),
+  quickConnectSsh: (request: { address: string; auth: AuthMethod }, hostKeyConfirmation?: HostKeyChange) =>
+    invoke<DeviceProfile>("quick_connect_ssh", { request, hostKeyConfirmation }),
+  saveTemporaryDevice: (id: string) => invoke<DeviceProfile>("save_temporary_device", { id }),
   saveDevice: (device: DeviceProfile) =>
     invoke<DeviceProfile>("save_device", { device }),
   reorderDevices: (ids: string[]) => invoke<DeviceProfile[]>("reorder_devices", { ids }),

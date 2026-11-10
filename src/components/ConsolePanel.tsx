@@ -19,6 +19,7 @@ import { deviceDisplayNames } from "../workspacePresentation";
 import { tabNavigationTarget, useRevealActiveTab } from "../tabStrip";
 import { useCommandUiStore } from "../commandUiStore";
 import { preserveContentFocus, preserveLayoutFocus } from "../focus";
+import { openQuickSsh } from "../quickSsh";
 
 export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
   visible: boolean; collapsed: boolean; onToggleCollapse: () => void;
@@ -54,12 +55,13 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
     if (collapsed) onToggleCollapse();
     void useTerminalStore.getState().open(device.id, device.name).catch((e) => setError(errorMessage(e)));
   };
-  const newTerminalEntries = (): MenuEntry[] => devices.length
-    ? devices.map((device) => ({
+  const newTerminalEntries = (): MenuEntry[] => [
+    { label: t("quickSsh.title"), onSelect: openQuickSsh },
+    ...devices.map((device) => ({
       label: `${deviceLabel(device)}${device.is_default ? t("device.defaultSuffix") : ""}`,
       onSelect: () => open(device.id),
-    }))
-    : [{ label: t("console.noDevices"), disabled: true, onSelect: () => undefined }];
+    })),
+  ];
   const openNewTerminalMenu = (x: number, y: number) => {
     setError("");
     const entries = newTerminalEntries();

@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 static DEVICE_OPERATIONS: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+static TEMPORARY_DEVICES: std::sync::LazyLock<
+    parking_lot::Mutex<std::collections::HashMap<PathBuf, Vec<DeviceProfile>>>,
+> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -288,6 +291,70 @@ mod tests {
             "username": "alice", "auth": {"type": "password", "password": "secret"}
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn temporary_ssh_profiles_are_shared_in_memory_and_promoted_with_the_same_identity() {
+        let root = TestStore::new();
+        let store = root.store();
+        let first = store.register_temporary(profile("ignored")).unwrap();
+        assert!(first.id.starts_with("temp-ssh-"));
+        assert!(!first.is_default);
+        assert!(
+            !root.0.exists(),
+            "temporary credentials must not be written"
+        );
+        assert!(store.is_temporary(&first.id));
+        assert_eq!(
+            serde_json::to_value(root.store().get(&first.id).unwrap().auth).unwrap(),
+            serde_json::to_value(&first.auth).unwrap()
+        );
+        assert!(TestStore::new().store().get(&first.id).is_err());
+        let second = store.register_temporary(profile("another")).unwrap();
+        let saved = store.save_temporary(&first.id).unwrap();
+        assert_eq!(saved.id, first.id);
+        assert_eq!(
+            serde_json::to_value(&saved.auth).unwrap(),
+            serde_json::to_value(&first.auth).unwrap()
+        );
+        assert!(saved.is_default);
+        assert!(!store.is_temporary(&first.id));
+        assert!(store.is_temporary(&second.id));
+        let disk: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&store.path).unwrap()).unwrap();
+        assert_eq!(disk.as_array().unwrap().len(), 1);
+        assert_eq!(disk[0]["id"], first.id);
+        assert_eq!(store.list().unwrap().len(), 2);
+        store.reorder(std::slice::from_ref(&saved.id)).unwrap();
+        assert!(store.reorder(&[saved.id, second.id]).is_err());
+    }
+
+    #[test]
+    fn failed_promotion_preserves_temporary_credentials_and_registry_is_bounded() {
+        let root = TestStore::new();
+        let store = root.store();
+        let first = store.register_temporary(profile("first")).unwrap();
+        std::fs::create_dir_all(&root.0).unwrap();
+        std::fs::write(&store.path, "corrupt configuration").unwrap();
+        assert!(store.save_temporary(&first.id).is_err());
+        assert!(store.is_temporary(&first.id));
+        assert_eq!(
+            std::fs::read_to_string(&store.path).unwrap(),
+            "corrupt configuration"
+        );
+        for _ in 1..32 {
+            store.register_temporary(profile("next")).unwrap();
+        }
+        assert!(store.register_temporary(profile("overflow")).is_err());
+        std::fs::remove_file(&store.path).unwrap();
+        assert_eq!(
+            serde_json::to_value(store.get(&first.id).unwrap().auth).unwrap(),
+            serde_json::to_value(first.auth).unwrap()
+        );
+        store.save_temporary(&first.id).unwrap();
+        store
+            .register_temporary(profile("room-after-save"))
+            .unwrap();
     }
 
     #[test]
@@ -833,7 +900,56 @@ impl DeviceStore {
             .map(|entry| entry.device)
             .collect();
         normalize_default(&mut devices);
+        let temporary = TEMPORARY_DEVICES.lock();
+        if let Some(profiles) = temporary.get(&self.path) {
+            devices.extend(
+                profiles
+                    .iter()
+                    .filter(|profile| !devices.iter().any(|saved| saved.id == profile.id))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            );
+        }
         Ok(devices)
+    }
+
+    pub fn is_temporary(&self, id: &str) -> bool {
+        TEMPORARY_DEVICES
+            .lock()
+            .get(&self.path)
+            .is_some_and(|profiles| profiles.iter().any(|profile| profile.id == id))
+    }
+
+    /// All DeviceStore instances for this config directory share session-only profiles.
+    pub fn register_temporary(&self, mut device: DeviceProfile) -> Result<DeviceProfile> {
+        let _guard = DEVICE_OPERATIONS.lock();
+        device.validate()?;
+        if device.transport != TransportKind::Ssh {
+            return Err(RunnerError::InvalidInput(
+                "quick connection requires SSH".into(),
+            ));
+        }
+        let mut temporary = TEMPORARY_DEVICES.lock();
+        let profiles = temporary.entry(self.path.clone()).or_default();
+        if profiles.len() >= 32 {
+            return Err(RunnerError::InvalidInput(
+                "at most 32 temporary SSH devices per application session".into(),
+            ));
+        }
+        device.id = format!("temp-ssh-{}", uuid::Uuid::new_v4());
+        device.is_default = false;
+        profiles.push(device.clone());
+        Ok(device)
+    }
+
+    pub fn save_temporary(&self, id: &str) -> Result<DeviceProfile> {
+        let profile = TEMPORARY_DEVICES
+            .lock()
+            .get(&self.path)
+            .and_then(|profiles| profiles.iter().find(|profile| profile.id == id))
+            .cloned()
+            .ok_or_else(|| RunnerError::DeviceNotFound(id.into()))?;
+        self.save(profile)
     }
 
     pub fn list_deleted(&self) -> Result<Vec<DeletedDevice>> {
@@ -944,6 +1060,9 @@ impl DeviceStore {
             .map(|entry| entry.device.clone())
             .expect("saved device must remain in the device list");
         self.write_all(&devices)?;
+        if let Some(profiles) = TEMPORARY_DEVICES.lock().get_mut(&self.path) {
+            profiles.retain(|profile| profile.id != saved.id);
+        }
         Ok(saved)
     }
 

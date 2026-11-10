@@ -5,6 +5,7 @@ import { useUsbStore } from "../usbStore";
 import { automaticDeviceName } from "../deviceNaming";
 import { testDeviceConnection } from "../deviceConnection";
 import { SshHostKeyDialog, type HostKeyPrompt } from "./SshHostKeyDialog";
+import i18n from "../i18n";
 
 const SERIAL_BAUD_RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 1500000, 2000000, 3000000, 4000000];
 const defaultSerialConfig = (): SerialConfig => ({ port: "", baud_rate: 115200, data_bits: 8, parity: "none", stop_bits: 1, flow_control: "none" });
@@ -47,7 +48,7 @@ export const emptyDevice = (): DeviceProfile => ({
 
 /** 设备下拉列表中的展示文案 */
 export const deviceLabel = (d: DeviceProfile) =>
-  `${d.name} (${d.transport === "wsl" ? `WSL · ${d.wsl?.distribution}` : d.transport === "serial" ? `${d.serial?.port} · ${d.serial?.baud_rate}` : d.transport === "local" ? `Local · ${d.local?.shell}` : `${d.username}@${d.host}`})`;
+  `${d.name} (${d.transport === "wsl" ? `WSL · ${d.wsl?.distribution}` : d.transport === "serial" ? `${d.serial?.port} · ${d.serial?.baud_rate}` : d.transport === "local" ? `Local · ${d.local?.shell}` : `${d.username}@${d.host}`})${d.temporary ? ` · ${i18n.t("quickSsh.temporary")}` : ""}`;
 
 interface DeviceEditorProps {
   editing: DeviceProfile;

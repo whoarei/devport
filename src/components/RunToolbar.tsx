@@ -12,6 +12,8 @@ import { Icon } from "./Icon";
 import { RunElapsed } from "./RunElapsed";
 import { useShallow } from "zustand/react/shallow";
 import { preserveContentFocus } from "../focus";
+import { openQuickSsh } from "../quickSsh";
+import { SaveTemporaryDevice } from "./SaveTemporaryDevice";
 
 export function RunToolbar() {
   const { t } = useTranslation();
@@ -30,11 +32,13 @@ export function RunToolbar() {
   return <div className="run-toolbar">
     <div className="run-toolbar-main">
       <label className="run-option-field run-device-field"><span>{t("workspaceRun.target")}</span>
-        <select aria-label={t("run.selectDeviceAria")} title={device ? deviceLabel(device) : t("run.selectDeviceFirst")} value={selectedDeviceId ?? ""} onChange={(e) => feature.selectTarget(e.target.value || null)}>
+        <select aria-label={t("run.selectDeviceAria")} title={device ? deviceLabel(device) : t("run.selectDeviceFirst")} value={selectedDeviceId ?? ""} onChange={(e) => e.target.value === "__quick_ssh__" ? openQuickSsh() : feature.selectTarget(e.target.value || null)}>
           <option value="" disabled>{t("run.selectDeviceFirst")}</option>
           {devices.map((d) => <option key={d.id} value={d.id}>{d.transport === "wsl" ? `${d.name} · WSL` : deviceLabel(d)}</option>)}
+          <option value="__quick_ssh__">{t("quickSsh.title")}…</option>
         </select>
       </label>
+      {device?.temporary && <SaveTemporaryDevice device={device} />}
       <label className="run-option-field run-python-field"><span>Python</span>
         <select aria-label={t("workspaceRun.python")} value={selectedDeviceId ? feature.preferences.python[selectedDeviceId] ?? "device_default" : "device_default"} onChange={(e) => feature.selectPython(e.target.value as "project" | "device_default")}>
           <option value="device_default">{t("workspaceRun.system")}</option>

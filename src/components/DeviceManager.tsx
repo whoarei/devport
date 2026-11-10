@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { errorMessage, type DeviceProfile } from "../api";
 import { copyDeviceDraft, deleteDevice, reorderDevices, saveDevice } from "../deviceActions";
@@ -29,7 +29,8 @@ interface Drag {
 
 function DeviceManagerDialog() {
   const { t } = useTranslation();
-  const devices = useAppStore((state) => state.devices);
+  const allDevices = useAppStore((state) => state.devices);
+  const devices = useMemo(() => allDevices.filter((device) => !device.temporary), [allDevices]);
   const initial = useRef(devices.find((device) => device.id === useAppStore.getState().selectedDeviceId) ?? devices[0] ?? null);
   const [editing, setEditing] = useState<DeviceProfile | null>(initial.current);
   const [baseline, setBaseline] = useState(initial.current ? draftKey(initial.current) : "");
@@ -93,7 +94,7 @@ function DeviceManagerDialog() {
     else action();
   };
   const close = () => navigate(() => useAppStore.getState().closeDeviceManager());
-  const add = () => navigate(() => choose({ ...emptyDevice(), is_default: useAppStore.getState().devices.length === 0 }));
+  const add = () => navigate(() => choose({ ...emptyDevice(), is_default: devices.length === 0 }));
   const copy = () => {
     const id = editing?.id;
     if (!id) return;
@@ -163,7 +164,7 @@ function DeviceManagerDialog() {
     setError(null);
     void deleteDevice({ id }).then((deleted) => {
       if (deleted) {
-        const current = useAppStore.getState().devices;
+        const current = useAppStore.getState().devices.filter((device) => !device.temporary);
         choose(current[Math.min(index, current.length - 1)] ?? null);
       } else setError(t("device.deleteFailed"));
     }).finally(() => { locked.current = false; setOperation(null); });
@@ -226,7 +227,7 @@ function DeviceManagerDialog() {
     if (!current || current.pointer !== event.pointerId) return;
     stopDrag();
     if (!current.active || current.slot === null) return;
-    if (current.ids.join("\0") !== useAppStore.getState().devices.map((item) => item.id).join("\0")) {
+    if (current.ids.join("\0") !== useAppStore.getState().devices.filter((item) => !item.temporary).map((item) => item.id).join("\0")) {
       setError(t("device.orderChanged"));
       return;
     }

@@ -288,8 +288,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       const workspaceTree = workspace ? rootTree(await api.listWorkspaceDir(workspace, WORKSPACE_ROOT)) : {};
       if (sequence !== loadSequence) return;
       releaseRemoteSession(previous);
-      const recentWorkspaces = workspace ? rememberWorkspace(get().recentWorkspaces, workspace) : get().recentWorkspaces;
-      if (workspace) saveWorkspaceHistory(recentWorkspaces);
+      const remember = workspace && !(workspace.type === "device" && get().devices.some((device) => device.id === workspace.device_id && device.temporary));
+      const recentWorkspaces = remember ? rememberWorkspace(get().recentWorkspaces, workspace) : get().recentWorkspaces;
+      if (remember) saveWorkspaceHistory(recentWorkspaces);
       set((s) => ({ workspace, workspaceTree, recentWorkspaces,
         openTabs: s.openTabs.filter((tab) => !!tab.source),
         activeFile: s.openTabs.some((tab) => tab.source && tab.name === s.activeFile) ? s.activeFile : s.openTabs.find((tab) => tab.source)?.name ?? null, workspaceScroll: 0,
