@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { api, errorMessage } from "../api";
 import { useAppStore } from "../store";
 import { useRunHistoryStore } from "../runHistoryStore";
-import { decodeHistoryOutput, historyArgs, historyIsPython, historyPython, historySettings, historyWorkspace, historyWorkspacePath } from "../runHistory";
+import { decodeHistoryOutput, historyArgs, historyIsPython, historyPython, historyReplayWorkspace, historySettings, historyWorkspacePath } from "../runHistory";
 import { workspaceSourceRevision } from "../workspaceRun";
 import { isActiveRun } from "../runState";
 import { RunHistorySummary } from "./RunHistoryPreview";
@@ -82,12 +82,12 @@ function EditDialog() {
         else replay.request.entry = entry;
         Object.assign(replay.request, settings, { args: args.slice(), managed_python: python === "project" && replay.request.kind === "python" });
       }
-      void state.submit({ ...draft, replay, deviceId, deviceRevision: target.revision, sourceRevision: workspaceSourceRevision(historyWorkspace(replay), devices) });
+      void state.submit({ ...draft, replay, deviceId, deviceRevision: target.revision, sourceRevision: workspaceSourceRevision(historyReplayWorkspace(replay, target), devices) });
     } catch (e) { setError(errorMessage(e)); }
   };
   return <Modal open={!!draft} title={t("runHistory.edit")} close={close} onKeyDown={e => handleRunShortcut(e, submit)}>
     {draft && <>
-      <p className="runner-location">{t("runHistory.workspace")}: {historyWorkspacePath(historyWorkspace(draft.replay))}</p>
+      <p className="runner-location">{t("runHistory.workspace")}: {historyWorkspacePath(historyReplayWorkspace(draft.replay, target))}</p>
       {draft.notice && <p className="runtime-error" role="alert">{draft.notice}</p>}
       <label>{t("workspaceRun.target")}<select value={target ? deviceId : ""} disabled={state.busy} onChange={e => setDeviceId(e.target.value)}><option value="" disabled>{t("runHistory.missingTarget")}</option>{devices.map(d => <option key={d.id} value={d.id}>{deviceLabel(d)}</option>)}</select></label>
       <label>{t(draft.replay.request.kind === "command" ? "runHistory.command" : "runHistory.entry")}<textarea rows={2} disabled={state.busy} value={entry} onChange={e => setEntry(e.target.value)} /></label>

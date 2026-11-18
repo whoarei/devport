@@ -8,6 +8,7 @@ import { loadWorkspaceHistory, rememberWorkspace, saveWorkspaceHistory } from ".
 import { LayoutState, loadLayout, normalizeLayout, panelCollapsePatch, panelVisibilityPatch, saveLayout } from "./layoutState";
 import { collectScripts, dropSubtree, isWithin, joinPath, nameOf, parentOf, rekeySubtree, rootTree, withNode, WORKSPACE_ROOT, WorkspacePath, WorkspaceTree } from "./workspaceTree";
 import { workspaceSourceRevision } from "./workspaceRun";
+import { presetDeviceDirectory, presetRunWorkspace } from "./presetCommands";
 import { focusRunConsole } from "./consoleTabs";
 import { applyDeviceEditorMutation, deviceEditorTargets, editorFileKey, editorFileSource, editorFileTitle, editorSourceCurrent, editorPathInWorkspace, workspaceEditorDirty, type EditorFileSource } from "./editorSources";
 
@@ -708,17 +709,30 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get();
     if (state.updating) throw new Error(i18n.t("run.errorUpdating"));
     if (state.loading || state.saving || state.starting || state.guarding) throw new Error(i18n.t("run.errorFileBusy"));
-    if (!workspaceRefEquals(request.workspace ?? null, state.workspace)) throw new Error(i18n.t("run.errorWorkspaceChanged"));
+    const isPreset = request.kind === "command";
+    if (!isPreset && !workspaceRefEquals(request.workspace ?? null, state.workspace)) throw new Error(i18n.t("run.errorWorkspaceChanged"));
     if (!request.device_id || (request.kind === "command" ? !request.command?.trim() : !request.entry)) throw new Error(i18n.t("run.errorMissingTarget"));
     set({ starting: true });
     const generation = workspaceSequence;
     try {
-      if (!await get().saveAllDirty(true) || workspaceEditorDirty(get())) throw new Error(get().editorError ?? i18n.t("run.errorSaveIncomplete"));
-      if (generation !== workspaceSequence || !workspaceRefEquals(request.workspace ?? null, get().workspace)) throw new Error(i18n.t("run.errorWorkspaceChanged"));
+      if (!isPreset) {
+        if (!await get().saveAllDirty(true) || workspaceEditorDirty(get())) throw new Error(get().editorError ?? i18n.t("run.errorSaveIncomplete"));
+        if (generation !== workspaceSequence || !workspaceRefEquals(request.workspace ?? null, get().workspace)) throw new Error(i18n.t("run.errorWorkspaceChanged"));
+      }
       const target = get().selectedDeviceId ?? request.device_id;
-      const submitted = { ...request, device_id: target, console_mode: get().devices.find((device) => device.id === target)?.transport === "serial" ? "pty" as const : request.console_mode, ...get().consoleSize };
-      const runId = await api.runScript(submitted);
-      if (request.kind === "command") presetRunSessions.set(runId, submitted);
+      const device = get().devices.find((device) => device.id === target);
+      const directory = isPreset ? presetDeviceDirectory(get().layout, device) : undefined;
+      if (directory === null) throw new Error(i18n.t("commands.deviceDirectoryUnavailable"));
+      const submitted: RunRequest = {
+        ...request,
+        device_id: target,
+        workspace: isPreset ? directory ?? presetRunWorkspace(state.workspace, device) : request.workspace,
+        console_mode: device?.transport === "serial" ? "pty" : request.console_mode,
+        ...get().consoleSize,
+      };
+      const revision = directory ? device?.revision : undefined;
+      const runId = await api.runScript(submitted, revision, revision);
+      if (isPreset) presetRunSessions.set(runId, submitted);
       // Events may arrive before invoke returns. Fetch status only when missing;
       // use preparing as a fallback so no save slips through before the first event.
       if (!get().runs[runId]) {

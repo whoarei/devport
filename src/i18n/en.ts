@@ -266,6 +266,8 @@ export const en: Messages = {
     save: "Save",
     runHint: "Double-click to run",
     runOn: "Run {{name}} on {{device}}",
+    runOnInDirectory: "Run {{name}} in {{directory}} on {{device}}",
+    deviceDirectoryUnavailable: "The device workspace directory is unavailable. Wait for it to load or refresh the directory.",
     more: "More actions for {{name}}",
   },
   console: {

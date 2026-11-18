@@ -4,7 +4,7 @@ import { workspaceEditorDirty } from "./editorSources";
 import { getWorkspaceGeneration, useAppStore } from "./store";
 import { useWorkspaceRunStore } from "./workspaceRunStore";
 import { focusRunConsole } from "./consoleTabs";
-import { historyDraft, historySettings, historyWorkspace, type HistoryRunDraft } from "./runHistory";
+import { historyDraft, historyReplayWorkspace, historySettings, type HistoryRunDraft } from "./runHistory";
 import { isActiveRun, latestExecution } from "./runState";
 import { workspaceSourceRevision } from "./workspaceRun";
 import { useEventStore } from "./eventStore";
@@ -121,7 +121,8 @@ export async function submitHistoryRun(draft: HistoryRunDraft): Promise<string |
   const initial = useAppStore.getState();
   if (initial.updating) throw new Error(i18n.t("run.errorUpdating"));
   if (initial.loading || initial.saving || initial.starting || initial.guarding || initial.workspaceMutating) throw new Error(i18n.t("run.errorFileBusy"));
-  const workspace = historyWorkspace(draft.replay);
+  const workspace = historyReplayWorkspace(draft.replay, initial.devices.find(d => d.id === draft.deviceId));
+  const usesWorkspaceEditor = workspace && draft.replay.request.kind !== "command";
   const validateDevices = () => {
     const app = useAppStore.getState(), device = app.devices.find(d => d.id === draft.deviceId);
     if (!device?.revision || device.revision !== draft.deviceRevision) throw new Error(i18n.t("runHistory.deviceChanged"));
@@ -129,7 +130,7 @@ export async function submitHistoryRun(draft: HistoryRunDraft): Promise<string |
     return device;
   };
   validateDevices();
-  if (!workspaceRefEquals(workspace, initial.workspace)) {
+  if (usesWorkspaceEditor && !workspaceRefEquals(workspace, initial.workspace)) {
     await initial.setWorkspace(workspace);
     if (!workspaceRefEquals(workspace, useAppStore.getState().workspace)) return null;
   }
@@ -138,8 +139,10 @@ export async function submitHistoryRun(draft: HistoryRunDraft): Promise<string |
   const generation = getWorkspaceGeneration();
   useAppStore.setState({ starting: true });
   try {
-    if (!await useAppStore.getState().saveAllDirty(true) || workspaceEditorDirty(useAppStore.getState())) throw new Error(i18n.t("run.errorSaveIncomplete"));
-    if (generation !== getWorkspaceGeneration() || !workspaceRefEquals(workspace, useAppStore.getState().workspace)) throw new Error(i18n.t("run.errorWorkspaceChanged"));
+    if (usesWorkspaceEditor) {
+      if (!await useAppStore.getState().saveAllDirty(true) || workspaceEditorDirty(useAppStore.getState())) throw new Error(i18n.t("run.errorSaveIncomplete"));
+      if (generation !== getWorkspaceGeneration() || !workspaceRefEquals(workspace, useAppStore.getState().workspace)) throw new Error(i18n.t("run.errorWorkspaceChanged"));
+    }
     const device = validateDevices(), replay = structuredClone(draft.replay);
     const settings = historySettings(replay);
     if (device.transport === "serial" && settings.console_mode !== "pty") throw new Error(i18n.t("runHistory.serialMode"));
@@ -151,7 +154,7 @@ export async function submitHistoryRun(draft: HistoryRunDraft): Promise<string |
       id = await api.runWorkspace(request, draft.sourceRevision);
       useWorkspaceRunStore.setState(s => ({ sessions: { ...s.sessions, [id]: { request, launch: s.sessions[id]?.launch ?? null, warning: null } } }));
     } else {
-      id = await api.runScript({ ...replay.request, device_id: device.id, ...size }, device.revision, draft.sourceRevision);
+      id = await api.runScript({ ...replay.request, workspace, device_id: device.id, ...size }, device.revision, draft.sourceRevision);
     }
     const status = await api.getRunStatus(id).catch(() => null);
     if (status) useAppStore.getState().handleRunEvent({ type: "status", status });
@@ -180,7 +183,7 @@ export const useRunHistoryStore = create<State>((set, get) => ({
     if (!draft.deviceRevision || target === "original" && draft.deviceRevision !== run.replay?.device_revision) {
       set({ draft: { ...draft, notice: i18n.t("runHistory.deviceChanged") }, error: null }); return;
     }
-    if (draft.sourceRevision !== run.replay?.source_revision) {
+    if (draft.sourceRevision !== null && draft.sourceRevision !== draft.replay.source_revision) {
       set({ draft: { ...draft, notice: i18n.t("runHistory.sourceChanged") }, error: null }); return;
     }
     await get().submit(draft);

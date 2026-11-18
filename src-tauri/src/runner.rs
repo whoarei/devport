@@ -1451,7 +1451,9 @@ impl RunManager {
         // 3. 同步 workspace（如有）；同设备原地运行改为校验入口与目录（00004-workspace-and-sync.md）
         let remote_dir = match &in_place_workspace {
             Some(path) => {
-                self.set_state(run_id, RunState::Syncing);
+                if req.kind != ScriptKind::Command {
+                    self.set_state(run_id, RunState::Syncing);
+                }
                 let check = async {
                     let workspace = crate::remote_workspace::ssh::SshWorkspace::from_connection(
                         conn.clone(),

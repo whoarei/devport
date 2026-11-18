@@ -773,6 +773,52 @@ async fn run_reuses_the_authenticated_sync_connection_for_launch_checks_and_exec
 }
 
 #[tokio::test]
+async fn command_runs_in_its_ssh_workspace_without_syncing() {
+    use devport::{
+        process::RunState,
+        runner::{RunEvent, RunManager, RunRequest},
+    };
+    let counts = Arc::new(Counts::default());
+    let f = Fixture::new(Behavior {
+        run_exec: true,
+        fail_write: true,
+        counts: counts.clone(),
+        ..Default::default()
+    })
+    .await;
+    fs::create_dir(f.remote.join("project")).unwrap();
+    fs::write(f.remote.join("project/existing.txt"), b"already on device").unwrap();
+    let device = DeviceStore::new(&f.config).get("test").unwrap();
+    let req: RunRequest = serde_json::from_value(serde_json::json!({
+        "device_id": device.id, "workspace": WorkspaceRef::device("test", "/data/project"),
+        "kind": "command", "command": "pwd", "console_mode": "pipe",
+    }))
+    .unwrap();
+    let (events, mut rx) = tokio::sync::broadcast::channel(32);
+    let manager = RunManager::new(&f.config, events);
+    let id = manager
+        .start(req, device.clone(), f.config.clone(), Some(device))
+        .unwrap();
+    let status = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let RunEvent::Status { status } = rx.recv().await.unwrap() {
+                assert_eq!(status.run_id, id);
+                assert_ne!(status.state, RunState::Syncing);
+                assert!(!status.waiting_workspace && status.workspace_sync.is_none());
+                if !status.state.is_active() {
+                    break status;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(status.state, RunState::Exited, "{:?}", status.error);
+    assert_eq!(status.replay.unwrap().launch.unwrap().cwd, "/data/project");
+    assert_eq!(counts.reads.load(std::sync::atomic::Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
 async fn cross_device_workspace_identity_is_independent_of_local_staging_paths() {
     use devport::{remote_workspace::stage, workspace_sync::Lease, workspace_upload::SSH};
     let f = Fixture::new(Behavior::default()).await;

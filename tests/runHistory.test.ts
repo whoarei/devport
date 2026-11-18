@@ -96,13 +96,29 @@ test("changed remote workspace sources require review even when replaying on the
   assert.match(useRunHistoryStore.getState().draft!.notice!, /源工作区/);
 });
 
-test("preset command replay retains the original target and raw shell command", async t => {
-  setup(t); let submitted: unknown, revision: unknown;
+test("preset command replay uses the recorded workspace only when it is on the replay target", async t => {
+  setup(t);
   const run = record(); run.replay!.workspace_request = null;
-  run.replay!.request = { kind: "command", command: "printf '%s' '$literal'\necho done", device_id: "a", workspace, console_mode: "pipe", timeout_secs: 18 };
-  t.mock.method(api, "runScript", async (r, rev) => { submitted = r; revision = rev; return "new"; });
-  await useRunHistoryStore.getState().rerun(run, "original");
-  assert.deepEqual(submitted, { ...run.replay!.request, cols: 80, rows: 24 }); assert.equal(revision, "rev-a");
+  const switchWorkspace = t.mock.method(useAppStore.getState(), "setWorkspace", async () => { throw new Error("workspace unavailable"); });
+  const save = t.mock.method(useAppStore.getState(), "saveAllDirty", async () => false);
+  const submit = t.mock.method(api, "runScript", async () => "new");
+  const oldWorkspace = deviceWorkspace("removed-device", "/old-project");
+  const sameDevice = deviceWorkspace("a", "/project-on-a");
+  for (const [source, sourceRevision, expected] of [
+    [null, null, null], [oldWorkspace, "old-source", null], [sameDevice, "rev-a", sameDevice],
+  ] as const) {
+    run.replay!.request = { kind: "command", command: "printf '%s' '$literal'\necho done", device_id: "a", workspace: source, console_mode: "pipe", timeout_secs: 18 };
+    run.replay!.source_revision = sourceRevision;
+    await useRunHistoryStore.getState().rerun(run, "original");
+    assert.deepEqual(submit.mock.calls.at(-1)?.arguments, [{ ...run.replay!.request, workspace: expected, cols: 80, rows: 24 }, "rev-a", expected && "rev-a"]);
+    assert.equal(run.replay!.request.workspace, source);
+  }
+  await useRunHistoryStore.getState().rerun(run, "current");
+  assert.deepEqual(submit.mock.calls.at(-1)?.arguments, [{ ...run.replay!.request, device_id: "b", workspace: null, cols: 80, rows: 24 }, "rev-b", null]);
+  assert.equal(submit.mock.callCount(), 4);
+  assert.equal(switchWorkspace.mock.callCount(), 0);
+  assert.equal(save.mock.callCount(), 0);
+  assert.equal(useAppStore.getState().workspace, workspace);
 });
 
 test("viewing historical output never replaces the latest console task; delete only updates after backend succeeds", async t => {

@@ -819,6 +819,29 @@ async fn workspace_cwd_is_verified_and_keeps_script_entries_relative_to_the_root
         );
         assert!(String::from_utf8_lossy(&output).contains("CWD_OK"));
     }
+    let mut preset = request("cat data/payload");
+    preset.workspace = Some(crate::workspace_ref::WorkspaceRef::device("test", &remote));
+    let mut output = Vec::new();
+    let result = execute_with_command(
+        real_helper(),
+        &preset,
+        &remote,
+        true,
+        Vec::new(),
+        &mut controls,
+        |event| match event {
+            Event::State(RunState::Syncing) => panic!("an in-place command must not sync"),
+            Event::Launch(launch) => assert_eq!(launch.cwd, remote),
+            Event::Output { data, .. } => output.extend(data),
+            _ => {}
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.code, Some(0));
+    assert_eq!(output, b"CWD_OK");
+
     let mut create = python("import os,sys; os.symlink('/tmp', sys.argv[1] + '/redirect')");
     create.arg(&remote);
     assert!(create.status().await.unwrap().success());

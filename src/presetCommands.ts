@@ -1,4 +1,6 @@
-import type { ConsoleMode } from "./api";
+import { isRemoteWorkspaceHost, type ConsoleMode, type DeviceProfile, type WorkspaceRef } from "./api";
+import { deviceWorkspaceKey, deviceWorkspaceTarget } from "./deviceWorkspaceStore";
+import type { LayoutState } from "./layoutState";
 
 const STORAGE_KEY = "devport.presets.v1";
 export const MAX_PRESETS = 100;
@@ -14,6 +16,20 @@ export interface PresetCommand {
   consoleMode: ConsoleMode;
   /** 超时秒数，0 = 不限 */
   timeoutSecs: number;
+}
+
+/** Use the workspace as a working directory only when it already exists on the target. */
+export function presetRunWorkspace(workspace: WorkspaceRef | null, device: DeviceProfile | undefined): WorkspaceRef | null {
+  if (!workspace || !device) return null;
+  if (workspace.type === "local") return device.transport === "local" ? workspace : null;
+  return workspace.device_id === device.id && isRemoteWorkspaceHost(device) ? workspace : null;
+}
+
+/** Undefined when the panel does not apply, null when its directory is unavailable. */
+export function presetDeviceDirectory(layout: LayoutState, device: DeviceProfile | undefined, target = deviceWorkspaceTarget.getState()) {
+  if (!device || !isRemoteWorkspaceHost(device) || !layout.sidebarVisible || !layout.panelVisible.deviceWorkspace || layout.panelCollapsed.deviceWorkspace) return undefined;
+  const { root, key, ready } = target;
+  return ready && root?.type === "device" && root.device_id === device.id && key === deviceWorkspaceKey(device) ? root : null;
 }
 
 export function newPresetId(): string {

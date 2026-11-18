@@ -5,7 +5,7 @@ pub mod terminal;
 use crate::device::WslConfig;
 use crate::error::{Result, RunnerError};
 use crate::process::{OutputStream, SessionControl};
-use crate::runner::{build_script, RunRequest};
+use crate::runner::{build_script, RunRequest, ScriptKind};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -547,7 +547,7 @@ pub(crate) async fn execute_with_command(
     };
     let resolved_remote = bridge.resolve_path(remote)?;
     let remote = resolved_remote.as_str();
-    if req.workspace.is_some() {
+    if req.workspace.is_some() && !(in_place && req.kind == ScriptKind::Command) {
         emit(Event::State(RunState::Syncing));
     }
     let prepare = async {
@@ -577,7 +577,7 @@ pub(crate) async fn execute_with_command(
         }
     }
     emit(Event::State(RunState::Starting));
-    if req.kind == crate::runner::ScriptKind::Command {
+    if req.kind == ScriptKind::Command {
         emit(Event::Launch(crate::workspace_run::Launch {
             program: "/bin/sh".into(),
             version: None,

@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { appendOutput, MAX_OUTPUT_BYTES } from "../src/outputBuffer";
 import { useAppStore } from "../src/store";
-import { api, localWorkspace } from "../src/api";
+import { api, deviceWorkspace, localWorkspace, type DeviceProfile } from "../src/api";
+import { createDeviceWorkspaceStore, registerDeviceWorkspaceTarget } from "../src/deviceWorkspaceStore";
+import { transferApi } from "../src/transferApi";
 import { loadWorkspaceHistory } from "../src/workspaceHistory";
 import { anyDirty, dirtyTab, EditorTab, inferLanguage } from "../src/editorDocument";
 
@@ -286,16 +288,16 @@ test("closeFile refuses while busy, keeps buffer on cancel, and activates a neig
   assert.equal(useAppStore.getState().activeFile, null);
 });
 
-test("both run modes save non-entry edits first; failed saves never launch and startup locks editing", async (t) => {
+test("script runs save non-entry edits first; failed saves never launch and startup locks editing", async (t) => {
   const previous = useAppStore.getState();
   t.after(() => useAppStore.setState(previous, true));
   const order: string[] = [];
   t.mock.method(api, "writeWorkspaceFile", async () => { order.push("save"); return { revision: "v2" }; });
   t.mock.method(api, "runScript", async () => { order.push("run"); return "run-1"; });
   t.mock.method(api, "getRunStatus", async () => null);
-  for (const kind of ["python", "command"] as const) {
+  for (const kind of ["python", "shell"] as const) {
     useAppStore.setState({ ...editorState(), openTabs: [makeTab("helper.py", "edited helper", "original")], activeFile: "helper.py" });
-    const request = { device_id: "device", workspace: localWorkspace("/work"), kind, entry: "main.py", command: "python3 main.py" };
+    const request = { device_id: "device", workspace: localWorkspace("/work"), kind, entry: kind === "python" ? "main.py" : "main.sh" };
     const starting = useAppStore.getState().startRun(request);
     useAppStore.getState().editContent("helper.py", "ignored during launch");
     assert.equal(tabNamed("helper.py")!.fileContent, "edited helper");
@@ -311,6 +313,79 @@ test("both run modes save non-entry edits first; failed saves never launch and s
   assert.equal(order.length, 4);
   assert.equal(useAppStore.getState().starting, false);
   assert.equal(tabNamed("main.py")!.fileContent, "edits");
+});
+
+test("preset commands use a workspace only on its own device and skip editor saves", async (t) => {
+  const previous = useAppStore.getState();
+  t.after(() => useAppStore.setState(previous, true));
+  const tab = makeTab("main.py", "unsaved edits", "original");
+  useAppStore.setState({ ...editorState(), openTabs: [tab] });
+  const save = t.mock.method(api, "writeWorkspaceFile", async () => { throw new Error("disk full"); });
+  const run = t.mock.method(api, "runScript", async () => "preset-run");
+  t.mock.method(api, "getRunStatus", async () => null);
+  const device: DeviceProfile = { id: "device", name: "Device", transport: "ssh", host: "device", port: 22, username: "user", auth: { type: "key", key_path: null }, workspace_root: "/runs", is_default: false };
+  const local = localWorkspace("/work"), remote = deviceWorkspace(device.id, "/project");
+  for (const [transport, workspace, expected] of [
+    ["ssh", remote, remote], ["wsl", remote, remote], ["local", local, local],
+    ["ssh", local, null], ["ssh", deviceWorkspace("other", "/project"), null], ["serial", remote, null],
+  ] as const) {
+    useAppStore.setState({ workspace, devices: [{ ...device, transport }], selectedDeviceId: device.id });
+    await useAppStore.getState().startRun({ device_id: device.id, kind: "command", command: "pwd", console_mode: "pipe" });
+    assert.deepEqual(run.mock.calls.at(-1)!.arguments[0], {
+      device_id: device.id, kind: "command", command: "pwd", workspace: expected,
+      console_mode: transport === "serial" ? "pty" : "pipe", ...useAppStore.getState().consoleSize,
+    });
+    assert.equal(useAppStore.getState().workspace, workspace);
+  }
+  assert.equal(save.mock.callCount(), 0);
+  assert.equal(tabNamed("main.py"), tab);
+});
+
+test("presets prefer the current device browser directory without switching or saving the editor workspace", async (t) => {
+  const previous = useAppStore.getState();
+  t.after(() => useAppStore.setState(previous, true));
+  const browser = createDeviceWorkspaceStore(new Map());
+  t.after(registerDeviceWorkspaceTarget(browser));
+  t.mock.method(transferApi, "listWithin", async (endpoint) => ({ endpoint, entries: [], overwrite: true }));
+  const device: DeviceProfile = { id: "device", revision: "rev-a", name: "Device", transport: "ssh", host: "device", port: 22, username: "user", auth: { type: "key", key_path: null }, workspace_root: "/runs", is_default: false };
+  const main = deviceWorkspace(device.id, "/editor-project");
+  const tab = makeTab("main.py", "unsaved edits", "original");
+  const layout = { ...previous.layout, sidebarVisible: true, panelVisible: { ...previous.layout.panelVisible, deviceWorkspace: true },
+    panelCollapsed: { ...previous.layout.panelCollapsed, deviceWorkspace: false } };
+  useAppStore.setState({ ...editorState(), layout, workspace: main, devices: [device], selectedDeviceId: device.id, openTabs: [tab] });
+  const app = useAppStore.getState();
+  const save = t.mock.method(app, "saveAllDirty", async () => false);
+  const switchWorkspace = t.mock.method(app, "setWorkspace", async () => { throw new Error("workspace unexpectedly switched"); });
+  const run = t.mock.method(api, "runScript", async () => "preset-run");
+  t.mock.method(api, "getRunStatus", async () => null);
+
+  const request = { device_id: device.id, kind: "command" as const, command: "pwd", console_mode: "pipe" as const };
+  await assert.rejects(app.startRun(request));
+  await browser.getState().follow(device);
+  await browser.getState().navigate("/project/tools");
+  await app.startRun(request);
+  assert.deepEqual(run.mock.calls[0].arguments, [
+    { ...request, workspace: deviceWorkspace(device.id, "/project/tools"), ...app.consoleSize }, "rev-a", "rev-a",
+  ]);
+  assert.equal(useAppStore.getState().workspace, main);
+  assert.equal(tabNamed("main.py"), tab);
+  assert.equal(save.mock.callCount(), 0);
+  assert.equal(switchWorkspace.mock.callCount(), 0);
+
+  const navigating = browser.getState().navigate("/other");
+  await assert.rejects(app.startRun(request));
+  await navigating;
+  await app.startRun(request);
+  assert.deepEqual(run.mock.calls[1].arguments, [
+    { ...request, workspace: deviceWorkspace(device.id, "/other"), ...app.consoleSize }, "rev-a", "rev-a",
+  ]);
+  useAppStore.setState({ devices: [{ ...device, revision: "rev-b" }] });
+  await assert.rejects(app.startRun(request));
+  useAppStore.setState({ devices: [device], layout: { ...layout, panelCollapsed: { ...layout.panelCollapsed, deviceWorkspace: true } } });
+  await app.startRun(request);
+  assert.deepEqual(run.mock.calls[2].arguments[0].workspace, main);
+  assert.equal(run.mock.callCount(), 3);
+  assert.equal(useAppStore.getState().starting, false);
 });
 
 test("startRun saves every dirty tab and aborts on the first failure", async (t) => {

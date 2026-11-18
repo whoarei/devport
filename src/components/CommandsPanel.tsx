@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
+import { useStore } from "zustand";
 import { errorMessage, RunRequest } from "../api";
-import { loadPresets, newPresetId, normalizePresets, PresetCommand, savePresets } from "../presetCommands";
+import { deviceWorkspaceTarget } from "../deviceWorkspaceStore";
+import { loadPresets, newPresetId, normalizePresets, presetDeviceDirectory, savePresets, type PresetCommand } from "../presetCommands";
 import { useAppStore } from "../store";
 import { ConfirmDialog, ConfirmRequest } from "./ConfirmDialog";
 import { ContextMenu, contextMenuPosition, MenuState } from "./ContextMenu";
@@ -109,8 +111,13 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
   const launching = useRef(false);
   const devices = useAppStore((s) => s.devices);
   const selectedDeviceId = useAppStore((s) => s.selectedDeviceId);
+  const layout = useAppStore((s) => s.layout);
   const busy = useAppStore((s) => s.starting || s.loading || s.saving || s.guarding || s.updating || s.workspaceMutating);
   const targetName = selectedDeviceId ? deviceDisplayNames(devices).get(selectedDeviceId) : undefined;
+  const device = devices.find((device) => device.id === selectedDeviceId);
+  const directory = useStore(deviceWorkspaceTarget, (target) => presetDeviceDirectory(layout, device, target));
+  const runDisabled = busy || !targetName || directory === null;
+  const runHint = directory === null ? t("commands.deviceDirectoryUnavailable") : t("commands.runHint");
   const report = (error: unknown) => useAppStore.setState({ editorError: errorMessage(error) });
 
   const update = (next: PresetCommand[]) => {
@@ -130,7 +137,6 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
     const device = state.devices.find((d) => d.id === state.selectedDeviceId);
     const request: RunRequest = {
       device_id: state.selectedDeviceId,
-      workspace: state.workspace,
       kind: "command",
       command: preset.command,
       console_mode: device?.transport === "serial" ? "pty" : preset.consoleMode,
@@ -150,7 +156,7 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
     event.preventDefault();
     event.stopPropagation();
     const entries = [
-      { label: t("commands.run"), disabled: busy || !targetName, onSelect: () => void runPreset(preset) },
+      { label: t("commands.run"), disabled: runDisabled, onSelect: () => void runPreset(preset) },
       {
         label: t("commands.edit"),
         onSelect: () => setDraft({
@@ -210,25 +216,29 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
       </PanelTitle>
       {!collapsed && (
         <ul className="commands-list">
-          {presets.map((preset) => (
-            <li key={preset.id} title={`${preset.command}\n${t("commands.runHint")}`}
+          {presets.map((preset) => {
+            const name = preset.name || preset.command;
+            const runLabel = directory
+              ? t("commands.runOnInDirectory", { name, device: targetName, directory: directory.path })
+              : t("commands.runOn", { name, device: targetName ?? t("run.selectDeviceFirst") });
+            return <li key={preset.id} title={directory ? `${preset.command}\n${runHint}\n${directory.path}` : `${preset.command}\n${runHint}`}
               onContextMenu={(event) => openEntryMenu(event, preset)}>
               <div className="commands-content" onDoubleClick={() => void runPreset(preset)}>
-              <span className="commands-label">{preset.name || preset.command}</span>
-              <span className="commands-meta">
-                {preset.name && `${preset.command} · `}{preset.consoleMode}{preset.timeoutSecs > 0 ? ` · ${preset.timeoutSecs}s` : ""}
-              </span>
+                <span className="commands-label">{name}</span>
+                <span className="commands-meta">
+                  {preset.name && `${preset.command} · `}{preset.consoleMode}{preset.timeoutSecs > 0 ? ` · ${preset.timeoutSecs}s` : ""}
+                </span>
               </div>
-              <button type="button" className="command-action command-run" disabled={busy || !targetName}
+              <button type="button" className="command-action command-run" disabled={runDisabled}
                 onMouseDown={preserveContentFocus}
-                aria-label={t("commands.runOn", { name: preset.name || preset.command, device: targetName ?? t("run.selectDeviceFirst") })}
-                title={targetName ? t("commands.runOn", { name: preset.name || preset.command, device: targetName }) : t("run.selectDeviceFirst")}
+                aria-label={runLabel}
+                title={!targetName ? t("run.selectDeviceFirst") : directory === null ? runHint : runLabel}
                 onClick={(event) => { if (event.detail < 2) void runPreset(preset); }}><Icon name="play" /></button>
-              <button type="button" className="command-action" aria-label={t("commands.more", { name: preset.name || preset.command })}
-                title={t("commands.more", { name: preset.name || preset.command })} aria-haspopup="menu"
+              <button type="button" className="command-action" aria-label={t("commands.more", { name })}
+                title={t("commands.more", { name })} aria-haspopup="menu"
                 onClick={(event) => openEntryMenu(event, preset)}><Icon name="more" /></button>
-            </li>
-          ))}
+            </li>;
+          })}
           {presets.length === 0 && <li className="empty">{t("commands.empty")}</li>}
         </ul>
       )}

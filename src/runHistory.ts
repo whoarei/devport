@@ -1,7 +1,13 @@
 import type { DeviceProfile, RunReplay, RunStatus, WorkspaceRef } from "./api";
+import { presetRunWorkspace } from "./presetCommands";
 import { isActiveRun, isExecutionRun } from "./runState";
+import { workspaceSourceRevision } from "./workspaceRun";
 
 export const historyWorkspace = (replay: RunReplay): WorkspaceRef | null => replay.workspace_request?.workspace ?? replay.request.workspace ?? null;
+export const historyReplayWorkspace = (replay: RunReplay, target: DeviceProfile | undefined): WorkspaceRef | null => {
+  const workspace = historyWorkspace(replay);
+  return replay.request.kind === "command" ? presetRunWorkspace(workspace, target) : workspace;
+};
 export const historyArgs = (replay: RunReplay) => replay.workspace_request?.command.args ?? replay.request.args ?? [];
 export const historyCommand = (replay: RunReplay) => {
   const entry = replay.workspace_request?.command.entry;
@@ -38,10 +44,10 @@ export interface HistoryRunDraft {
 
 export function historyDraft(run: RunStatus, devices: DeviceProfile[], deviceId = run.replay?.request.device_id ?? ""): HistoryRunDraft | null {
   if (!run.replay) return null;
-  const source = historyWorkspace(run.replay);
+  const device = devices.find(d => d.id === deviceId);
   return { runId: run.run_id, replay: structuredClone(run.replay), deviceId,
-    deviceRevision: devices.find(d => d.id === deviceId)?.revision,
-    sourceRevision: source?.type === "device" ? devices.find(d => d.id === source.device_id)?.revision ?? "missing" : null };
+    deviceRevision: device?.revision,
+    sourceRevision: workspaceSourceRevision(historyReplayWorkspace(run.replay, device), devices) };
 }
 
 export function decodeHistoryOutput(base64: string): string {

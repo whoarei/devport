@@ -267,6 +267,8 @@ export const zh = {
     save: "保存",
     runHint: "双击运行",
     runOn: "在 {{device}} 运行 {{name}}",
+    runOnInDirectory: "在 {{device}} 的 {{directory}} 目录运行 {{name}}",
+    deviceDirectoryUnavailable: "设备工作区目录尚不可用，请等待加载或刷新目录。",
     more: "{{name}} 的更多操作",
   },
   console: {
