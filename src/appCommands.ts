@@ -5,7 +5,7 @@ import { useWorkspaceRunStore } from "./workspaceRunStore";
 import { commandsFor } from "./workspaceRun";
 import { useRunHistoryStore } from "./runHistoryStore";
 import { useTerminalStore } from "./terminalStore";
-import { isActiveRun } from "./runState";
+import { isActiveRun, workspaceSyncActive } from "./runState";
 import { openWorkspace } from "./workspacePicker";
 import { revealConsolePanel } from "./consoleTabs";
 import { panelCollapsePatch, panelVisibilityPatch } from "./layoutState";
@@ -36,8 +36,8 @@ export function appCommandEnabled(id: AppCommandId, context: ShortcutContext = {
     case "saveFile": return !busy && !uploadBusy(app) && (!!app.workspace || !!tab?.source) && !!tab && dirtyTab(tab);
     case "saveAll": return !busy && !uploadBusy(app) && (!!app.workspace || app.openTabs.some((tab) => tab.source)) && anyDirty(app);
     case "closeFile": return !busy && !!tab;
-    case "runFile": case "runWithArgs": return !busy && !(context.area === "editor" && tab?.source) && !!app.workspace && !!scriptCommand(context.filePath ?? (context.area === "editor" ? activeFile() : undefined));
-    case "rerun": { const run = commandRun(context); return !busy && !history.busy && !!run?.replay && !isActiveRun(run); }
+    case "runFile": case "runWithArgs": return !busy && !workspaceSyncActive(app.runs) && !(context.area === "editor" && tab?.source) && !!app.workspace && !!scriptCommand(context.filePath ?? (context.area === "editor" ? activeFile() : undefined));
+    case "rerun": { const run = commandRun(context); return !busy && !workspaceSyncActive(app.runs) && !history.busy && !!run?.replay && !isActiveRun(run); }
     case "stop": { const run = commandRun(context); return !app.updating && !!run && isActiveRun(run); }
     case "newTerminal": return !app.updating && !app.guarding && !terminals.shuttingDown && terminals.tabs.length < 8
       && !!defaultDevice;

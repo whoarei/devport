@@ -23,23 +23,26 @@
 
 入口为带标签联合：`bash_script {path}`、`python_script {path}`、`python_module {name}`。脚本以工作区根定位，`cwd` 单独解析为工作区内目录；模块名按 ASCII Python 标识符分段校验。命令序列化后最多 60 KiB，参数拒绝 NUL，空字符串参数仍是一项，不能拆成 Shell 文本再解析。
 
-提交次序：捕获入口和源工作区代次 → 保存全部脏标签 → 复查工作区及源宿主连接修订 → 从同一份同步状态读取目标、修订、Python 选择和所有设置 → 后端校验并冻结配置 → 准备源码和解释器 → 复查实际使用的项目输入 → 启动 → 成功启动后记忆源端命令。
+提交次序：捕获入口和源工作区代次 → 保存该工作区的脏标签 → 复查工作区及源宿主连接修订 → 从同一份状态读取目标、修订、Python 选择和设置 → 后端校验并冻结配置 → 打开原地目录或上次同步的执行副本 → 准备解释器并复查实际使用的项目输入 → 启动 → 成功启动后记忆源端命令。
 
 保存期间切目标，使用保存结束时的一整份目标设置；保存期间切工作区或源连接，中止启动。快照形成后切换 UI 不影响已提交任务。重新运行只复用入口和参数，采用当前设置；源工作区不匹配、上下文未知时禁用。
 
 后端派生的解释器路径、源码路径和环境上下文不允许由客户端反序列化回填。`workspace_commands.rs` 负责新 IPC 适配，`runner.rs` 仍承担实际调度，不能在文档中假定存在一个尚未落地的独立通用 Executor 框架。
 
+跨设备复制由运行工具栏的「同步工作区」发起。同步任务保存源工作区，校验所选目标和来源修订，复制完成后显示目录和差异统计。脚本与环境准备使用已完成的副本，缺少可用副本时提示先同步。DevPort 在同一实例内统一受理任务，运行期间禁止同步，同步期间禁止启动任务。
+
 ## 2. 状态与输出
 
 ```text
-preparing → syncing → starting → running → exited
+preparing → starting → running → exited
+preparing → syncing → exited             (手动同步)
      └────────────── stopping ────────────→ canceled
 任意阶段遇到错误 → failed
 ```
 
-部分路径省略同步阶段；准备操作可以不启动用户脚本。实际枚举只有 `preparing / syncing / starting / running / stopping / exited / failed / canceled`。正常进程退出使用 `exited` 并保留退出码，非零退出码也不自动改成 `failed`；用户停止完成为 `canceled`，超时为 `failed` 加错误原因。没有独立 `stopped` 或 `timeout` 状态。
+项目环境准备可以单独完成。实际枚举为 `preparing / syncing / starting / running / stopping / exited / failed / canceled`。正常进程退出使用 `exited` 并保留退出码，非零退出码也使用 `exited`；用户停止完成为 `canceled`，超时为 `failed` 加错误原因。
 
-`RunStatus` 的 `phase` 表达 Python 准备子阶段，`waiting_workspace` 表达目录等待，`workspace_sync` 表达实际路径和差异统计。不要将这些信息伪造为用户脚本输出。后端生成的环境准备诊断另进入运行日志，见 00005。
+`RunStatus` 的 `phase` 表达 Python 准备子阶段，`workspace_sync_only` 标识手动同步任务，`workspace_sync` 表达实际路径和差异统计。后端生成的环境准备诊断另进入运行日志，见 00005。
 
 原始输出字节 → 16 KiB 分片 → Base64 `RunEvent::Output` → 容量 256 的 broadcast → 每次最多拉取 64 个事件 → 前端解码为 `Uint8Array` → xterm。拉取约 33 ms 一次且保持单飞行；生产过快时发送 `resync` 状态快照，并保留窗口内近期输出，不承诺补齐所有丢失输出。
 
@@ -68,8 +71,8 @@ SSH / WSL / Local 运行阶段采用 INT → TERM → KILL 升级；具体计时
 - 密钥认证先尝试 ssh-agent，再尝试配置路径或默认 `id_ed25519` / `id_rsa`；也支持密码。
 - `known_hosts.json` 按 `host:port` 保存 SHA-256 指纹：首次自动信任，后续变更默认拒绝。设备设置中的连接测试会展示地址、新旧指纹并询问是否覆盖；取消或 Esc 保留原记录，确认后重新握手，只有地址、已保存指纹和收到的指纹均与确认内容一致时才覆盖并继续认证。确认期间任一指纹再次变化须重新确认；记录被删除、损坏或读写失败均不会绕过校验。运行等其他入口仍拒绝变更，可在设备设置中测试连接并确认更新；不支持 SSH 主机证书。
 - 包装脚本逐参数严格引用，使用 PID / 进程组控制停止。pipe 单次 SIGINT 在 PID 标记就绪后发送；PTY 传递终端中断。
-- 已认证连接可在同一次运行内供同步、探测和执行复用，各自使用独立 channel；不借用单槽编辑连接。
-- 正常退出确认与连接关闭分开处理。未确认远端退出时保留同步目录租约，不能因本地会话结束就解锁。
+- 打开执行副本的已认证连接可供同一次运行的探测和执行复用，各自使用独立 channel。编辑连接单独维护。
+- 正常退出确认与连接关闭分开处理。
 
 SSH 本身不要求目标装 Python；设备默认 Python 运行需要解释器，项目模式可部署它。Shell / 工作区功能需要目标具备对应 Linux/POSIX 工具及 SFTP 能力。安全增量发布要求服务端支持 `hardlink@openssh.com` 和 `posix-rename@openssh.com`，缺少时明确失败。
 
@@ -107,7 +110,7 @@ helper 使用单独的结构化控制消息管理 PTY / pipe、stdin、resize、
 
 ## 7. Local Shell
 
-Windows 探测 pwsh、Windows PowerShell、cmd、MSYS2、Git Bash；macOS/Linux 探测 bash、zsh、sh，可配置可执行路径。本机工作区原地执行；跨设备暂存到本机则执行暂存副本，结束清理，见 00004。
+Windows 探测 pwsh、Windows PowerShell、cmd、MSYS2、Git Bash；macOS/Linux 探测 bash、zsh、sh，可配置可执行路径。本机工作区原地执行。设备工作区在本机执行时使用手动同步到应用数据目录的副本，见 00004。
 
 `portable-pty` 使用 ConPTY/openpty，pipe 使用独立管道和线程 IO。ConPTY 启动 DSR 查询 `ESC[6n` 由后端读线程应答，避免启动挂起；Windows 子进程避免额外可见窗口。
 

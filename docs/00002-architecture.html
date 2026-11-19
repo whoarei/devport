@@ -211,17 +211,17 @@ pre{background:#eee;color:#111}
 <h2><small>04 / EXECUTION LIFECYCLE</small>运行模型、状态与控制</h2>
 <div class="flow">
 <div class="step"><b>校验并冻结</b><span>入口/argv、源与目标修订、当前设置和项目输入</span></div>
-<div class="step"><b>准备执行位置</b><span>原地或暂存/同步，必要时等待目录租约</span></div>
+<div class="step"><b>打开执行位置</b><span>原地目录或上次手动同步的副本</span></div>
 <div class="step"><b>解析并启动</b><span>实际 Python/Bash、cwd/env，复查输入</span></div>
 <div class="step"><b>运行与回收</b><span>输出/控制、确认退出、历史及资源释放</span></div>
 </div>
 <p>工作区入口使用 <code>run_workspace</code>，三类结构化 Entry 与 argv；预置命令及 CLI 保留 <code>run_script</code>。prepare/rebuild 是同一生命周期的特殊 operation。工作区命令在成功启动后写回源端；历史失败给警告，不中断已启动脚本。</p>
-<pre><code>preparing → syncing → starting → running → exited
+<pre><code>preparing → starting → running → exited
+preparing → syncing → exited (手动同步)
                      ↘ stopping → canceled
 错误 / 超时 → failed
 
 phase = 环境准备子阶段
-waiting_workspace = 等待目录
 workspace_sync = 路径与同步统计</code></pre>
 <p>非零正常退出仍为 exited 并保留 exit_code。独立终端和运行控制台由 terminalClipboard.ts 统一处理 Ctrl+C / Ctrl+V，两个全局开关默认开启并即时生效；默认有选区时 Ctrl+C 复制，关闭复制开关或无选区时只发送一次中断，不启动停止倒计时。Ctrl+Shift+C / V 始终复制粘贴，异步粘贴核对原会话或任务。Stop 取消准备或执行通道升级；超时最终失败。SSH/WSL/Local 一般为 INT→TERM→KILL，Windows Local pipe 无温和中断，停止强制结束树。Serial 等 nonce 结束标记，不能确认则报告未知状态。</p>
 <div class="table">
@@ -243,7 +243,7 @@ workspace_sync = 路径与同步统计</code></pre>
 <section id="workspace">
 <h2><small>05 / WORKSPACE DESIGN</small>来源、编辑与持久执行副本</h2>
 <p>WorkspaceRef 将本机目录与设备目录建模为两个变体。设备来源只允许 SSH/WSL，根必须 canonical 且设备路径绝对无 dot component；根下拒绝链接。SFTP 逐组件 LSTAT，WSL 使用 dirfd + O_NOFOLLOW。本机编辑保留 revision/EOL/BOM，1 MiB UTF-8，写入做 CAS。</p>
-<p>同设备 ID 或本机到本机原地运行；跨设备先在本机暂存并保留原始来源身份，清理覆盖全部终态。SSH/WSL 上传复用 <code>&lt;root&gt;/&lt;source-name&gt;/workspace</code>，串口保留每运行目录。跨设备到 Local 的产物随临时目录删除。</p>
+<p>同设备 ID 或本机到本机原地运行。设备来源只在手动同步时暂存，并保留原始来源身份，暂存目录在全部终态清理。SSH/WSL 复用 <code>&lt;root&gt;/&lt;source-name&gt;/workspace</code>，Local 使用应用数据下的持久副本，串口每次同步创建新的文本副本。</p>
 <h3>分开保存三种状态</h3>
 <div class="table">
 <table>
@@ -252,7 +252,7 @@ workspace_sync = 路径与同步统计</code></pre>
 </thead>
 <tbody>
 <tr><td>源 <code>.runner</code></td><td>cwd 默认值、入口参数历史、写锁；历史完整 SHA-256 ID；不保存 Python 项目配方。</td></tr>
-<tr><td>目标 <code>.sync</code></td><td>来源认领、成功 manifest、pending 恢复记录、运行期 lease。</td></tr>
+<tr><td>目标 <code>.sync</code></td><td>来源认领、成功 manifest、pending 恢复记录。</td></tr>
 <tr><td>本机客户端配置</td><td>同步客户端 UUID、UI 偏好、恢复草稿、设备和运行状态。</td></tr>
 </tbody>
 </table>
@@ -261,7 +261,7 @@ workspace_sync = 路径与同步统计</code></pre>
 <h3>增量同步是有所有权的提交</h3>
 <p>来源键由客户端 UUID 和 canonical 原始 WorkspaceRef 派生，目录名不加哈希后缀。认领不覆盖，拒绝不同来源同名或未知非空目录。所有候选先预检，再发布 pending、逐文件提交、发布 manifest；只删除仍为已知版本的受管文件，保留未知产物，不提供整树回滚。</p>
 <p>来源大小、mtime 和缓存规则未变时复用摘要；权限也未变且无 pending 时信任成功清单并跳过目标读取。因此目标单独变化可能不被发现，同长度保留 mtime 的来源改写也可能命中缓存。这是当前优化的明确边界。需检查的路径由 SSH/WSL 最多 16 条批量预检，SSH 不支持时回退 SFTP。</p>
-<p>目录锁覆盖同步、环境准备、执行直到确认退出。断线且不能确认进程终止则保留锁，不按年龄接管。清单有界、临时文件精确登记、文件修改前复查，SSH 安全发布依赖扩展。算法和限额以 <a href="00004-workspace-and-sync.md">工作区与增量同步</a> 为准。</p>
+<p>同一桌面实例内，同步任务与运行任务互斥。运行前检查 manifest 和 pending，未完成的同步需要恢复后才能启动。清单有界、临时文件精确登记、文件修改前复查，SSH 安全发布依赖扩展。算法和限额以 <a href="00004-workspace-and-sync.md">工作区与增量同步</a> 为准。</p>
 </section>
 
 <section id="runtime">

@@ -14,6 +14,7 @@ import { useShallow } from "zustand/react/shallow";
 import { preserveContentFocus } from "../focus";
 import { openQuickSsh } from "../quickSsh";
 import { SaveTemporaryDevice } from "./SaveTemporaryDevice";
+import { needsWorkspaceCopy } from "../workspaceRun";
 
 export function RunToolbar() {
   const { t } = useTranslation();
@@ -23,11 +24,15 @@ export function RunToolbar() {
   })));
   const feature = useWorkspaceRunStore();
   const device = devices.find((d) => d.id === selectedDeviceId);
+  const running = useAppStore((s) => Object.values(s.runs).some(isActiveRun));
+  const syncBlocked = useAppStore((s) => s.updating || s.loading || s.saving || s.starting || s.guarding || s.workspaceMutating);
+  const canSync = workspace && device?.revision && needsWorkspaceCopy(workspace, device);
   const session = activeRunId ? feature.sessions[activeRunId] : null;
   const preset = activeRunId ? presetRunSessions.get(activeRunId) : null;
   const launch = session?.launch ?? active?.replay?.launch;
   const progress = useAppStore((s) => activeRunId ? s.runProgress[activeRunId] : null);
   const warning = activeRunId ? feature.warnings[activeRunId] : null;
+  const label = active?.workspace_sync_only ? t("workspaceSync.action") : active?.label;
   useEffect(() => { if (activeRunId) void feature.recover(activeRunId); }, [activeRunId]);
   return <div className="run-toolbar">
     <div className="run-toolbar-main">
@@ -46,17 +51,20 @@ export function RunToolbar() {
         </select>
       </label>
       <button className="run-settings" disabled={!workspace} onClick={() => useWorkspaceRunStore.setState({ settingsOpen: true })}><Icon name="config" />{t("workspaceRun.settings")}</button>
+      {canSync && <button className="run-settings" disabled={syncBlocked || running} onMouseDown={preserveContentFocus}
+        title={running ? t("workspaceSync.running") : undefined}
+        onClick={() => void feature.syncWorkspace()}><Icon name="refresh" />{t("workspaceSync.action")}</button>}
       {feature.checking && <span className="secondary-text">{t("workspaceRun.loading")}</span>}
       {feature.info?.project && !feature.checking && <span className="secondary-text">{t(feature.cached ? "runnerEntry.cached" : "runnerEntry.notPrepared")}</span>}
       {feature.infoError && <span className="runtime-error" title={feature.infoError}>{t("workspaceRun.invalidConfig")}</span>}
     </div>
     {active && <div className="run-toolbar-options">
-      <span className="run-latest-task" aria-label={t("runHistory.latest")} title={`${active.label} @ ${active.device_name}`}>{`${active.label} @ ${active.device_name}`}</span>
+      <span className="run-latest-task" aria-label={t("runHistory.latest")} title={`${label} @ ${active.device_name}`}>{`${label} @ ${active.device_name}`}</span>
       <span className={`run-state state-${active.state}`} role="status">{runStateLabel(active.state)}{active.exit_code != null ? ` (${active.exit_code})` : ""}</span>
       <RunElapsed run={active} />
       {isActiveRun(active) && <button className="danger" disabled={!appCommandEnabled("stop", { area: "run", runId: activeRunId ?? undefined })}
         onMouseDown={preserveContentFocus}
-        title={shortcutTitle(`${t("run.stop")} · ${active.label} @ ${active.device_name}`, "stop")}
+        title={shortcutTitle(`${t("run.stop")} · ${label} @ ${active.device_name}`, "stop")}
         onClick={() => void executeAppCommand("stop", { area: "run", runId: activeRunId ?? undefined })}>{t("run.stop")}</button>}
       <RunReplayButton run={active} />
     </div>}
@@ -70,7 +78,7 @@ export function RunToolbar() {
     </div>}
     {preset && !launch && <div className="run-launch">{t("workspaceRun.presetShell")}</div>}
     {warning && <div className="workspace-error" role="alert"><span>{t("workspaceRun.historyUnsaved")} · {warning}</span><button onMouseDown={preserveContentFocus} onClick={() => activeRunId && void api.retryWorkspaceHistory(activeRunId).then(() => feature.recover(activeRunId))}>{t("workspaceRun.retry")}</button></div>}
-    {active?.error && <div className="runtime-error">{active.error}</div>}
+    {active?.error && <div className="runtime-error">{active.error.includes("workspace copy is unavailable or incomplete; use Sync Workspace first") ? t("workspaceSync.required") : active.error}</div>}
     {feature.launchError && <div className="workspace-error" role="alert"><span>{feature.launchError}</span><button onMouseDown={preserveContentFocus} onClick={() => useWorkspaceRunStore.setState({ launchError: null })}>{t("workspaceRun.close")}</button></div>}
   </div>;
 }

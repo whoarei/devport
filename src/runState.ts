@@ -4,7 +4,9 @@ import i18n from "./i18n";
 export const isActiveRun = (run: RunStatus) =>
   ["preparing", "syncing", "starting", "running", "stopping"].includes(run.state);
 
-export const isExecutionRun = (run: RunStatus) => !run.replay?.workspace_request?.operation || run.replay.workspace_request.operation === "run";
+export const isExecutionRun = (run: RunStatus) => !run.workspace_sync_only && (!run.replay?.workspace_request?.operation || run.replay.workspace_request.operation === "run");
+export const workspaceSyncActive = (runs: Record<string, RunStatus>) =>
+  Object.values(runs).some((run) => run.workspace_sync_only && isActiveRun(run));
 export const latestExecution = (runs: Record<string, RunStatus>) => Object.values(runs).filter(isExecutionRun)
   .sort((a, b) => b.started_at.localeCompare(a.started_at))[0] ?? null;
 

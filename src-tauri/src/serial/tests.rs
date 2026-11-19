@@ -196,6 +196,79 @@ async fn end(stream: &mut DuplexStream, nonce: &str, code: u32) {
 }
 
 #[tokio::test]
+async fn manual_upload_stops_after_the_files_and_running_a_copy_sends_no_upload() {
+    let (io, mut device) = tokio::io::duplex(32 * 1024);
+    let (_tx, mut controls) = mpsc::unbounded_channel();
+    let files = [serial::filesync::UploadEntry::File(
+        serial::filesync::TextFile {
+            relative: "main.sh".into(),
+            data: b"echo sample\n".to_vec(),
+        },
+    )];
+    let request: RunRequest = serde_json::from_value(serde_json::json!({
+        "device_id": "serial", "kind": "shell", "entry": "main.sh", "workspace": "."
+    }))
+    .unwrap();
+    let script = async {
+        let outcome = serial::upload_workspace(io, 115200, "/tmp/copy", &files, &mut controls)
+            .await
+            .unwrap();
+        assert_eq!(outcome.code, Some(0));
+        assert!(outcome.stopped.is_none());
+    };
+    let upload_device = async {
+        for expected in ["command -v base64", "mkdir -m 700", "base64 -d"] {
+            let (command, nonce) = read_command(&mut device).await;
+            assert!(command.contains(expected), "{command}");
+            begin(&mut device, &nonce).await;
+            end(&mut device, &nonce, 0).await;
+        }
+        assert_eq!(
+            device.read_u8().await.unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(script, upload_device)
+    })
+    .await
+    .unwrap();
+
+    let (io, mut device) = tokio::io::duplex(32 * 1024);
+    let script = async {
+        let outcome = serial::execute_workspace(
+            io,
+            115200,
+            &request,
+            "/tmp/copy",
+            None,
+            &mut controls,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.code, Some(0));
+    };
+    let run_device = async {
+        for expected in ["command -v bash", "test -d", "bash"] {
+            let (command, nonce) = read_command(&mut device).await;
+            assert!(command.contains(expected), "{command}");
+            assert!(
+                !command.contains("mkdir") && !command.contains("base64 -d"),
+                "{command}"
+            );
+            begin(&mut device, &nonce).await;
+            end(&mut device, &nonce, 0).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(script, run_device)
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
 async fn workspace_python_checks_the_planned_lf_upload_and_rejects_later_metadata_changes() {
     use crate::workspace_ref::WorkspaceRef;
     use crate::workspace_run::{Context, Entry, Store};

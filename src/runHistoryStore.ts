@@ -5,7 +5,7 @@ import { getWorkspaceGeneration, useAppStore } from "./store";
 import { useWorkspaceRunStore } from "./workspaceRunStore";
 import { focusRunConsole } from "./consoleTabs";
 import { historyDraft, historyReplayWorkspace, historySettings, type HistoryRunDraft } from "./runHistory";
-import { isActiveRun, latestExecution } from "./runState";
+import { isActiveRun, latestExecution, workspaceSyncActive } from "./runState";
 import { workspaceSourceRevision } from "./workspaceRun";
 import { useEventStore } from "./eventStore";
 import i18n from "./i18n";
@@ -120,6 +120,7 @@ function archiveHistory(records: RunStatus[]): Promise<void> {
 export async function submitHistoryRun(draft: HistoryRunDraft): Promise<string | null> {
   const initial = useAppStore.getState();
   if (initial.updating) throw new Error(i18n.t("run.errorUpdating"));
+  if (workspaceSyncActive(initial.runs)) throw new Error(i18n.t("workspaceSync.inProgress"));
   if (initial.loading || initial.saving || initial.starting || initial.guarding || initial.workspaceMutating) throw new Error(i18n.t("run.errorFileBusy"));
   const workspace = historyReplayWorkspace(draft.replay, initial.devices.find(d => d.id === draft.deviceId));
   const usesWorkspaceEditor = workspace && draft.replay.request.kind !== "command";

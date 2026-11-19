@@ -144,8 +144,47 @@ pub fn run_workspace(
     });
     state
         .run_manager
-        .start(legacy, device, state.config_dir.clone(), source)
+        .start_synced(legacy, device, state.config_dir.clone(), source)
         .map_err(|e| error("run", e.to_string()))
+}
+
+#[tauri::command]
+pub fn sync_workspace(
+    state: tauri::State<'_, AppState>,
+    updates: tauri::State<'_, crate::update::UpdateState>,
+    workspace: WorkspaceRef,
+    device_id: String,
+    expected_device_revision: String,
+    expected_source_revision: Option<String>,
+) -> Result<String> {
+    let _update = updates
+        .allow_run()
+        .map_err(|e| error("busy", e.to_string()))?;
+    let _guard = crate::workspace::FILE_OPERATIONS.lock();
+    let device = state
+        .device_store
+        .get(&device_id)
+        .map_err(|e| error("device", e.to_string()))?;
+    if device_revision(&device) != expected_device_revision {
+        return Err(error(
+            "conflict",
+            "Device configuration changed; refresh before syncing",
+        ));
+    }
+    let source = source_device(&workspace, &state.device_store)?;
+    if expected_source_revision
+        .as_ref()
+        .is_some_and(|revision| source.as_ref().map(device_revision).as_ref() != Some(revision))
+    {
+        return Err(error(
+            "conflict",
+            "Workspace source configuration changed; refresh before syncing",
+        ));
+    }
+    state
+        .run_manager
+        .start_sync(workspace, device, state.config_dir.clone(), source)
+        .map_err(|e| error("sync", e.to_string()))
 }
 #[tauri::command]
 pub fn get_workspace_run(

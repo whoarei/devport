@@ -736,7 +736,7 @@ pub fn run_script(
     }
     state
         .run_manager
-        .start(request, device, state.config_dir.clone(), workspace_source)
+        .start_synced(request, device, state.config_dir.clone(), workspace_source)
 }
 
 #[tauri::command]

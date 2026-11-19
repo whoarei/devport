@@ -132,6 +132,8 @@ pub struct RunStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_sync: Option<crate::workspace_sync::Report>,
     #[serde(default, skip_serializing_if = "is_false")]
+    pub workspace_sync_only: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
     pub waiting_workspace: bool,
     /// Submitted inputs only, captured before staging or shell environment resolution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -217,6 +219,7 @@ impl RunStatus {
             python_version: None,
             lock_sha256: None,
             workspace_sync: None,
+            workspace_sync_only: false,
             waiting_workspace: false,
             replay: None,
             history_deletion: None,
@@ -263,6 +266,21 @@ pub enum RunEvent {
 enum StopKind {
     User,
     Timeout,
+}
+
+enum RunTask {
+    Script {
+        request: RunRequest,
+        use_synced_copy: bool,
+    },
+    Sync(WorkspaceRef),
+}
+
+fn uses_copy(workspace: &WorkspaceRef, device: &DeviceProfile) -> bool {
+    match workspace {
+        WorkspaceRef::Local { .. } => device.transport != TransportKind::Local,
+        WorkspaceRef::Device { device_id, .. } => device_id != &device.id,
+    }
 }
 
 struct RunHandle {
@@ -1080,10 +1098,31 @@ impl RunManager {
 
     pub fn start(
         &self,
+        req: RunRequest,
+        device: DeviceProfile,
+        config_dir: PathBuf,
+        workspace_source: Option<DeviceProfile>,
+    ) -> Result<String> {
+        self.start_script(req, device, config_dir, workspace_source, false)
+    }
+
+    pub fn start_synced(
+        &self,
+        req: RunRequest,
+        device: DeviceProfile,
+        config_dir: PathBuf,
+        workspace_source: Option<DeviceProfile>,
+    ) -> Result<String> {
+        self.start_script(req, device, config_dir, workspace_source, true)
+    }
+
+    fn start_script(
+        &self,
         mut req: RunRequest,
         device: DeviceProfile,
         config_dir: PathBuf,
         workspace_source: Option<DeviceProfile>,
+        use_synced_copy: bool,
     ) -> Result<String> {
         device.validate()?;
         // Serial Shell V1 无法部署二进制 Runtime：在任何端口操作前明确拒绝（00005-python-runtime.md）
@@ -1093,7 +1132,55 @@ impl RunManager {
                 "Serial Shell V1 cannot deploy a binary managed runtime",
             ));
         }
-        validate_request(&mut req)?;
+        let validate_source_entry = !use_synced_copy
+            || !req
+                .workspace
+                .as_ref()
+                .is_some_and(|workspace| uses_copy(workspace, &device));
+        if validate_source_entry {
+            validate_request(&mut req)?;
+        } else {
+            validate_request_inner(&mut req, false)?;
+        }
+        self.start_task(
+            RunTask::Script {
+                request: req,
+                use_synced_copy,
+            },
+            device,
+            config_dir,
+            workspace_source,
+        )
+    }
+
+    pub fn start_sync(
+        &self,
+        workspace: WorkspaceRef,
+        device: DeviceProfile,
+        config_dir: PathBuf,
+        workspace_source: Option<DeviceProfile>,
+    ) -> Result<String> {
+        device.validate()?;
+        if !uses_copy(&workspace, &device) {
+            return Err(RunnerError::InvalidInput(
+                "this workspace already runs in place".into(),
+            ));
+        }
+        self.start_task(
+            RunTask::Sync(workspace),
+            device,
+            config_dir,
+            workspace_source,
+        )
+    }
+
+    fn start_task(
+        &self,
+        task: RunTask,
+        device: DeviceProfile,
+        config_dir: PathBuf,
+        workspace_source: Option<DeviceProfile>,
+    ) -> Result<String> {
         {
             let keep = self
                 .snapshot()
@@ -1109,13 +1196,49 @@ impl RunManager {
                 .retain(|id, _| keep.contains(id));
             // The source identity is retained before any cross-device staging.
         }
+        let request = match &task {
+            RunTask::Script { request, .. } => Some(request),
+            RunTask::Sync(_) => None,
+        };
+        let sync_only = request.is_none();
+        let pipe = request.is_some_and(|req| req.console_mode == ConsoleMode::Pipe);
         let mut capabilities = device.transport.capabilities();
-        capabilities.interrupt = !(cfg!(windows)
-            && device.transport == TransportKind::Local
-            && req.console_mode == ConsoleMode::Pipe);
-        if req.console_mode == ConsoleMode::Pipe && !capabilities.pipe {
+        capabilities.interrupt =
+            !(cfg!(windows) && device.transport == TransportKind::Local && pipe) && !sync_only;
+        capabilities.resize &= !sync_only;
+        if pipe && !capabilities.pipe {
             return Err(RunnerError::InvalidInput(
                 "serial shell has one combined console stream; pipe mode is not supported".into(),
+            ));
+        }
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let label = request.map_or_else(|| "Sync Workspace".to_string(), describe_request);
+        let mut status = RunStatus::new(run_id.clone(), device.name.clone(), label);
+        status.workspace_sync_only = sync_only;
+        status.replay = request
+            .map(|req| Box::new(RunReplay::capture(req, &device, workspace_source.as_ref())));
+
+        // 预占位：control 待 spawn 成功后替换；stop 通道立即生效
+        let (placeholder, rx) = mpsc::unbounded_channel::<SessionControl>();
+        drop(rx);
+        let (stop_tx, stop_rx) = mpsc::unbounded_channel::<StopKind>();
+        let mut handles = self.handles.lock();
+        if handles
+            .values()
+            .any(|handle| handle.status.workspace_sync_only)
+        {
+            return Err(RunnerError::InvalidInput(
+                "workspace synchronization is in progress".into(),
+            ));
+        }
+        if sync_only && !handles.is_empty() {
+            return Err(RunnerError::InvalidInput(
+                "wait for active runs to finish before syncing a workspace".into(),
+            ));
+        }
+        if handles.len() >= 32 {
+            return Err(RunnerError::InvalidInput(
+                "at most 32 runs may be active".into(),
             ));
         }
         let serial_lease = if device.transport == TransportKind::Serial {
@@ -1125,25 +1248,6 @@ impl RunManager {
         } else {
             None
         };
-        let run_id = uuid::Uuid::new_v4().to_string();
-        let label = describe_request(&req);
-        let mut status = RunStatus::new(run_id.clone(), device.name.clone(), label);
-        status.replay = Some(Box::new(RunReplay::capture(
-            &req,
-            &device,
-            workspace_source.as_ref(),
-        )));
-
-        // 预占位：control 待 spawn 成功后替换；stop 通道立即生效
-        let (placeholder, rx) = mpsc::unbounded_channel::<SessionControl>();
-        drop(rx);
-        let (stop_tx, stop_rx) = mpsc::unbounded_channel::<StopKind>();
-        let mut handles = self.handles.lock();
-        if handles.len() >= 32 {
-            return Err(RunnerError::InvalidInput(
-                "at most 32 runs may be active".into(),
-            ));
-        }
         handles.insert(
             run_id.clone(),
             RunHandle {
@@ -1159,7 +1263,7 @@ impl RunManager {
             },
         );
         drop(handles);
-        if let Some(context) = &req.workspace_context {
+        if let Some(context) = request.and_then(|request| request.workspace_context.as_ref()) {
             self.workspace_contexts
                 .lock()
                 .insert(run_id.clone(), (context.clone(), false));
@@ -1171,7 +1275,7 @@ impl RunManager {
         let this = self.clone();
         let rid = run_id.clone();
         tauri::async_runtime::spawn(async move {
-            this.execute(rid, req, device, config_dir, workspace_source, stop_rx)
+            this.execute(rid, task, device, config_dir, workspace_source, stop_rx)
                 .await;
         });
         Ok(run_id)
@@ -1180,24 +1284,42 @@ impl RunManager {
     async fn execute(
         &self,
         run_id: String,
-        req: RunRequest,
+        task: RunTask,
         device: DeviceProfile,
         config_dir: PathBuf,
         workspace_source: Option<DeviceProfile>,
         stop_rx: mpsc::UnboundedReceiver<StopKind>,
     ) {
         let mut workspace_lease = None;
-        let outcome = self
-            .execute_inner(
-                &run_id,
-                req,
-                &device,
-                &config_dir,
-                workspace_source,
-                stop_rx,
-                &mut workspace_lease,
-            )
-            .await;
+        let outcome = match task {
+            RunTask::Script {
+                request,
+                use_synced_copy,
+            } => {
+                self.execute_inner(
+                    &run_id,
+                    request,
+                    &device,
+                    &config_dir,
+                    workspace_source,
+                    stop_rx,
+                    &mut workspace_lease,
+                    use_synced_copy,
+                )
+                .await
+            }
+            RunTask::Sync(workspace) => {
+                self.synchronize_workspace(
+                    &run_id,
+                    workspace,
+                    &device,
+                    &config_dir,
+                    workspace_source.as_ref(),
+                    stop_rx,
+                )
+                .await
+            }
+        };
         if let Some(lease) = workspace_lease {
             if !lease.process_started || lease.process_finished {
                 if let Err(error) = lease.release().await {
@@ -1255,6 +1377,7 @@ impl RunManager {
         workspace_source: Option<DeviceProfile>,
         mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
         workspace_lease: &mut Option<crate::workspace_sync::Lease>,
+        use_synced_copy: bool,
     ) -> Result<RunOutcome> {
         if req.managed_python {
             let mut events = self.prepare_events(run_id);
@@ -1264,46 +1387,132 @@ impl RunManager {
                 device.name, device.transport, req.workspace
             ));
         }
-        // 0. 跨设备工作区（00004-workspace-and-sync.md）：先暂存到本机临时目录，再走既有本机工作区管线；
-        //    同设备工作区（SSH/WSL）由各自 transport 分支原地运行。
-        let mut source_ssh = None;
+        let cancel = self.runtime_cancel(run_id);
+        let mut execution_workspace = None;
+        let mut serial_copy = None;
+        let mut execution_ssh = None;
+        if let Some(source) = req
+            .workspace
+            .as_ref()
+            .filter(|source| use_synced_copy && uses_copy(source, device))
+        {
+            if device.transport == TransportKind::Serial {
+                serial_copy = Some(
+                    crate::workspace_sync::SerialCopy::open(
+                        source,
+                        workspace_source.as_ref(),
+                        device,
+                        config_dir,
+                    )
+                    .await?,
+                );
+            } else {
+                let copy = crate::workspace_sync::WorkspaceCopy::open(
+                    source,
+                    workspace_source.as_ref(),
+                    device,
+                    config_dir,
+                    false,
+                )
+                .await?;
+                execution_ssh = copy.ssh_connection();
+                execution_workspace = Some(if device.transport == TransportKind::Local {
+                    WorkspaceRef::local(copy.destination)
+                } else {
+                    WorkspaceRef::device(&device.id, copy.destination)
+                });
+            }
+        }
+        crate::runtime::host::check_cancel(&cancel)?;
         if let Some(context) = &req.workspace_context {
             let check = async {
-                let mut store = crate::workspace_run::Store::open(
-                    &context.request.workspace,
-                    context.source_device.as_ref(),
-                    config_dir,
-                )
-                .await
-                .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
-                if context.request.workspace.is_on_device(&device.id) {
-                    source_ssh = store.host.ssh_connection();
-                }
-                if let Some(revision) = &context.request.config_revision {
-                    if store
-                        .config()
-                        .await
-                        .map_err(|e| RunnerError::InvalidInput(e.to_string()))?
-                        .revision
-                        != *revision
-                    {
-                        return Err(RunnerError::InvalidInput(
-                            "Runner configuration changed; refresh before running".into(),
-                        ));
+                let opens_source_inputs = execution_workspace.is_none() && serial_copy.is_none();
+                let from_file = |error: crate::workspace::FileError| {
+                    RunnerError::InvalidInput(error.to_string())
+                };
+                let mut source_store = None;
+                if opens_source_inputs || context.request.config_revision.is_some() {
+                    let mut store = crate::workspace_run::Store::open(
+                        &context.request.workspace,
+                        context.source_device.as_ref(),
+                        config_dir,
+                    )
+                    .await
+                    .map_err(from_file)?;
+                    if context.request.workspace.is_on_device(&device.id) {
+                        execution_ssh = store.host.ssh_connection();
                     }
+                    if let Some(revision) = &context.request.config_revision {
+                        if store.config().await.map_err(from_file)?.revision != *revision {
+                            return Err(RunnerError::InvalidInput(
+                                "Runner configuration changed; refresh before running".into(),
+                            ));
+                        }
+                    }
+                    source_store = Some(store);
                 }
-                store
+                if let Some(serial_copy) = &serial_copy {
+                    return serial_copy.inputs(req.kind);
+                }
+                let mut store = match &execution_workspace {
+                    Some(workspace) => crate::workspace_run::Store::open_with_ssh(
+                        workspace,
+                        Some(device),
+                        config_dir,
+                        execution_ssh.clone(),
+                    )
+                    .await
+                    .map_err(from_file)?,
+                    None => source_store.unwrap(),
+                };
+                let inputs = store
                     .inputs(&context.request.command.entry, req.managed_python, &req.cwd)
                     .await
-                    .map_err(|e| RunnerError::InvalidInput(e.to_string()))
+                    .map_err(|error| {
+                        if execution_workspace.is_some() && error.code == "not_found" {
+                            RunnerError::InvalidInput(format!(
+                                "{}; use Sync Workspace if the source has changed",
+                                error.message
+                            ))
+                        } else {
+                            from_file(error)
+                        }
+                    })?;
+                Ok(inputs)
             };
             let inputs = tokio::select! { biased; _=stop_rx.recv()=>return Ok(RunOutcome::Canceled {code:None}), result=check=>result? };
             req.managed_pythonpath = inputs.python_path.clone();
             req.project_inputs = Some(inputs);
+        } else if let Some(workspace) = &execution_workspace {
+            let mut store = crate::workspace_run::Store::open_with_ssh(
+                workspace,
+                Some(device),
+                config_dir,
+                execution_ssh.clone(),
+            )
+            .await
+            .map_err(|error| RunnerError::InvalidInput(error.to_string()))?;
+            if req.managed_python {
+                let project = store
+                    .legacy_project()
+                    .await
+                    .map_err(|error| RunnerError::InvalidInput(error.to_string()))?;
+                req.project_inputs = Some(crate::workspace_run::Inputs {
+                    project: Some(project),
+                    python_path: vec![],
+                    hashes: vec![],
+                    serial_hashes: vec![],
+                });
+            } else if req.kind != ScriptKind::Command && !req.module {
+                store
+                    .check_entry(req.entry.as_deref().unwrap_or_default(), false)
+                    .await
+                    .map_err(|error| RunnerError::InvalidInput(error.to_string()))?;
+            }
         }
         // Use the source identity BEFORE staging rewrites a device workspace to
         // a run-specific local temporary directory. The lease lives in execute.
-        if matches!(device.transport, TransportKind::Ssh | TransportKind::Wsl) {
+        if !use_synced_copy && matches!(device.transport, TransportKind::Ssh | TransportKind::Wsl) {
             if let Some(source) = req
                 .workspace
                 .as_ref()
@@ -1339,6 +1548,7 @@ impl RunManager {
                 in_place_workspace = Some(path.to_string());
                 None
             }
+            Some(_) if use_synced_copy => None,
             Some((_, path)) => {
                 let source = workspace_source.as_ref().ok_or_else(|| {
                     RunnerError::InvalidInput("workspace source device is unavailable".into())
@@ -1354,7 +1564,12 @@ impl RunManager {
             }
             None => None,
         };
-        let synced_workspace = if let Some(lease) = workspace_lease.as_mut() {
+        let synced_workspace = if let Some(copy) = execution_workspace
+            .as_ref()
+            .and_then(|workspace| workspace.device_ref())
+        {
+            Some(copy.1.to_owned())
+        } else if let Some(lease) = workspace_lease.as_mut() {
             self.set_state(run_id, RunState::Syncing);
             let local = req.workspace.as_ref().and_then(|w| w.local_dir()).unwrap();
             let policy = if device.transport == TransportKind::Wsl {
@@ -1394,9 +1609,14 @@ impl RunManager {
                 .await;
         }
         if device.transport == TransportKind::Serial {
-            return self.execute_serial(run_id, &req, device, stop_rx).await;
+            return self
+                .execute_serial(run_id, &req, device, stop_rx, serial_copy.as_ref())
+                .await;
         }
         if device.transport == TransportKind::Local {
+            if execution_workspace.is_some() {
+                req.workspace = execution_workspace;
+            }
             return self
                 .execute_local(run_id, req, device, config_dir, stop_rx)
                 .await;
@@ -1405,7 +1625,7 @@ impl RunManager {
         let existing = workspace_lease
             .as_ref()
             .and_then(|lease| lease.ssh_connection())
-            .or(source_ssh);
+            .or(execution_ssh);
         let conn = match existing {
             Some(connection) => connection,
             None => tokio::select! {
@@ -1427,6 +1647,7 @@ impl RunManager {
                 .as_ref()
                 .and_then(|w| w.local_dir().map(str::to_owned))
                 .or_else(|| in_place_workspace.clone())
+                .or_else(|| synced_workspace.clone())
                 .ok_or_else(|| {
                     RunnerError::InvalidInput("managed python requires a workspace".into())
                 })?;
@@ -1451,9 +1672,6 @@ impl RunManager {
         // 3. 同步 workspace（如有）；同设备原地运行改为校验入口与目录（00004-workspace-and-sync.md）
         let remote_dir = match &in_place_workspace {
             Some(path) => {
-                if req.kind != ScriptKind::Command {
-                    self.set_state(run_id, RunState::Syncing);
-                }
                 let check = async {
                     let workspace = crate::remote_workspace::ssh::SshWorkspace::from_connection(
                         conn.clone(),
@@ -1736,6 +1954,97 @@ impl RunManager {
         })
     }
 
+    async fn synchronize_workspace(
+        &self,
+        run_id: &str,
+        workspace: WorkspaceRef,
+        device: &DeviceProfile,
+        config_dir: &std::path::Path,
+        source_device: Option<&DeviceProfile>,
+        mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
+    ) -> Result<RunOutcome> {
+        use crate::workspace_sync::{Report, SerialCopy, WorkspaceCopy};
+
+        self.set_state(run_id, RunState::Syncing);
+        let cancel = self.runtime_cancel(run_id);
+        let mut copy = if device.transport == TransportKind::Serial {
+            None
+        } else {
+            Some(WorkspaceCopy::open(&workspace, source_device, device, config_dir, true).await?)
+        };
+        crate::runtime::host::check_cancel(&cancel)?;
+        let staging = if let Some((_, path)) = workspace.device_ref() {
+            let source = source_device.ok_or_else(|| {
+                RunnerError::InvalidInput("workspace source device is unavailable".into())
+            })?;
+            Some(tokio::select! {
+                biased;
+                _ = stop_rx.recv() => return Ok(RunOutcome::Canceled { code: None }),
+                result = crate::remote_workspace::stage::download(source, config_dir, path, run_id) => result?,
+            })
+        } else {
+            None
+        };
+        let local = staging
+            .as_ref()
+            .map(|stage| stage.path())
+            .or_else(|| workspace.local_dir().map(std::path::Path::new))
+            .unwrap();
+        let report = if let Some(copy) = copy.as_mut() {
+            let policy = match device.transport {
+                TransportKind::Wsl => crate::workspace_upload::WSL,
+                TransportKind::Local => crate::workspace_upload::LOCAL_COPY,
+                _ => crate::workspace_upload::SSH,
+            };
+            copy.synchronize(local, policy, cancel).await?
+        } else {
+            let local = local.to_path_buf();
+            let files =
+                tokio::task::spawn_blocking(move || crate::serial::filesync::collect(&local))
+                    .await
+                    .map_err(|error| RunnerError::TaskFailed(error.to_string()))??;
+            crate::runtime::host::check_cancel(&cancel)?;
+            let copy = SerialCopy::new(&files);
+            let remote = copy.destination(device);
+            crate::serial::preflight_sync(&remote, &files)?;
+            let config = device.serial.as_ref().unwrap();
+            let (control, mut controls) = mpsc::unbounded_channel();
+            let port = crate::serial::transport::open(config)?;
+            let execution = crate::serial::upload_workspace(
+                port,
+                config.baud_rate,
+                &remote,
+                &files,
+                &mut controls,
+            );
+            let outcome = await_transport(execution, control, stop_rx, 0).await?;
+            if !matches!(outcome, RunOutcome::Exited { code: Some(0) }) {
+                return Ok(outcome);
+            }
+            copy.save(&workspace, source_device, device, config_dir)
+                .await?;
+            Report {
+                destination: remote,
+                added: files.len() as u64,
+                uploaded_bytes: files
+                    .iter()
+                    .map(|entry| match entry {
+                        crate::serial::filesync::UploadEntry::File(file) => file.data.len() as u64,
+                        crate::serial::filesync::UploadEntry::Directory(_) => 0,
+                    })
+                    .sum(),
+                ..Report::default()
+            }
+        };
+        if let Some(handle) = self.handles.lock().get_mut(run_id) {
+            handle.status.workspace_sync = Some(report);
+            let _ = self.event_tx.send(RunEvent::Status {
+                status: handle.status.clone(),
+            });
+        }
+        Ok(RunOutcome::Exited { code: Some(0) })
+    }
+
     async fn execute_wsl(
         &self,
         run_id: &str,
@@ -1851,36 +2160,44 @@ impl RunManager {
         req: &RunRequest,
         device: &DeviceProfile,
         mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
+        copy: Option<&crate::workspace_sync::SerialCopy>,
     ) -> Result<RunOutcome> {
         use crate::serial::{self, Event};
         if stop_rx.try_recv().is_ok() {
             return Ok(RunOutcome::Canceled { code: None });
         }
-        let files = if let Some(dir) = req
+        let files = if copy.is_some() {
+            None
+        } else if let Some(dir) = req
             .workspace
             .as_ref()
             .and_then(|w| w.local_dir().map(str::to_owned))
         {
-            tokio::task::spawn_blocking(move || {
-                serial::filesync::collect(std::path::Path::new(&dir))
-            })
-            .await
-            .map_err(|e| RunnerError::TaskFailed(e.to_string()))??
+            Some(
+                tokio::task::spawn_blocking(move || {
+                    serial::filesync::collect(std::path::Path::new(&dir))
+                })
+                .await
+                .map_err(|e| RunnerError::TaskFailed(e.to_string()))??,
+            )
         } else {
-            Vec::new()
+            Some(Vec::new())
         };
         if stop_rx.try_recv().is_ok() {
             return Ok(RunOutcome::Canceled { code: None });
         }
         let config = device.serial.as_ref().unwrap();
-        let remote = format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id);
-        serial::preflight(req, &remote, &files)?;
+        let remote = copy.map_or_else(
+            || format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id),
+            |copy| copy.destination(device),
+        );
+        serial::preflight(req, &remote, files.as_deref().unwrap_or_default())?;
         let port = serial::transport::open(config)?;
         let (control, mut controls) = mpsc::unbounded_channel();
         if let Some(handle) = self.handles.lock().get_mut(run_id) {
             handle.control = control.clone();
         }
-        let execution = serial::execute(
+        let execution = serial::execute_workspace(
             port,
             config.baud_rate,
             req,
@@ -2287,6 +2604,10 @@ pub(crate) fn sh_quote(s: &str) -> String {
 }
 
 fn validate_request(req: &mut RunRequest) -> Result<()> {
+    validate_request_inner(req, true)
+}
+
+fn validate_request_inner(req: &mut RunRequest, validate_source_entry: bool) -> Result<()> {
     let invalid = |message: &str| RunnerError::InvalidInput(message.into());
     req.cwd = crate::workspace_run::relative(&req.cwd, true).map_err(|e| invalid(&e.message))?;
     if req.workspace_context.is_none() && req.cwd != "." {
@@ -2392,7 +2713,7 @@ fn validate_request(req: &mut RunRequest) -> Result<()> {
                     "entry must be a relative path inside the workspace",
                 ));
             }
-            match &local_workspace {
+            match local_workspace.as_ref().filter(|_| validate_source_entry) {
                 Some(root) => {
                     let mut path = root.clone();
                     for part in entry.split('/') {

@@ -716,6 +716,85 @@ async fn canceling_a_pending_batch_keeps_the_connection_usable_for_lease_release
 }
 
 #[tokio::test]
+async fn manual_sync_and_script_runs_are_exclusive_and_use_the_last_copy() {
+    use devport::{
+        process::RunState,
+        runner::{RunManager, RunRequest},
+    };
+    let f = Fixture::new(Behavior {
+        hash_exec: true,
+        run_exec: true,
+        ..Default::default()
+    })
+    .await;
+    let workspace = WorkspaceRef::local(f.local.to_string_lossy());
+    let device = DeviceStore::new(&f.config).get("test").unwrap();
+    let request: RunRequest = serde_json::from_value(serde_json::json!({
+        "device_id": "test", "workspace": workspace,
+        "kind": "shell", "entry": "main.sh", "console_mode": "pipe",
+    }))
+    .unwrap();
+    let (events, _) = tokio::sync::broadcast::channel(32);
+    let manager = RunManager::new(&f.config, events);
+    let run = || manager.start_synced(request.clone(), device.clone(), f.config.clone(), None);
+    let sync = || manager.start_sync(workspace.clone(), device.clone(), f.config.clone(), None);
+    let wait = |id: String| {
+        let manager = &manager;
+        async move {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let status = manager.status(&id).unwrap();
+                    if !status.state.is_active() {
+                        break status;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap()
+        }
+    };
+
+    fs::write(f.local.join("main.sh"), b"echo first\n").unwrap();
+    assert!(wait(run().unwrap())
+        .await
+        .error
+        .unwrap()
+        .contains("use Sync Workspace first"));
+    let sync_id = sync().unwrap();
+    assert!(run()
+        .unwrap_err()
+        .to_string()
+        .contains("synchronization is in progress"));
+    let status = wait(sync_id).await;
+    assert_eq!(status.state, RunState::Exited, "{:?}", status.error);
+    assert!(status.workspace_sync_only && status.replay.is_none());
+    let remote = f.remote.join(
+        status
+            .workspace_sync
+            .unwrap()
+            .destination
+            .trim_start_matches("/data/"),
+    );
+    assert!(!remote.parent().unwrap().join(".sync/lease.json").exists());
+
+    fs::write(f.local.join("main.sh"), b"echo updated\n").unwrap();
+    let run_id = run().unwrap();
+    assert!(sync()
+        .unwrap_err()
+        .to_string()
+        .contains("wait for active runs"));
+    let status = wait(run_id).await;
+    assert_eq!(status.state, RunState::Exited, "{:?}", status.error);
+    assert!(status.workspace_sync.is_none());
+    assert_eq!(fs::read(remote.join("main.sh")).unwrap(), b"echo first\n");
+
+    assert_eq!(wait(sync().unwrap()).await.state, RunState::Exited);
+    assert_eq!(fs::read(remote.join("main.sh")).unwrap(), b"echo updated\n");
+    assert!(!remote.parent().unwrap().join(".sync/lease.json").exists());
+}
+
+#[tokio::test]
 async fn run_reuses_the_authenticated_sync_connection_for_launch_checks_and_execution() {
     use devport::{
         runner::{RunManager, RunRequest},

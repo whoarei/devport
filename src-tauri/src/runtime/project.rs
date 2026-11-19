@@ -335,6 +335,16 @@ pub fn parse_inputs(
     lock_bytes: &[u8],
     launch: Option<(&str, bool)>,
 ) -> Result<PythonProject> {
+    parse_metadata(Some(root), pyproject_text, version_text, lock_bytes, launch)
+}
+
+pub(crate) fn parse_metadata(
+    root: Option<PathBuf>,
+    pyproject_text: &str,
+    version_text: &str,
+    lock_bytes: &[u8],
+    launch: Option<(&str, bool)>,
+) -> Result<PythonProject> {
     let mut lines = version_text.lines().filter(|l| !l.trim().is_empty());
     let python_version = parse_python_version(lines.next().unwrap_or(""))?;
     if lines.next().is_some() {
@@ -504,7 +514,7 @@ pub fn parse_inputs(
         let entry = relative_workspace_path(entry_raw)
             .ok_or_else(|| invalid("entry must be a relative path inside the workspace"))?;
         // Legacy entry checks. Workspace launches use their source host instead.
-        if launch.is_none() {
+        if let Some(root) = root.as_ref().filter(|_| launch.is_none()) {
             let mut path = root.clone();
             for part in entry.split('/') {
                 path.push(part);
@@ -531,11 +541,15 @@ pub fn parse_inputs(
             let rel = relative_workspace_path(p).ok_or_else(|| {
                 invalid("python-path entries must be relative paths inside the workspace")
             })?;
-            let full = root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
-            if launch.is_none() && !full.is_dir() {
-                return Err(invalid(format!(
-                    "python-path entry is not a directory: {rel}"
-                )));
+            if let Some(root) = root.as_ref().filter(|_| launch.is_none()) {
+                if !root
+                    .join(rel.replace('/', std::path::MAIN_SEPARATOR_STR))
+                    .is_dir()
+                {
+                    return Err(invalid(format!(
+                        "python-path entry is not a directory: {rel}"
+                    )));
+                }
             }
             Ok(rel)
         })
@@ -610,7 +624,7 @@ pub fn parse_inputs(
         groups,
         extras,
         package_source_identity: sha256_hex(identity_lines.join("\n").as_bytes()),
-        workspace: root,
+        workspace: root.unwrap_or_default(),
         input_hashes: vec![
             (
                 "pyproject.toml".into(),

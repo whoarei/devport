@@ -140,6 +140,7 @@ pub fn run() {
             workspace_commands::runner_lock_info,
             workspace_commands::recover_runner_lock,
             workspace_commands::run_workspace,
+            workspace_commands::sync_workspace,
             workspace_commands::get_workspace_run,
             workspace_commands::retry_workspace_history,
             workspace_commands::probe_python_environment,

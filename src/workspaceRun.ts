@@ -3,6 +3,8 @@ import type { CommandSource, DeviceProfile, WorkspaceCommand, WorkspaceCommandRe
 export const workspaceKey = (w: WorkspaceRef | null) => !w ? "none" : w.type === "local" ? JSON.stringify(["local", w.dir]) : JSON.stringify(["device", w.device_id, w.path]);
 export const workspaceSourceRevision = (w: WorkspaceRef | null, devices: DeviceProfile[]): string | null =>
   w?.type === "device" ? devices.find((device) => device.id === w.device_id)?.revision ?? "missing" : null;
+export const needsWorkspaceCopy = (workspace: WorkspaceRef, device: DeviceProfile): boolean =>
+  workspace.type === "local" ? device.transport !== "local" : workspace.device_id !== device.id;
 export const commandLabel = (c: WorkspaceCommand) => c.entry.type === "python_module" ? `python -m ${c.entry.name}` : c.entry.path;
 export const pythonVersionMatches = (request: string, actual: string) =>
   /^\d+\.\d+(\.\d+)?$/.test(request) && /^\d+\.\d+\.\d+$/.test(actual)

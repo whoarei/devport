@@ -13,6 +13,7 @@ pub struct Policy {
     pub entry_limit: usize,
     pub path_limit: usize,
     pub text_only: bool,
+    pub normalize_script_lf: bool,
     pub skip_symlinks: bool,
 }
 
@@ -22,6 +23,7 @@ pub const SERIAL: Policy = Policy {
     entry_limit: 1024,
     path_limit: 512,
     text_only: true,
+    normalize_script_lf: true,
     skip_symlinks: false,
 };
 pub const WSL: Policy = Policy {
@@ -30,6 +32,7 @@ pub const WSL: Policy = Policy {
     entry_limit: 4096,
     path_limit: 1024,
     text_only: false,
+    normalize_script_lf: true,
     skip_symlinks: false,
 };
 pub const SSH: Policy = Policy {
@@ -38,7 +41,12 @@ pub const SSH: Policy = Policy {
     entry_limit: 4096,
     path_limit: 1024,
     text_only: false,
+    normalize_script_lf: true,
     skip_symlinks: true,
+};
+pub const LOCAL_COPY: Policy = Policy {
+    normalize_script_lf: false,
+    ..SSH
 };
 
 pub struct Entry {
@@ -241,7 +249,9 @@ pub fn read_source(source: Source, policy: Policy) -> Result<Entry> {
         source.relative.as_str(),
         "pyproject.toml" | ".python-version" | "uv.lock"
     );
-    if policy.text_only || is_text_script(&source.relative) && !project_input {
+    if policy.text_only
+        || policy.normalize_script_lf && is_text_script(&source.relative) && !project_input
+    {
         data = normalize_lf(data);
     }
     Ok(Entry {

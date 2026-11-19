@@ -168,6 +168,7 @@ export interface RunStatus {
     destination: string; added: number; updated: number; deleted: number;
     skipped: number; permissions: number; uploaded_bytes: number;
   };
+  workspace_sync_only?: boolean;
 }
 
 export interface DeletedRunHistory {
@@ -346,6 +347,8 @@ export const api = {
   runnerLockInfo: (workspace: WorkspaceRef) => invoke<{ content: string; revision: string } | null>("runner_lock_info", { workspace }),
   recoverRunnerLock: (workspace: WorkspaceRef, expectedRevision: string) => invoke<void>("recover_runner_lock", { workspace, expectedRevision }),
   runWorkspace: (request: WorkspaceRunRequest, expectedSourceRevision?: string | null) => invoke<string>("run_workspace", { request, expectedSourceRevision }),
+  syncWorkspace: (workspace: WorkspaceRef, deviceId: string, expectedDeviceRevision: string, expectedSourceRevision: string | null) =>
+    invoke<string>("sync_workspace", { workspace, deviceId, expectedDeviceRevision, expectedSourceRevision }),
   getWorkspaceRun: (runId: string) => invoke<WorkspaceRunSession | null>("get_workspace_run", { runId }),
   retryWorkspaceHistory: (runId: string) => invoke<void>("retry_workspace_history", { runId }),
   renameWorkspaceCommands: (workspace: WorkspaceRef, oldPath: string, newPath: string) => invoke<WorkspaceCommands>("rename_workspace_commands", { workspace, oldPath, newPath }),

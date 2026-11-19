@@ -914,6 +914,34 @@ pub struct ProjectInfo {
     pub legacy_entry: Option<String>,
     pub legacy_module: bool,
 }
+pub(crate) fn python_paths(text: Option<&str>) -> Result<Vec<String>> {
+    let Some(text) = text else {
+        return Ok(Vec::new());
+    };
+    let toml: toml::Value = text
+        .parse()
+        .map_err(|e| error("invalid", format!("Invalid pyproject.toml: {e}")))?;
+    let Some(paths) = toml
+        .get("tool")
+        .and_then(|v| v.get("remote-runner"))
+        .and_then(|v| v.get("python-path"))
+    else {
+        return Ok(Vec::new());
+    };
+    paths
+        .as_array()
+        .ok_or_else(|| error("invalid", "python-path must be an array"))?
+        .iter()
+        .map(|path| {
+            relative(
+                path.as_str()
+                    .ok_or_else(|| error("invalid", "python-path must contain strings"))?,
+                false,
+            )
+        })
+        .collect()
+}
+
 impl Store {
     pub async fn check_entry(&mut self, path: &str, directory: bool) -> Result<()> {
         let path = relative(path, directory)?;
@@ -947,29 +975,9 @@ impl Store {
                 std::str::from_utf8(b).map_err(|_| error("invalid", "pyproject.toml must be UTF-8"))
             })
             .transpose()?;
-        let mut python_path = Vec::new();
-        if let Some(text) = text {
-            let toml: toml::Value = text
-                .parse()
-                .map_err(|e| error("invalid", format!("Invalid pyproject.toml: {e}")))?;
-            if let Some(value) = toml
-                .get("tool")
-                .and_then(|v| v.get("remote-runner"))
-                .and_then(|v| v.get("python-path"))
-            {
-                for path in value
-                    .as_array()
-                    .ok_or_else(|| error("invalid", "python-path must be an array"))?
-                {
-                    let path = relative(
-                        path.as_str()
-                            .ok_or_else(|| error("invalid", "python-path must contain strings"))?,
-                        false,
-                    )?;
-                    self.check_entry(&path, true).await?;
-                    python_path.push(path);
-                }
-            }
+        let python_path = python_paths(text)?;
+        for path in &python_path {
+            self.check_entry(path, true).await?;
         }
         let serial_hashes = vec![(
             "pyproject.toml".into(),
@@ -987,27 +995,10 @@ impl Store {
         )];
         let project = if managed {
             let text = text.ok_or_else(|| error("not_found", "pyproject.toml is required"))?;
-            let version = self
-                .read(".python-version", 4096)
-                .await?
-                .ok_or_else(|| error("not_found", ".python-version is required"))?;
-            let lock = self
-                .read("uv.lock", crate::runtime::LOCK_LIMIT)
-                .await?
-                .ok_or_else(|| error("not_found", "uv.lock is required"))?;
-            let project = crate::runtime::project::parse_inputs(
-                PathBuf::new(),
-                text,
-                std::str::from_utf8(&version)
-                    .map_err(|_| error("invalid", "Invalid .python-version"))?,
-                &lock,
-                Some((entry.value(), entry.module())),
-            )
-            .map_err(|e| error("invalid", e.to_string()))?;
-            hashes.extend([
-                (".python-version".into(), digest(&version)),
-                ("uv.lock".into(), digest(&lock)),
-            ]);
+            let project = self
+                .managed_project(text, Some((entry.value(), entry.module())))
+                .await?;
+            hashes = project.input_hashes.clone();
             Some(project)
         } else {
             None
@@ -1018,6 +1009,48 @@ impl Store {
             hashes,
             serial_hashes,
         })
+    }
+    async fn managed_project(
+        &mut self,
+        pyproject: &str,
+        launch: Option<(&str, bool)>,
+    ) -> Result<crate::runtime::project::PythonProject> {
+        let version = self
+            .read(".python-version", 4096)
+            .await?
+            .ok_or_else(|| error("not_found", ".python-version is required"))?;
+        let lock = self
+            .read("uv.lock", crate::runtime::LOCK_LIMIT)
+            .await?
+            .ok_or_else(|| error("not_found", "uv.lock is required"))?;
+        crate::runtime::project::parse_metadata(
+            None,
+            pyproject,
+            std::str::from_utf8(&version)
+                .map_err(|_| error("invalid", "Invalid .python-version"))?,
+            &lock,
+            launch,
+        )
+        .map_err(|e| error("invalid", e.to_string()))
+    }
+
+    pub(crate) async fn legacy_project(
+        &mut self,
+    ) -> Result<crate::runtime::project::PythonProject> {
+        let bytes = self
+            .read("pyproject.toml", 1024 * 1024)
+            .await?
+            .ok_or_else(|| error("not_found", "pyproject.toml is required"))?;
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| error("invalid", "pyproject.toml must be UTF-8"))?;
+        let project = self.managed_project(text, None).await?;
+        if project.mode == crate::runtime::project::EntryMode::Script {
+            self.check_entry(&project.entry, false).await?;
+        }
+        for path in &project.python_path {
+            self.check_entry(path, true).await?;
+        }
+        Ok(project)
     }
     pub async fn project_info(&mut self, managed: bool) -> Result<ProjectInfo> {
         let bytes = self.read("pyproject.toml", 1024 * 1024).await?;

@@ -1,6 +1,5 @@
-//! Reusable SSH/WSL execution workspaces. Ownership is recorded separately from
-//! workload files; only manifest-owned files may be removed. A persistent remote
-//! lease spans synchronization AND execution, and is never stolen by timeout.
+//! Reusable execution workspaces. Ownership is recorded separately from
+//! workload files; only manifest-owned files may be removed.
 use crate::{
     device::{DeviceProfile, TransportKind},
     error::{Result, RunnerError},
@@ -354,29 +353,23 @@ fn queue_lock(key: String) -> Arc<Mutex<()>> {
     lock
 }
 
-pub struct Lease {
+pub(crate) struct WorkspaceCopy {
     host: Host,
     prefix: String,
     id: String,
-    owner: Vec<u8>,
     pub destination: String,
-    pub process_started: bool,
-    pub process_finished: bool,
-    _queue: OwnedMutexGuard<()>,
 }
-impl Lease {
+impl WorkspaceCopy {
     pub(crate) fn ssh_connection(&self) -> Option<crate::ssh::client::SshConnection> {
         self.host.ssh_connection()
     }
-    pub async fn acquire(
+    pub(crate) async fn open(
         source: &WorkspaceRef,
         source_device: Option<&DeviceProfile>,
         device: &DeviceProfile,
         config: &Path,
-        run_id: &str,
-        cancel: &AtomicBool,
+        create: bool,
     ) -> Result<Self> {
-        check_cancel(cancel)?;
         device.validate()?;
         if let WorkspaceRef::Device { device_id, .. } = source {
             if source_device.is_none_or(|device| device.id != *device_id) {
@@ -384,26 +377,71 @@ impl Lease {
             }
         }
         let id = workspace_id(source, source_device, config).await?;
-        let prefix = directory_name(source)?;
-        let target = match device.transport {
-            TransportKind::Ssh => {
-                format!("ssh:{}:{}:{}", device.host, device.port, device.username)
-            }
-            TransportKind::Wsl => {
-                let wsl = device.wsl.as_ref().unwrap();
-                format!("wsl:{}:{}", wsl.distribution, wsl.user)
-            }
-            _ => return Err(failure("unsupported transport")),
+        let prefix = if device.transport == TransportKind::Local {
+            id.clone()
+        } else {
+            directory_name(source)?
         };
-        let key = serde_json::to_string(&(target, &device.workspace_root, &prefix)).unwrap();
-        let lock = queue_lock(key);
-        let guard = tokio::select! { biased; _=cancelled(cancel)=>return Err(crate::runtime::host::canceled_error()), guard=lock.lock_owned()=>guard };
-        check_cancel(cancel)?;
-        let endpoint = WorkspaceRef::device(&device.id, &device.workspace_root);
-        let mut host = Host::open_create(&endpoint, device, config)
-            .await
-            .map_err(map)?;
-        let root = host.endpoint(&endpoint).device_ref().unwrap().1.to_owned();
+        let endpoint = if device.transport == TransportKind::Local {
+            let root = config.join("execution-workspaces");
+            if create {
+                std::fs::create_dir_all(&root)?;
+            } else if !root.try_exists()? {
+                return Err(sync_required());
+            }
+            WorkspaceRef::local(root.to_string_lossy())
+        } else {
+            WorkspaceRef::device(&device.id, &device.workspace_root)
+        };
+        let mut host = if create && device.transport != TransportKind::Local {
+            Host::open_create(&endpoint, device, config).await
+        } else {
+            Host::open(&endpoint, Some(device), config).await
+        }
+        .map_err(|error| {
+            if !create && error.code == "not_found" {
+                sync_required()
+            } else {
+                map(error)
+            }
+        })?;
+        let resolved = host.endpoint(&endpoint);
+        let root = resolved
+            .local_dir()
+            .or_else(|| resolved.device_ref().map(|(_, path)| path))
+            .unwrap();
+        let destination = format!("{}/{prefix}/workspace", root.trim_end_matches('/'));
+        if !create {
+            let identity_path = format!("{prefix}/.sync/identity.json");
+            let identity = read_blob(&mut host, &identity_path, 4096)
+                .await?
+                .ok_or_else(sync_required)?;
+            verify_identity(&identity, &id, &destination)?;
+            if host
+                .stat(&format!("{prefix}/.sync/pending.json"))
+                .await
+                .map_err(map)?
+                .is_some()
+                || host
+                    .stat(&format!("{prefix}/.sync/manifest.json"))
+                    .await
+                    .map_err(map)?
+                    .is_none_or(|attrs| attrs.kind != "file")
+                || host
+                    .stat(&format!("{prefix}/workspace"))
+                    .await
+                    .map_err(map)?
+                    .is_none_or(|attrs| attrs.kind != "dir")
+            {
+                return Err(sync_required());
+            }
+            return Ok(Self {
+                host,
+                prefix,
+                id,
+                destination,
+            });
+        }
         if let (Some(source_device), WorkspaceRef::Device { .. }) = (source_device, source) {
             let same_account = match (source_device.transport, device.transport) {
                 (TransportKind::Ssh, TransportKind::Ssh) => {
@@ -428,13 +466,12 @@ impl Lease {
                     .unwrap()
                     .1
                     .to_owned();
-                let target = format!("{}/{prefix}/workspace", root.trim_end_matches('/'));
                 let contains = |a: &str, b: &str| {
                     a == b
                         || b.strip_prefix(a.trim_end_matches('/'))
                             .is_some_and(|suffix| suffix.starts_with('/'))
                 };
-                if contains(&source_root, &target) || contains(&target, &source_root) {
+                if contains(&source_root, &destination) || contains(&destination, &source_root) {
                     return Err(failure("source and target device workspaces overlap"));
                 }
             }
@@ -450,8 +487,8 @@ impl Lease {
         }
         host.mkdir(&prefix).await.map_err(map)?;
         host.mkdir(&format!("{prefix}/.sync")).await.map_err(map)?;
-        // Both are needed to publish a lease without clobbering another owner,
-        // and to replace existing content without deleting it first.
+        // Claim the identity without replacing an existing owner, and replace
+        // existing files atomically during synchronization.
         if !host.safe_publish() || !host.overwrite() {
             return Err(failure(
                 "SFTP server requires hardlink and atomic overwrite extensions",
@@ -464,21 +501,11 @@ impl Lease {
             &format!("{}/{prefix}", root.trim_end_matches('/')),
         )
         .await?;
-        let path = format!("{prefix}/.sync/lease.json");
-        if host.stat(&path).await.map_err(map)?.is_some() {
-            return Err(failure(format!("workspace is leased; verify the previous process has ended before recovering {root}/{path}; locks are never expired automatically")));
-        }
-        let owner = serde_json::to_vec(&serde_json::json!({"version":VERSION,"run_id":run_id,"owner":uuid::Uuid::new_v4().to_string(),"created_at":chrono::Utc::now().to_rfc3339()})).unwrap();
-        publish(&mut host, &path, &owner, 0o600, &None, None, None).await?;
         Ok(Self {
             host,
-            prefix: prefix.clone(),
+            prefix,
             id,
-            owner,
-            destination: format!("{}/{prefix}/workspace", root.trim_end_matches('/')),
-            process_started: false,
-            process_finished: false,
-            _queue: guard,
+            destination,
         })
     }
     pub async fn synchronize(
@@ -499,18 +526,215 @@ impl Lease {
         report.destination = self.destination.clone();
         Ok(report)
     }
+}
+
+pub(crate) const SYNC_REQUIRED: &str =
+    "workspace copy is unavailable or incomplete; use Sync Workspace first";
+
+pub(crate) fn sync_required() -> RunnerError {
+    failure(SYNC_REQUIRED)
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct SerialCopy {
+    generation: uuid::Uuid,
+    python_path: std::result::Result<Vec<String>, String>,
+    pyproject_hash: String,
+}
+
+impl SerialCopy {
+    pub(crate) fn new(files: &[crate::serial::filesync::UploadEntry]) -> Self {
+        use crate::serial::filesync::UploadEntry;
+        let pyproject = files.iter().find_map(|entry| match entry {
+            UploadEntry::File(file) if file.relative == "pyproject.toml" => {
+                Some(file.data.as_slice())
+            }
+            _ => None,
+        });
+        let python_path = crate::workspace_run::python_paths(
+            pyproject.and_then(|bytes| std::str::from_utf8(bytes).ok()),
+        )
+        .map_err(|error| error.message)
+        .and_then(|paths| {
+            for path in &paths {
+                if !files.iter().any(
+                    |entry| matches!(entry, UploadEntry::Directory(directory) if directory == path),
+                ) {
+                    return Err(format!("Missing workspace directory: {path}"));
+                }
+            }
+            Ok(paths)
+        });
+        Self {
+            generation: uuid::Uuid::new_v4(),
+            python_path,
+            pyproject_hash: pyproject.map(digest).unwrap_or_else(|| "missing".into()),
+        }
+    }
+
+    pub(crate) fn destination(&self, device: &DeviceProfile) -> String {
+        format!(
+            "{}/{}",
+            device.workspace_root.trim_end_matches('/'),
+            self.generation
+        )
+    }
+
+    pub(crate) fn inputs(
+        &self,
+        kind: crate::runner::ScriptKind,
+    ) -> Result<crate::workspace_run::Inputs> {
+        let mut inputs = crate::workspace_run::Inputs {
+            project: None,
+            python_path: vec![],
+            hashes: vec![],
+            serial_hashes: vec![],
+        };
+        if kind == crate::runner::ScriptKind::Python {
+            let paths = self
+                .python_path
+                .as_ref()
+                .map_err(|error| RunnerError::InvalidInput(error.clone()))?;
+            inputs.python_path = paths
+                .iter()
+                .map(|path| {
+                    crate::workspace_run::relative(path, false)
+                        .map_err(|error| RunnerError::InvalidInput(error.message))
+                })
+                .collect::<Result<_>>()?;
+            inputs
+                .serial_hashes
+                .push(("pyproject.toml".into(), self.pyproject_hash.clone()));
+        }
+        Ok(inputs)
+    }
+
+    async fn receipt(
+        source: &WorkspaceRef,
+        source_device: Option<&DeviceProfile>,
+        device: &DeviceProfile,
+        config: &Path,
+    ) -> Result<(Host, String)> {
+        let id = workspace_id(source, source_device, config).await?;
+        let serial = device.serial.as_ref().unwrap();
+        let target =
+            serde_json::to_vec(&(&device.id, &serial.port, &device.workspace_root)).unwrap();
+        let path = format!("serial-workspace-{id}-{}.json", digest(&target));
+        let endpoint = WorkspaceRef::local(config.to_string_lossy());
+        let host = Host::open(&endpoint, None, config).await.map_err(map)?;
+        Ok((host, path))
+    }
+
+    pub(crate) async fn open(
+        source: &WorkspaceRef,
+        source_device: Option<&DeviceProfile>,
+        device: &DeviceProfile,
+        config: &Path,
+    ) -> Result<Self> {
+        let (mut host, path) = Self::receipt(source, source_device, device, config).await?;
+        let bytes = read_blob(&mut host, &path, MANIFEST_LIMIT)
+            .await?
+            .ok_or_else(sync_required)?;
+        serde_json::from_slice(&bytes).map_err(|_| sync_required())
+    }
+
+    pub(crate) async fn save(
+        &self,
+        source: &WorkspaceRef,
+        source_device: Option<&DeviceProfile>,
+        device: &DeviceProfile,
+        config: &Path,
+    ) -> Result<()> {
+        let (mut host, path) = Self::receipt(source, source_device, device, config).await?;
+        let bytes = serde_json::to_vec(self).map_err(|error| failure(error.to_string()))?;
+        let expected = host.stat(&path).await.map_err(map)?;
+        publish(&mut host, &path, &bytes, 0o600, &expected, None, None).await
+    }
+}
+
+/// The standalone SSH smoke-test client retains its one-shot upload/run API.
+pub struct Lease {
+    copy: WorkspaceCopy,
+    pub destination: String,
+    owner: Vec<u8>,
+    pub process_started: bool,
+    pub process_finished: bool,
+    _queue: OwnedMutexGuard<()>,
+}
+
+impl Lease {
+    pub(crate) fn ssh_connection(&self) -> Option<crate::ssh::client::SshConnection> {
+        self.copy.ssh_connection()
+    }
+
+    pub async fn acquire(
+        source: &WorkspaceRef,
+        source_device: Option<&DeviceProfile>,
+        device: &DeviceProfile,
+        config: &Path,
+        run_id: &str,
+        cancel: &AtomicBool,
+    ) -> Result<Self> {
+        check_cancel(cancel)?;
+        device.validate()?;
+        let target = match device.transport {
+            TransportKind::Ssh => {
+                format!("ssh:{}:{}:{}", device.host, device.port, device.username)
+            }
+            TransportKind::Wsl => {
+                let wsl = device.wsl.as_ref().unwrap();
+                format!("wsl:{}:{}", wsl.distribution, wsl.user)
+            }
+            _ => return Err(failure("unsupported transport")),
+        };
+        let prefix = directory_name(source)?;
+        let key = serde_json::to_string(&(target, &device.workspace_root, prefix)).unwrap();
+        let lock = queue_lock(key);
+        let guard = tokio::select! { biased; _=cancelled(cancel)=>return Err(crate::runtime::host::canceled_error()), guard=lock.lock_owned()=>guard };
+        check_cancel(cancel)?;
+        let mut copy = WorkspaceCopy::open(source, source_device, device, config, true).await?;
+        let path = format!("{}/.sync/lease.json", copy.prefix);
+        if copy.host.stat(&path).await.map_err(map)?.is_some() {
+            return Err(failure(format!("workspace is leased; verify the previous process has ended before recovering the lease beside {}; locks are never expired automatically", copy.destination)));
+        }
+        let owner = serde_json::to_vec(&serde_json::json!({"version":VERSION,"run_id":run_id,"owner":uuid::Uuid::new_v4().to_string(),"created_at":chrono::Utc::now().to_rfc3339()})).unwrap();
+        publish(&mut copy.host, &path, &owner, 0o600, &None, None, None).await?;
+        Ok(Self {
+            destination: copy.destination.clone(),
+            copy,
+            owner,
+            process_started: false,
+            process_finished: false,
+            _queue: guard,
+        })
+    }
+
+    pub async fn synchronize(
+        &mut self,
+        local: &Path,
+        policy: Policy,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<Report> {
+        self.copy.synchronize(local, policy, cancel).await
+    }
+
     pub async fn release(mut self) -> Result<()> {
-        let path = format!("{}/.sync/lease.json", self.prefix);
-        if read_blob(&mut self.host, &path, 4096).await?.as_deref() != Some(&self.owner) {
+        let path = format!("{}/.sync/lease.json", self.copy.prefix);
+        if read_blob(&mut self.copy.host, &path, 4096)
+            .await?
+            .as_deref()
+            != Some(&self.owner)
+        {
             return Err(failure("lease ownership changed; refusing to release it"));
         }
         let attrs = self
+            .copy
             .host
             .stat(&path)
             .await
             .map_err(map)?
             .ok_or_else(|| failure("lease disappeared"))?;
-        self.host.unlink(&path, &attrs).await.map_err(map)
+        self.copy.host.unlink(&path, &attrs).await.map_err(map)
     }
 }
 

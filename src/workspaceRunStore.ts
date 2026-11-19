@@ -2,11 +2,11 @@ import { create } from "zustand";
 import { api, errorMessage, workspaceRefEquals, type CommandSource, type PythonSelection, type RunEvent, type RunStatus, type RunnerConfigState, type WorkspaceCommand, type WorkspaceCommands, type WorkspaceExecutionSettings, type WorkspacePythonInfo, type WorkspaceRef, type WorkspaceRunRequest, type WorkspaceRunSession } from "./api";
 import { getWorkspaceGeneration, useAppStore } from "./store";
 import { workspaceEditorDirty } from "./editorSources";
-import { workspaceKey, workspaceSourceRevision, commandLabel, pythonVersionMatches } from "./workspaceRun";
+import { workspaceKey, workspaceSourceRevision, commandLabel, pythonVersionMatches, needsWorkspaceCopy } from "./workspaceRun";
 import { focusRunConsole, revealConsolePanel } from "./consoleTabs";
 import { useTerminalStore } from "./terminalStore";
 import i18n from "./i18n";
-import { isActiveRun, newestStatus } from "./runState";
+import { isActiveRun, newestStatus, workspaceSyncActive } from "./runState";
 
 type Preferences = { target?: string; python: Record<string, PythonSelection>; bash: Record<string, string>; console_mode: "pty" | "pipe"; timeout_secs: number; env: Record<string, string> };
 const defaults = (): Preferences => ({ python: {}, bash: {}, console_mode: "pty", timeout_secs: 0, env: {} });
@@ -35,6 +35,7 @@ interface State {
   preference: (patch: Partial<Preferences>) => void; selectTarget: (id: string | null) => void; selectPython: (python: PythonSelection) => void;
   start: (command: WorkspaceCommand, source?: CommandSource, workspace?: WorkspaceRef, operation?: WorkspaceRunRequest["operation"]) => Promise<string>;
   run: (command: WorkspaceCommand, source?: CommandSource, workspace?: WorkspaceRef) => void;
+  syncWorkspace: () => Promise<void>;
   prepare: (rebuild?: boolean) => Promise<void>; cancelPreparation: () => Promise<void>; syncPreparation: () => void;
   events: (events: RunEvent[]) => void; recover: (id: string) => Promise<void>;
 }
@@ -114,6 +115,7 @@ export const useWorkspaceRunStore = create<State>((set, get) => ({
     const initial = useAppStore.getState(), workspace = origin ?? initial.workspace, generation = getWorkspaceGeneration(), sourceRevision = get().sourceRevision;
     if (!workspace || !workspaceRefEquals(workspace, initial.workspace)) throw new Error(i18n.t("run.errorWorkspaceChanged"));
     if (initial.updating) throw new Error(i18n.t("run.errorUpdating"));
+    if (workspaceSyncActive(initial.runs)) throw new Error(i18n.t("workspaceSync.inProgress"));
     if (initial.loading || initial.saving || initial.starting || initial.guarding || initial.workspaceMutating) throw new Error(i18n.t("run.errorFileBusy"));
     if (!initial.selectedDeviceId) { set({ settingsOpen: true }); throw new Error(i18n.t("run.selectDeviceFirst")); }
     useAppStore.setState({ starting: true });
@@ -128,7 +130,7 @@ export const useWorkspaceRunStore = create<State>((set, get) => ({
       const settings: WorkspaceExecutionSettings = { cwd: state.config.config.run_defaults.cwd, env: { ...p.env }, console_mode: device.transport === "serial" ? "pty" : p.console_mode, timeout_secs: p.timeout_secs, ...app.consoleSize, bash: p.bash[device.id] || undefined };
       const request: WorkspaceRunRequest = { workspace: structuredClone(workspace), config_revision: state.config.revision === "session" ? undefined : state.config.revision, device_id: device.id, device_revision: device.revision, command: { entry: structuredClone(command.entry), args: command.args.slice() }, source, python: operation !== "run" ? "project" : p.python[device.id] ?? "device_default", settings, operation };
       if (operation !== "run") set((s) => ({ preparation: s.preparation ? { ...s.preparation, deviceId: device.id, deviceRevision: device.revision, deviceName: device.name } : null }));
-      const id = await api.runWorkspace(request);
+      const id = await api.runWorkspace(request, sourceRevision);
       set((s) => ({ sessions: { ...s.sessions, [id]: { request, launch: s.sessions[id]?.launch ?? null, warning: s.warnings[id] ?? null } } }));
       if (operation !== "run") set((s) => ({ preparation: s.preparation ? { ...s.preparation, runId: id } : null }));
       if (!useAppStore.getState().runs[id]) {
@@ -142,6 +144,44 @@ export const useWorkspaceRunStore = create<State>((set, get) => ({
     } finally { useAppStore.setState({ starting: false }); }
   },
   run: (command, source, workspace) => { void get().start(command, source, workspace).catch((e) => get().reportError(e)); },
+  syncWorkspace: async () => {
+    const initial = useAppStore.getState();
+    const { workspace } = initial;
+    const device = initial.devices.find((candidate) => candidate.id === initial.selectedDeviceId);
+    if (!workspace || !device?.revision || !needsWorkspaceCopy(workspace, device) || initial.updating
+      || initial.loading || initial.saving || initial.starting || initial.guarding || initial.workspaceMutating
+      || Object.values(initial.runs).some(isActiveRun)) return;
+    const generation = getWorkspaceGeneration();
+    const sourceRevision = workspaceSourceRevision(workspace, initial.devices);
+    set({ launchError: null });
+    useAppStore.setState({ starting: true });
+    try {
+      if (!await initial.saveAllDirty(true) || workspaceEditorDirty(useAppStore.getState())) {
+        throw new Error(i18n.t("run.errorSaveIncomplete"));
+      }
+      if (generation !== getWorkspaceGeneration() || !workspaceSourceCurrent(workspace, sourceRevision)) {
+        throw new Error(i18n.t("run.errorWorkspaceChanged"));
+      }
+      const current = useAppStore.getState();
+      if (current.selectedDeviceId !== device.id || current.devices.find(({ id }) => id === device.id)?.revision !== device.revision) {
+        throw new Error(i18n.t("workspaceSync.targetChanged"));
+      }
+      const id = await api.syncWorkspace(workspace, device.id, device.revision, sourceRevision);
+      if (!useAppStore.getState().runs[id]) {
+        const status = await api.getRunStatus(id).catch(() => null);
+        if (!useAppStore.getState().runs[id]) useAppStore.getState().handleRunEvent({ type: "status", status: status ?? {
+          run_id: id, label: "Sync Workspace", device_name: device.name, state: "syncing", exit_code: null,
+          error: null, started_at: new Date().toISOString(), ended_at: null, workspace_sync_only: true,
+        } });
+      }
+      useAppStore.getState().setActiveRun(id);
+      focusRunConsole();
+    } catch (error) {
+      get().reportError(error);
+    } finally {
+      useAppStore.setState({ starting: false });
+    }
+  },
   prepare: async (rebuild = false) => {
     if (preparationActive(get().preparation) || useAppStore.getState().starting) return;
     const app = useAppStore.getState(), workspace = app.workspace;
