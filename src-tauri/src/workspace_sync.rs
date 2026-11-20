@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc, OnceLock, Weak},
 };
 use tokio::sync::{Mutex, OwnedMutexGuard};
@@ -657,6 +657,7 @@ pub struct Lease {
     copy: WorkspaceCopy,
     pub destination: String,
     owner: Vec<u8>,
+    config: PathBuf,
     pub process_started: bool,
     pub process_finished: bool,
     _queue: OwnedMutexGuard<()>,
@@ -694,7 +695,7 @@ impl Lease {
         check_cancel(cancel)?;
         let mut copy = WorkspaceCopy::open(source, source_device, device, config, true).await?;
         let path = format!("{}/.sync/lease.json", copy.prefix);
-        if copy.host.stat(&path).await.map_err(map)?.is_some() {
+        if !clear_completed_lease(&mut copy.host, &path, config, &copy.id).await? {
             return Err(failure(format!("workspace is leased; verify the previous process has ended before recovering the lease beside {}; locks are never expired automatically", copy.destination)));
         }
         let owner = serde_json::to_vec(&serde_json::json!({"version":VERSION,"run_id":run_id,"owner":uuid::Uuid::new_v4().to_string(),"created_at":chrono::Utc::now().to_rfc3339()})).unwrap();
@@ -703,6 +704,7 @@ impl Lease {
             destination: copy.destination.clone(),
             copy,
             owner,
+            config: config.to_owned(),
             process_started: false,
             process_finished: false,
             _queue: guard,
@@ -720,25 +722,77 @@ impl Lease {
 
     pub async fn release(mut self) -> Result<()> {
         let path = format!("{}/.sync/lease.json", self.copy.prefix);
-        if read_blob(&mut self.copy.host, &path, 4096)
-            .await?
-            .as_deref()
-            != Some(&self.owner)
-        {
+        let (owner, attrs) = match read_blob_with_attrs(&mut self.copy.host, &path, 4096).await {
+            Ok(Some(lease)) => lease,
+            Ok(None) => return Ok(()),
+            Err(error) => {
+                // No deletion was sent. A later run can retry on its fresh
+                // connection, using only the exact owner authorized here.
+                match remember_completed_lease(&self.config, &self.copy.id, &self.owner) {
+                    Ok(()) => return Err(failure(format!(
+                        "could not inspect {path} for release; the next sync will retry for the same lease owner ({error})"
+                    ))),
+                    Err(record_error) => return Err(failure(format!(
+                        "could not inspect {path} for release ({error}); could not record the retry ({record_error})"
+                    ))),
+                }
+            }
+        };
+        if owner != self.owner {
             return Err(failure("lease ownership changed; refusing to release it"));
         }
-        let attrs = self
-            .copy
-            .host
-            .stat(&path)
-            .await
-            .map_err(map)?
-            .ok_or_else(|| failure("lease disappeared"))?;
         self.copy.host.unlink(&path, &attrs).await.map_err(map)
     }
 }
 
+fn completed_lease_path(config: &Path, workspace_id: &str, owner: &[u8]) -> PathBuf {
+    config
+        .join("completed-workspace-leases")
+        .join(format!("{workspace_id}-{}", digest(owner)))
+}
+
+fn remember_completed_lease(
+    config: &Path,
+    workspace_id: &str,
+    owner: &[u8],
+) -> std::io::Result<()> {
+    let receipt = completed_lease_path(config, workspace_id, owner);
+    std::fs::create_dir_all(receipt.parent().unwrap())?;
+    std::fs::File::create_new(receipt)?.sync_all()
+}
+
+async fn clear_completed_lease(
+    host: &mut Host,
+    path: &str,
+    config: &Path,
+    workspace_id: &str,
+) -> Result<bool> {
+    let Some((owner, attrs)) = read_blob_with_attrs(host, path, 4096).await? else {
+        return Ok(true);
+    };
+    // Consume the receipt first. Only one recovery can remove this lease, even
+    // through aliased device profiles. An ambiguous unlink must not be replayed.
+    let receipt = completed_lease_path(config, workspace_id, &owner);
+    match std::fs::remove_file(receipt) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    }
+    host.unlink(path, &attrs).await.map_err(map)?;
+    Ok(true)
+}
+
 async fn read_blob(host: &mut Host, path: &str, limit: usize) -> Result<Option<Vec<u8>>> {
+    Ok(read_blob_with_attrs(host, path, limit)
+        .await?
+        .map(|(bytes, _)| bytes))
+}
+
+async fn read_blob_with_attrs(
+    host: &mut Host,
+    path: &str,
+    limit: usize,
+) -> Result<Option<(Vec<u8>, Attributes)>> {
     let Some(attrs) = host.stat(path).await.map_err(map)? else {
         return Ok(None);
     };
@@ -764,10 +818,10 @@ async fn read_blob(host: &mut Host, path: &str, limit: usize) -> Result<Option<V
             }
             bytes.extend_from_slice(&chunk);
         }
-        if host.stat(path).await.map_err(map)? != Some(attrs) {
+        if host.stat(path).await.map_err(map)?.as_ref() != Some(&attrs) {
             return Err(failure("metadata changed while reading"));
         }
-        Ok(Some(bytes))
+        Ok(Some((bytes, attrs)))
     }
     .await;
     let close = host.close(handle, false, None).await.map_err(map);

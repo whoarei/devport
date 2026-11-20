@@ -1755,9 +1755,6 @@ impl RunManager {
 
         // 4. 启动进程
         self.set_state(run_id, RunState::Starting);
-        if let Some(lease) = workspace_lease.as_mut() {
-            lease.process_started = true;
-        }
         if req.kind == ScriptKind::Command {
             self.publish_launch(
                 run_id,
@@ -1775,7 +1772,8 @@ impl RunManager {
             );
         }
         let (session_tx, mut session_rx) = mpsc::channel::<SessionEvent>(64);
-        let proc = session::spawn(
+        let mut exec_may_have_started = false;
+        let session = session::spawn_tracked(
             &conn,
             SpawnSpec {
                 command,
@@ -1784,8 +1782,13 @@ impl RunManager {
                 rows: req.rows,
             },
             session_tx,
+            &mut exec_may_have_started,
         )
-        .await?;
+        .await;
+        if let Some(lease) = workspace_lease.as_mut() {
+            lease.process_started = exec_may_have_started;
+        }
+        let proc = session?;
 
         // Pipe interrupts need the actual workload's process-group PID, rather
         // than an SSH signal request (which servers may ignore).
@@ -1876,6 +1879,9 @@ impl RunManager {
                         SessionEvent::Exit { code } => {
                             received_exit = true;
                             exit_code = code;
+                            if let Some(lease) = workspace_lease.as_mut() {
+                                lease.process_finished = true;
+                            }
                         }
                         SessionEvent::Failed { error } => return Err(RunnerError::TaskFailed(error)),
                         SessionEvent::Closed => break,
@@ -1917,7 +1923,7 @@ impl RunManager {
                             if let Some(pid) = remote_pid {
                                 kill_remote_tree(&conn, pid, "KILL", group_kill).await;
                             }
-                            // 同时本地关闭 channel（服务端可能不回 close，双保险）
+                            // Give the server time to acknowledge exit after KILL.
                             let _ = proc.control.send(SessionControl::Kill);
                             stop_stage = 3;
                             stop_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(3));
@@ -1925,6 +1931,7 @@ impl RunManager {
                         _ => {
                             // 服务端始终未回 close：本地强制结束
                             tracing::warn!("run {run_id}: channel not closed by server, force finish");
+                            proc.close().await;
                             break;
                         }
                     }
@@ -1942,11 +1949,6 @@ impl RunManager {
             ));
         }
 
-        if received_exit {
-            if let Some(lease) = workspace_lease.as_mut() {
-                lease.process_finished = true;
-            }
-        }
         Ok(match stop_kind {
             None => RunOutcome::Exited { code: exit_code },
             Some(StopKind::User) => RunOutcome::Canceled { code: exit_code },
@@ -2127,9 +2129,6 @@ impl RunManager {
         if let Some(handle) = self.handles.lock().get_mut(run_id) {
             handle.control = control.clone();
         }
-        if let Some(lease) = workspace_lease.as_mut() {
-            lease.process_started = true;
-        }
         let execution = wsl::execute(
             device.wsl.as_ref().unwrap(),
             &req,
@@ -2138,7 +2137,14 @@ impl RunManager {
             Vec::new(),
             &mut controls,
             |event| match event {
-                Event::State(state) => self.set_state(run_id, state),
+                Event::State(state) => {
+                    if state == RunState::Starting {
+                        if let Some(lease) = workspace_lease.as_mut() {
+                            lease.process_started = true;
+                        }
+                    }
+                    self.set_state(run_id, state);
+                }
                 Event::Launch(launch) => self.publish_launch(run_id, launch),
                 Event::Output { stream, data } => {
                     self.emit_output(run_id, stream, &data);

@@ -108,6 +108,6 @@ pub enum SessionControl {
     /// 用户停止：由 transport 执行既有的分级终止流程。
     Stop,
     Terminate,
-    /// 尽力发送 KILL 并关闭 channel；远程进程仍需上层按 PID 清理。
+    /// 尽力发送 KILL；SSH 由上层等待退出确认并关闭通道。
     Kill,
 }

@@ -21,6 +21,7 @@ struct Behavior {
     no_hardlink: bool,
     fail_write: bool,
     disconnect_commit: bool,
+    disconnect_lease_lookup_once: Option<Arc<std::sync::atomic::AtomicBool>>,
     slow: bool,
     fail_workspace_commit_once: Option<Arc<std::sync::atomic::AtomicBool>>,
     hash_exec: bool,
@@ -122,6 +123,16 @@ impl russh_sftp::server::Handler for Sftp {
         })
     }
     async fn lstat(&mut self, id: u32, path: String) -> Result<p::Attrs, StatusCode> {
+        if path.ends_with("/.sync/lease.json")
+            && self
+                .behavior
+                .disconnect_lease_lookup_once
+                .as_ref()
+                .is_some_and(|armed| armed.swap(false, std::sync::atomic::Ordering::SeqCst))
+        {
+            self.disconnect.notify_one();
+            return std::future::pending().await;
+        }
         self.behavior
             .counts
             .lstat
@@ -304,6 +315,45 @@ impl russh_sftp::server::Handler for Sftp {
         }
         Ok(p::Packet::Status(status(id)))
     }
+}
+
+#[tokio::test]
+async fn workspace_sync_clears_only_the_recorded_lease_after_release_disconnect() {
+    use devport::workspace_sync::Lease;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let disconnect = Arc::new(AtomicBool::new(false));
+    let fixture = Fixture::new(Behavior {
+        disconnect_lease_lookup_once: Some(disconnect.clone()),
+        ..Default::default()
+    })
+    .await;
+    let device = DeviceStore::new(&fixture.config).get("test").unwrap();
+    let source = WorkspaceRef::local(fixture.local.to_string_lossy());
+    let cancel = AtomicBool::new(false);
+    let acquire = |run| Lease::acquire(&source, None, &device, &fixture.config, run, &cancel);
+    let lease = acquire("first").await.unwrap();
+    let remote = fixture.remote.join("local/.sync/lease.json");
+    let original = fs::read(&remote).unwrap();
+
+    disconnect.store(true, Ordering::SeqCst);
+    let failure = tokio::time::timeout(Duration::from_secs(5), lease.release())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(failure.to_string().contains("the next sync will retry"));
+    assert_eq!(fs::read(&remote).unwrap(), original);
+
+    let other_owner = br#"{"owner":"unknown"}"#;
+    fs::write(&remote, other_owner).unwrap();
+    assert!(acquire("second").await.is_err());
+    assert_eq!(fs::read(&remote).unwrap(), other_owner);
+
+    fs::write(&remote, &original).unwrap();
+    let next = acquire("third").await.unwrap();
+    assert_ne!(fs::read(&remote).unwrap(), original);
+    next.release().await.unwrap();
+    assert!(!remote.exists());
 }
 
 #[tokio::test]
@@ -1199,7 +1249,8 @@ impl server::Handler for Ssh {
             read_dirs: HashSet::new(),
             disconnect: disconnect.clone(),
         };
-        let watch_disconnect = self.behavior.disconnect_commit;
+        let watch_disconnect =
+            self.behavior.disconnect_commit || self.behavior.disconnect_lease_lookup_once.is_some();
         tokio::spawn(async move {
             // russh-sftp::server::run starts its own task and returns immediately.
             russh_sftp::server::run(channel.into_stream(), handler).await;

@@ -576,6 +576,10 @@ pub(crate) async fn execute_with_command(
             }
         }
     }
+    // Managed Runtime：workspace 已在目标可见，执行 locked environment sync 等准备
+    if let Some(hook) = prepare_hook {
+        hook(remote)?;
+    }
     emit(Event::State(RunState::Starting));
     if req.kind == ScriptKind::Command {
         emit(Event::Launch(crate::workspace_run::Launch {
@@ -589,10 +593,6 @@ pub(crate) async fn execute_with_command(
             python_path: vec![],
             environment: "command".into(),
         }));
-    }
-    // Managed Runtime：workspace 已在目标可见，执行 locked environment sync 等准备
-    if let Some(hook) = prepare_hook {
-        hook(remote)?;
     }
     bridge.send(json!({"type":"start"})).await?;
     let mut deadline = Some(tokio::time::Instant::now() + IO_TIMEOUT);
