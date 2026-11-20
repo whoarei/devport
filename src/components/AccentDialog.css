@@ -1,0 +1,73 @@
+.accent-dialog {
+  width: min(510px, calc(100vw / var(--browser-ui-zoom, 1) - 32px));
+  max-height: calc(100vh / var(--browser-ui-zoom, 1) - 32px);
+  padding: 20px;
+  overflow: auto;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-dialog);
+  box-shadow: 0 16px 54px var(--shadow);
+}
+
+.accent-dialog::backdrop { background: color-mix(in srgb, var(--backdrop) 68%, transparent); }
+.accent-dialog h2 { margin: 0 0 14px; font-size: 18px; }
+
+.accent-presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(110px, 100%), 1fr));
+  gap: 8px;
+  min-width: 0;
+  margin: 0 0 18px;
+  padding: 0;
+  border: 0;
+}
+
+.accent-option {
+  position: relative;
+  min-width: 0;
+}
+
+.accent-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.accent-option > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.accent-option:hover > span { background: var(--surface-hover); }
+.accent-option input:checked + span {
+  color: var(--accent);
+  background: var(--accent-surface);
+  border-color: var(--accent-border);
+  font-weight: 600;
+}
+.accent-option input:focus-visible + span { outline: 2px solid var(--accent-border); outline-offset: 2px; }
+.accent-check { width: 13px; height: 13px; margin-left: auto; }
+
+.accent-swatch {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+
+.accent-custom-label { display: block; margin-bottom: 6px; color: var(--text-secondary); }
+.accent-custom { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+.accent-custom input[type="color"] { width: 44px; height: 34px; padding: 3px; cursor: pointer; }
+.accent-custom input[type="text"] { flex: 1 1 108px; min-width: 0; font-family: Consolas, "Cascadia Mono", monospace; }
+.accent-custom input[aria-invalid="true"] { border-color: var(--danger-border); }
+#accent-invalid { margin: 6px 0 0; color: var(--danger); }
+.accent-dialog .dialog-actions { margin-top: 18px; }

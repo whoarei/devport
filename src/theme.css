@@ -7,6 +7,7 @@
   --radius-panel: 8px;
   --radius-dialog: 12px;
   --control-height: 30px;
+  --accent-on-solid: #ffffff;
 }
 
 :root, :root[data-theme="dark"] {

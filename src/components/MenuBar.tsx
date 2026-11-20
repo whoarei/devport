@@ -22,6 +22,7 @@ import { appCommandEnabled, executeAppCommand } from "../appCommands";
 import { shortcutLabel, type AppCommandId, type ShortcutContext } from "../shortcuts";
 import { useCommandUiStore } from "../commandUiStore";
 import { openQuickSsh } from "../quickSsh";
+import { AccentDialog } from "./AccentDialog";
 
 interface MenuEntry {
   type?: "item" | "checkbox" | "separator";
@@ -101,6 +102,8 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
 }) {
   const { t } = useTranslation();
   const [openMenu, setOpenMenu] = useState<number | null>(null);
+  const [accentOpen, setAccentOpen] = useState(false);
+  const settingsButton = useRef<HTMLButtonElement>(null);
   // 本地持有偏好状态：切到「跟随系统」且解析结果不变时 changeLanguage 不触发重渲染
   const [languagePreference, setLanguagePreference] = useState<LanguagePreference>(() => loadLanguagePreference());
   const chooseLanguage = (preference: LanguagePreference) => {
@@ -301,6 +304,7 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
             { type: "checkbox", label: t("menu.followSystem"), checked: themePreference === "system", onSelect: () => chooseTheme("system") },
           ],
         },
+        { label: t("accent.open"), onSelect: () => setAccentOpen(true) },
         { type: "separator" },
         {
           label: t("menu.titlebarPathDisplay"),
@@ -338,7 +342,7 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
     },
   ];
 
-  return (
+  return <>
     <div className="menubar" role="menubar" aria-label={t("menu.ariaLabel")} ref={barRef}>
       {menus.map((menu, index) => (
         <div className="menubar-entry" key={menu.label}>
@@ -348,6 +352,7 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
             aria-haspopup="menu"
             aria-expanded={openMenu === index}
             className={`menubar-title${openMenu === index ? " open" : ""}`}
+            ref={menu.label === t("menu.settings") ? settingsButton : undefined}
             onClick={() => setOpenMenu(openMenu === index ? null : index)}
             onMouseEnter={() => { if (openMenu !== null) setOpenMenu(index); }}
           >
@@ -363,5 +368,9 @@ export function MenuBar({ uiZoom, onUiZoom, onAbout, onCheckUpdate }: {
         </div>
       ))}
     </div>
-  );
+    {accentOpen && <AccentDialog onClose={() => {
+      setAccentOpen(false);
+      settingsButton.current?.focus();
+    }} />}
+  </>;
 }

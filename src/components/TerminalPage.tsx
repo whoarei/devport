@@ -33,6 +33,7 @@ interface View {
 export function TerminalPage({ tab, visible, autoFocus = true }: { tab: TerminalTab; visible: boolean; autoFocus?: boolean }) {
   const { t } = useTranslation();
   const theme = useThemeStore((state) => state.theme);
+  const accent = useThemeStore((state) => state.accent);
   const focus = useCommandUiStore((state) => state.focus);
   const [clipboardError, setClipboardError] = useState<{ action: TerminalClipboardAction; message: string } | null>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -49,8 +50,9 @@ export function TerminalPage({ tab, visible, autoFocus = true }: { tab: Terminal
   // The display belongs to the tab, so replacing a session preserves scrollback and focus.
   useEffect(() => {
     if (!container.current) return;
+    const appearance = useThemeStore.getState();
     const term = new Terminal({ fontSize: 13, fontFamily: "Consolas, 'Cascadia Mono', monospace",
-      theme: terminalTheme(useThemeStore.getState().theme), scrollback: 3000, convertEol: false });
+      theme: terminalTheme(appearance.theme, appearance.accent), scrollback: 3000, convertEol: false });
     const addon = new FitAddon();
     term.loadAddon(addon);
     term.open(container.current);
@@ -140,7 +142,7 @@ export function TerminalPage({ tab, visible, autoFocus = true }: { tab: Terminal
     };
   }, [tab.id, sessionId]);
 
-  useEffect(() => { if (view.current) view.current.term.options.theme = terminalTheme(theme); }, [theme]);
+  useEffect(() => { if (view.current) view.current.term.options.theme = terminalTheme(theme, accent); }, [theme, accent]);
 
   useEffect(() => {
     if (!visible) return;

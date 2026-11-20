@@ -27,6 +27,7 @@ import { EmptyState } from "./EmptyState";
 export function RunConsole({ collapsed, onToggleCollapse, embedded = false, autoFocus = true }: { collapsed: boolean; onToggleCollapse: () => void; embedded?: boolean; autoFocus?: boolean }) {
   const { t } = useTranslation();
   const theme = useThemeStore((state) => state.theme);
+  const accent = useThemeStore((state) => state.accent);
   const workspace = useAppStore((state) => state.workspace);
   const workspaceGuideVisible = useAppStore((s) => s.layout.sidebarVisible && s.layout.panelVisible.workspace && !s.layout.panelCollapsed.workspace);
   const focus = useCommandUiStore((state) => state.focus);
@@ -48,10 +49,11 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false, auto
   // 初始化 xterm
   useEffect(() => {
     if (!containerRef.current || termRef.current) return;
+    const appearance = useThemeStore.getState();
     const term = new Terminal({
       fontSize: 13,
       fontFamily: "Consolas, 'Cascadia Mono', monospace",
-      theme: terminalTheme(useThemeStore.getState().theme),
+      theme: terminalTheme(appearance.theme, appearance.accent),
       convertEol: true,
     });
     const fit = new FitAddon();
@@ -124,7 +126,7 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false, auto
     };
   }, []);
 
-  useEffect(() => { if (termRef.current) termRef.current.options.theme = terminalTheme(theme); }, [theme]);
+  useEffect(() => { if (termRef.current) termRef.current.options.theme = terminalTheme(theme, accent); }, [theme, accent]);
 
   useEffect(() => { replayRef.current?.pump(); }, [activeRunId, buffer]);
 
