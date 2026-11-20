@@ -90,10 +90,7 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
   return (
     <section className="about-update" data-phase={phase.kind} aria-label={t("about.checkAria")} aria-live="polite">
       <div className="about-update-heading">
-        <div>
-          <h3>{t("about.updateTitle")}</h3>
-          {phase.kind === "idle" && <p className="about-update-hint">{t("about.updateHint")}</p>}
-        </div>
+        <h3>{t("about.updateTitle")}</h3>
         <button type="button" className={`about-check-button${phase.kind === "available" ? "" : " primary"}`} disabled={busy} onClick={() => void check()}>
           {phase.kind === "checking" ? t("about.checking") : t("about.check")}
         </button>
@@ -168,51 +165,16 @@ export function AboutDialog({ dialogRef, autoCheckNonce = 0 }: { dialogRef: RefO
           event.currentTarget.close();
         }
       }}>
-      <header className="about-hero">
+      <header className="about-header">
         <div className="about-heading">
-          <img className="about-logo" src={appIcon} alt="" width="72" height="72" />
+          <img className="about-logo" src={appIcon} alt="" width="44" height="44" />
           <div className="about-brand">
-            <p className="about-eyebrow">{t("about.tagline")}</p>
             <h2 id="about-title" ref={headingRef} tabIndex={-1} aria-label={t("about.title", { name: productName })}>{productName}</h2>
             <p className="about-version">{t("about.version", { version })}</p>
           </div>
         </div>
         <p id="about-description" className="about-description">{t("about.description")}</p>
       </header>
-      <div className="about-content">
-        <ul className="about-capabilities" aria-label={t("about.features")}>
-          <li>
-            <svg className="about-feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z" /><path d="M3 11h18" />
-            </svg>
-            <h3>{t("about.workspaceTitle")}</h3>
-            <p>{t("about.workspaceDescription")}</p>
-          </li>
-          <li>
-            <svg className="about-feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <rect x="3" y="4" width="18" height="16" rx="2" /><path d="m7 9 3 3-3 3m6 0h4" />
-            </svg>
-            <h3>{t("about.executionTitle")}</h3>
-            <p>{t("about.executionDescription")}</p>
-          </li>
-          <li>
-            <svg className="about-feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M4 8h15m-4-4 4 4-4 4M20 16H5m4-4-4 4 4 4" />
-            </svg>
-            <h3>{t("about.transferTitle")}</h3>
-            <p>{t("about.transferDescription")}</p>
-          </li>
-        </ul>
-        <div className="about-targets">
-          <span className="about-targets-label">{t("about.runTargets")}</span>
-          <ul className="about-transports" aria-label={t("about.transportsAria")}>
-            <li>{t("about.localShell")}</li>
-            <li>SSH</li>
-            <li>WSL</li>
-            <li>{t("about.serialShell")}</li>
-          </ul>
-        </div>
-      </div>
       {isTauri() && <UpdateSection autoCheckNonce={autoCheckNonce} />}
       {linkError && <p className="about-link-error" role="alert">{linkError}</p>}
       <footer className="about-footer">

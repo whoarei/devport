@@ -34,18 +34,11 @@ export function UpdateConfirmDialog() {
     onClose={() => { if (!dialog.current?.open) dismiss(); }}>
     <div className="update-confirm-body">
       <header className="update-confirm-heading">
-        <span className="update-confirm-icon"><Icon name="refresh" width="22" height="22" /></span>
-        <div className="update-confirm-intro">
-          <h2 id="update-confirm-title">{t("update.confirmTitle")}</h2>
-          <p id="update-confirm-description">{t("update.restartAfterInstall")}</p>
-        </div>
-        <button type="button" className="update-confirm-close" aria-label={t("about.close")} onClick={dismiss}>
-          <Icon name="close" width="18" height="18" />
-        </button>
+        <h2 id="update-confirm-title">{t("update.confirmTitle")}</h2>
+        <p id="update-confirm-description">{t("update.restartAfterInstall")}</p>
       </header>
       {request && <div className="update-confirm-versions" role="group"
         aria-label={t("update.versionChange", { current: request.info.current_version, latest: request.info.latest_version })}>
-        <span>{t("about.updateTitle")}</span>
         <code>{request.info.current_version}</code>
         <Icon name="arrowRight" width="14" height="14" />
         <code className="update-confirm-latest">{request.info.latest_version}</code>

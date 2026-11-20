@@ -48,7 +48,7 @@ export function TransferPlanDialog({ plan }: { plan: TransferPlan }) {
     {workspacePlan && plan.conflicts > 0 && <ul className="transfer-conflict-list">
       {plan.items.filter((item) => item.attrs.kind === "file" && item.target_attrs).map((item) => <li key={item.path}>{item.path}</li>)}
     </ul>}
-    <label>{t("transfer.conflictPolicy")}<select value={policy} disabled={busy} onChange={(e) => setPolicy(e.target.value as ConflictPolicy)}>
+    <label><span className={workspacePlan ? "sr-only" : undefined}>{t("transfer.conflictPolicy")}</span><select value={policy} disabled={busy} onChange={(e) => setPolicy(e.target.value as ConflictPolicy)}>
       <option value="keep_both" disabled={!plan.keep_both}>{t("transfer.keepBoth")}</option><option value="skip">{t("transfer.skip")}</option>
       <option value="overwrite" disabled={!plan.overwrite || overwriteProtected}>{t("transfer.overwrite")}</option>
     </select></label>
@@ -59,6 +59,6 @@ export function TransferPlanDialog({ plan }: { plan: TransferPlan }) {
     <p className="transfer-hint">{t("transfer.copyHint")}</p>
     {plan.warnings.length > 0 && <details><summary>{t("transfer.warnings", { count: plan.warnings.length })}</summary><ul>{plan.warnings.slice(0, 100).map((warning, i) => <li key={i}>{warning}</li>)}</ul></details>}
     {(error || stale) && <p role="alert" className="transfer-error">{stale ? t("transfer.directoryChanged") : error}</p>}
-    <div className="transfer-dialog-actions"><button disabled={busy} onClick={() => useTransferStore.getState().discard()}>{t("transfer.cancel")}</button><button disabled={busy || stale} onClick={() => void start()}>{t("transfer.start")}</button></div>
+    <div className="transfer-dialog-actions"><button disabled={busy} onClick={() => useTransferStore.getState().discard()}>{t("transfer.cancel")}</button><button className="primary" disabled={busy || stale} onClick={() => void start()}>{t("transfer.start")}</button></div>
   </dialog>;
 }

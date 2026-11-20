@@ -75,6 +75,11 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
   const [distributions, setDistributions] = useState<string[]>([]);
   const [shells, setShells] = useState<LocalShellInfo[]>([]);
   const [showWslHelp, setShowWslHelp] = useState(false);
+  const [localOptionsOpen, setLocalOptionsOpen] = useState(() => !!editing.local?.path || !!editing.local?.no_profile);
+  const [serialOptionsOpen, setSerialOptionsOpen] = useState(() => {
+    const serial = { ...defaultSerialConfig(), ...editing.serial };
+    return serial.data_bits !== 8 || serial.parity !== "none" || serial.stop_bits !== 1 || serial.flow_control !== "none";
+  });
   const baudRate = editing.serial?.baud_rate ?? 115200;
   const [customBaudRate, setCustomBaudRate] = useState(() => !SERIAL_BAUD_RATES.includes(baudRate));
   const isCustomBaudRate = customBaudRate || !SERIAL_BAUD_RATES.includes(baudRate);
@@ -140,10 +145,10 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
   };
 
   const transports = [
-    { value: "ssh", label: t("device.ssh"), hint: t("device.sshHint") },
-    { value: "serial", label: t("device.serial"), hint: t("device.serialHint") },
-    { value: "wsl", label: t("device.wslShort"), hint: t("device.wslHint") },
-    { value: "local", label: t("device.local"), hint: t("device.localHint") },
+    { value: "ssh", label: t("device.ssh") },
+    { value: "serial", label: t("device.serial") },
+    { value: "wsl", label: t("device.wslShort") },
+    { value: "local", label: t("device.local") },
   ] as const;
 
   return <>
@@ -167,7 +172,7 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
           onKeyDown={(event) => { if (event.key === "Escape" && showWslHelp) { event.preventDefault(); event.stopPropagation(); setShowWslHelp(false); } }}>
           <h4 id="device-transport-title">{t("device.transport")}</h4>
           <div className="device-transports" role="group" aria-labelledby="device-transport-title">
-            {transports.map(({ value, label, hint }) => <button key={value} type="button"
+            {transports.map(({ value, label }) => <button key={value} type="button"
               className="device-transport" aria-pressed={editing.transport === value} disabled={testing}
               aria-describedby={value === "wsl" ? wslHelpId : undefined}
               onMouseEnter={() => setShowWslHelp(value === "wsl")} onFocus={() => setShowWslHelp(value === "wsl")} onBlur={() => setShowWslHelp(false)}
@@ -176,7 +181,7 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
                 update({ transport: value, serial: editing.serial ?? defaultSerialConfig(), wsl: editing.wsl ?? { distribution: "", user: "" }, local: editing.local ?? { shell: "", path: null, no_profile: false } });
                 setTestResult(null);
               }}>
-              <DeviceIcon name={value} /><strong>{label}{value === "wsl" && <span className="device-transport-info"><DeviceIcon name="info" /></span>}</strong><span>{hint}</span>
+              <DeviceIcon name={value} /><strong>{label}{value === "wsl" && <span className="device-transport-info"><DeviceIcon name="info" /></span>}</strong>
             </button>)}
           </div>
           <div id={wslHelpId} role="tooltip" className="device-transport-tooltip" hidden={!showWslHelp}>{t("device.wslDescription")}</div>
@@ -210,19 +215,25 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
                   {shells.map((shell) => <option key={shell.id} value={shell.id}>{shell.label} · {shell.path}</option>)}
                 </datalist>
               </div>
-              <label className="device-field-wide">
-                {t("device.localShellPath")}
-                <input value={editing.local?.path ?? ""} placeholder={t("device.localShellPathPlaceholder")}
-                  onChange={(e) => update({ local: { shell: editing.local?.shell ?? "", path: e.target.value || null, no_profile: editing.local?.no_profile ?? false } })} />
-              </label>
-              <div className="device-field-wide device-option">
-                <label className="device-checkbox">
-                  <input type="checkbox" checked={editing.local?.no_profile ?? false} aria-describedby="device-profile-hint"
-                    onChange={(e) => update({ local: { shell: editing.local?.shell ?? "", path: editing.local?.path ?? null, no_profile: e.target.checked } })} />
-                  {t("device.localNoProfile")}
-                </label>
-                <p id="device-profile-hint">{t("device.localNoProfileHint")}</p>
-              </div>
+              <details className="device-field-wide device-advanced" open={localOptionsOpen} onToggle={(event) => setLocalOptionsOpen(event.currentTarget.open)}>
+                <summary>{t("device.advancedOptions")}</summary>
+                <div className="device-fields">
+                  <label className="device-field-wide">
+                    {t("device.localShellPath")}
+                    <input value={editing.local?.path ?? ""} placeholder={t("device.localShellPathPlaceholder")}
+                      onChange={(e) => update({ local: { shell: editing.local?.shell ?? "", path: e.target.value || null, no_profile: editing.local?.no_profile ?? false } })} />
+                  </label>
+                  <div className="device-field-wide device-option">
+                    <label className="device-checkbox">
+                      <input type="checkbox" checked={editing.local?.no_profile ?? false} aria-describedby="device-profile-hint"
+                        onChange={(e) => update({ local: { shell: editing.local?.shell ?? "", path: editing.local?.path ?? null, no_profile: e.target.checked } })} />
+                      {t("device.localNoProfile")}
+                    </label>
+                    <p id="device-profile-hint">{t("device.localNoProfileHint")}</p>
+                  </div>
+                </div>
+                <p className="device-advanced-note">{t("device.localDescription")}</p>
+              </details>
             </> : editing.transport === "serial" ? <>
               <div>
                 <label htmlFor="device-serial-port">{t("device.serialPort")}</label>
@@ -248,34 +259,39 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
                 {isCustomBaudRate && <input type="number" min={1} max={4000000} step={1} aria-label={t("device.customBaudRate")}
                   value={baudRate} onChange={(e) => updateSerial({ baud_rate: Number(e.target.value) })} />}
               </div>
-              <label>
-                {t("device.dataBits")}
-                <select value={editing.serial?.data_bits ?? 8} onChange={(e) => updateSerial({ data_bits: Number(e.target.value) as SerialConfig["data_bits"] })}>
-                  {[5, 6, 7, 8].map((bits) => <option key={bits} value={bits}>{bits}</option>)}
-                </select>
-              </label>
-              <label>
-                {t("device.parity")}
-                <select value={editing.serial?.parity ?? "none"} onChange={(e) => updateSerial({ parity: e.target.value as SerialConfig["parity"] })}>
-                  <option value="none">{t("device.parityNone")}</option>
-                  <option value="odd">{t("device.parityOdd")}</option>
-                  <option value="even">{t("device.parityEven")}</option>
-                </select>
-              </label>
-              <label>
-                {t("device.stopBits")}
-                <select value={editing.serial?.stop_bits ?? 1} onChange={(e) => updateSerial({ stop_bits: Number(e.target.value) as SerialConfig["stop_bits"] })}>
-                  <option value={1}>1</option><option value={2}>2</option>
-                </select>
-              </label>
-              <label>
-                {t("device.flowControl")}
-                <select value={editing.serial?.flow_control ?? "none"} onChange={(e) => updateSerial({ flow_control: e.target.value as SerialConfig["flow_control"] })}>
-                  <option value="none">{t("device.flowControlNone")}</option>
-                  <option value="software">{t("device.flowControlSoftware")}</option>
-                  <option value="hardware">{t("device.flowControlHardware")}</option>
-                </select>
-              </label>
+              <details className="device-field-wide device-advanced" open={serialOptionsOpen} onToggle={(event) => setSerialOptionsOpen(event.currentTarget.open)}>
+                <summary>{t("device.advancedOptions")}</summary>
+                <div className="device-fields">
+                  <label>
+                    {t("device.dataBits")}
+                    <select value={editing.serial?.data_bits ?? 8} onChange={(e) => updateSerial({ data_bits: Number(e.target.value) as SerialConfig["data_bits"] })}>
+                      {[5, 6, 7, 8].map((bits) => <option key={bits} value={bits}>{bits}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    {t("device.parity")}
+                    <select value={editing.serial?.parity ?? "none"} onChange={(e) => updateSerial({ parity: e.target.value as SerialConfig["parity"] })}>
+                      <option value="none">{t("device.parityNone")}</option>
+                      <option value="odd">{t("device.parityOdd")}</option>
+                      <option value="even">{t("device.parityEven")}</option>
+                    </select>
+                  </label>
+                  <label>
+                    {t("device.stopBits")}
+                    <select value={editing.serial?.stop_bits ?? 1} onChange={(e) => updateSerial({ stop_bits: Number(e.target.value) as SerialConfig["stop_bits"] })}>
+                      <option value={1}>1</option><option value={2}>2</option>
+                    </select>
+                  </label>
+                  <label>
+                    {t("device.flowControl")}
+                    <select value={editing.serial?.flow_control ?? "none"} onChange={(e) => updateSerial({ flow_control: e.target.value as SerialConfig["flow_control"] })}>
+                      <option value="none">{t("device.flowControlNone")}</option>
+                      <option value="software">{t("device.flowControlSoftware")}</option>
+                      <option value="hardware">{t("device.flowControlHardware")}</option>
+                    </select>
+                  </label>
+                </div>
+              </details>
             </> : <>
               <div className="device-field-wide device-host-fields">
                 <label>
@@ -312,10 +328,6 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
               </label>}
             </>}
           </div>
-          {editing.transport === "local" && <div className="device-notice">
-            <DeviceIcon name="info" />
-            <p>{t("device.localDescription")}</p>
-          </div>}
         </section>
         <section className="device-settings">
           {editing.transport !== "local" && <label>

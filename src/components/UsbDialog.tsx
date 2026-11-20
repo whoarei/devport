@@ -7,10 +7,9 @@ import { useAppStore } from "../store";
 
 const INSTALL_GUIDE = "https://learn.microsoft.com/en-us/windows/wsl/connect-usb";
 
-function UsbIcon({ name = "usb" }: { name?: "usb" | "close" | "refresh" | "info" | "check" | "warning" | "arrow" | "shield" }) {
+function UsbIcon({ name = "usb" }: { name?: "usb" | "refresh" | "info" | "check" | "warning" | "arrow" | "shield" }) {
   const paths = {
     usb: <><path d="M12 21V3m-3 3 3-3 3 3M12 15l-5-4V8m5 4 5-4V6" /><circle cx="7" cy="6" r="2" /><path d="M15 3h4v4h-4z" /><circle cx="12" cy="19" r="2" /></>,
-    close: <path d="m6 6 12 12M18 6 6 18" />,
     refresh: <><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6.5 7A7 7 0 0 1 19 9M5 15a7 7 0 0 0 12.5 2" /></>,
     info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v6m0-10v1" /></>,
     check: <path d="m5 12 4 4L19 6" />,
@@ -118,12 +117,10 @@ export function UsbDialog() {
       e.preventDefault(); state.close();
     }}>
       <header className="usb-dialog-header">
-        <div className="usb-heading-icon"><UsbIcon /></div>
-        <div className="usb-heading"><h3 id="usb-title">{t("usb.dialogTitle")}</h3><p>{t("usb.subtitle")}</p></div>
+        <h2 id="usb-title">{t("usb.dialogTitle")}</h2>
         <span className={`usb-dependency ${snapshot?.problem ? "usb-dependency-warning" : snapshot ? "usb-dependency-ready" : ""}`} title={snapshot?.version ?? undefined}>
           <i />{t(snapshot?.problem ? "usb.dependencyUnavailable" : snapshot ? "usb.dependencyReady" : "usb.checking")}
         </span>
-        <button type="button" className="usb-icon-button" disabled={disabled} aria-label={t("usb.close")} onClick={state.close}><UsbIcon name="close" /></button>
       </header>
       <div className="usb-dialog-body">
         {snapshot?.problem && <UsbNotice error={snapshot.problem} />}
@@ -178,8 +175,7 @@ export function UsbDialog() {
               <input disabled={disabled} value={state.config.user} placeholder={t("usb.defaultUser")}
                 onChange={(e) => state.setConfig({ ...state.config, user: e.target.value })} />
             </label>
-          </div>
-          <p className="usb-target-hint"><UsbIcon name="info" />{t("usb.targetHint")}</p></>}
+          </div></>}
         </section>
         {!remote && snapshot?.wsl_problem && <UsbNotice error={snapshot.wsl_problem} />}
         <section className="usb-device-section" aria-labelledby="usb-devices-title" aria-busy={!!state.busy}>
@@ -189,7 +185,7 @@ export function UsbDialog() {
               <span className={state.loading ? "usb-refreshing" : ""}><UsbIcon name="refresh" /></span>{t("usb.refresh")}
             </button>
           </div>
-          <div className="usb-ownership-note"><UsbIcon name="info" /><span>{t("usb.ownershipSummary")}</span></div>
+          <p className="usb-ownership-note">{t("usb.ownershipSummary")}</p>
           <div className="usb-devices">
             {connected.map(renderDevice)}
             {!connected.length && !snapshot?.problem && <div className="usb-empty" role="status">
@@ -213,7 +209,7 @@ export function UsbDialog() {
           </div>
         </details>
       </div>
-      <footer className="usb-dialog-footer"><span>{t("usb.sessionHint")}</span><button type="button" className="usb-secondary-button" disabled={disabled} onClick={state.close}>{t("usb.close")}</button></footer>
+      <footer className="usb-dialog-footer"><button type="button" className="usb-secondary-button" disabled={disabled} onClick={state.close}>{t("usb.close")}</button></footer>
     </dialog>
   );
 }

@@ -875,9 +875,8 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 
 /* ---------- about ---------- */
 .about-dialog {
-  width: min(560px, calc(100vw / var(--browser-ui-zoom, 1) - 32px));
+  width: min(420px, calc(100vw / var(--browser-ui-zoom, 1) - 32px));
   max-height: calc(100vh / var(--browser-ui-zoom, 1) - 32px);
-  container: about / inline-size;
   padding: 0;
   overflow: auto;
   scrollbar-width: thin;
@@ -915,29 +914,17 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
   .shortcuts-dialog th, .shortcuts-dialog td { padding: 7px 5px; }
   .shortcuts-dialog kbd { white-space: normal; overflow-wrap: anywhere; }
 }
-.about-hero { padding: 24px 28px 20px; background: linear-gradient(135deg, var(--accent-surface, #253044), var(--surface-raised, #23252d) 70%); }
-.about-heading { display: flex; align-items: center; gap: 18px; }
-.about-logo { display: block; flex-shrink: 0; width: 72px; height: 72px; }
+.about-header { padding: 20px; }
+.about-heading { display: flex; align-items: center; gap: 12px; }
+.about-logo { display: block; flex-shrink: 0; }
 .about-brand { min-width: 0; }
-.about-eyebrow { margin: 0 0 2px; color: var(--text-secondary, #aeb8cc); font-size: 12px; }
-.about-heading h2 { margin: 0; color: var(--text-primary, #edf1fa); font-size: 26px; font-weight: 600; line-height: 1.3; letter-spacing: -.5px; overflow-wrap: anywhere; }
+.about-heading h2 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
 .about-heading h2:focus { outline: none; }
-.about-version { margin: 6px 0 0; color: var(--text-secondary, #a3aec2); font-size: 12px; font-variant-numeric: tabular-nums; }
-.about-description { margin: 16px 0 0; color: var(--text-secondary, #b5bac8); font-size: 13px; line-height: 1.75; }
-.about-content { padding: 20px 28px; }
-.about-capabilities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; padding: 0; margin: 0; list-style: none; }
-.about-capabilities li { min-width: 0; }
-.about-feature-icon { display: block; width: 22px; height: 22px; margin-bottom: 8px; color: var(--accent, #9bb8e6); }
-.about-capabilities h3 { margin: 0 0 4px; color: var(--text-primary, #e0e5ef); font-size: 13px; font-weight: 600; }
-.about-capabilities p { margin: 0; color: var(--text-secondary, #a6adbc); font-size: 12px; line-height: 1.6; }
-.about-targets { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border, #343640); }
-.about-targets-label { flex-shrink: 0; color: var(--text-secondary, #a6adbc); font-size: 12px; }
-.about-transports { display: flex; gap: 6px; flex-wrap: wrap; padding: 0; margin: 0; list-style: none; }
-.about-transports li { padding: 3px 9px; background: var(--surface-control, #2e323e); border-radius: 5px; color: var(--text-primary, #ced7e8); font-size: 11px; white-space: nowrap; }
-.about-update { padding: 18px 28px; border-top: 1px solid var(--border, #343640); }
+.about-version { margin: 2px 0 0; color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.about-description { margin: 12px 0 0; color: var(--text-secondary); }
+.about-update { padding: 12px 20px; border-top: 1px solid var(--line-subtle); }
 .about-update-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .about-update-heading h3 { margin: 0; font-size: 13px; font-weight: 600; }
-.about-update-hint { margin: 4px 0 0; color: var(--text-secondary, #a6adbc); font-size: 12px; }
 .about-dialog .about-check-button { flex-shrink: 0; min-height: 32px; border-radius: 6px; font-size: 12px; }
 .about-update-status { margin: 10px 0 0; color: var(--text-secondary, #b5bac8); font-size: 12px; }
 .about-update-status p { margin: 8px 0 0; }
@@ -953,26 +940,14 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
   white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; font-family: inherit; line-height: 1.65;
 }
 .about-update progress { display: block; width: 100%; height: 6px; margin-top: 12px; accent-color: var(--accent, #8fa9e8); }
-.about-link-error { margin: 0; padding: 0 28px 16px; font-size: 12px; }
-.about-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 28px; border-top: 1px solid var(--border, #343640); background: var(--surface-panel, #1e2027); }
+.about-link-error { margin: 0; padding: 0 20px 12px; font-size: 12px; }
+.about-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--line-subtle); }
 .about-project-link { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary, #a6adbc); font-size: 12px; text-decoration: none; }
 .about-project-link:hover { color: var(--accent, #b1c8f0); text-decoration: underline; text-underline-offset: 3px; }
 .about-project-link svg { flex-shrink: 0; }
 .about-footer form { margin: 0; }
 .about-dialog .about-close { min-width: 76px; min-height: 32px; border-radius: 6px; }
 .about-dialog :is(button, a, summary):focus-visible { outline: 2px solid var(--accent-border, #8fa9e8); outline-offset: 3px; }
-@container about (max-width: 480px) {
-  .about-hero, .about-content, .about-update { padding: 20px; }
-  .about-heading { gap: 14px; }
-  .about-logo { width: 64px; height: 64px; }
-  .about-heading h2 { font-size: 22px; }
-  .about-capabilities { grid-template-columns: 1fr; gap: 16px; }
-  .about-capabilities li { display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 12px; }
-  .about-feature-icon { grid-row: span 2; margin: 0; }
-  .about-capabilities p { grid-column: 2; }
-  .about-footer { padding: 16px 20px; }
-  .about-link-error { padding-inline: 20px; }
-}
 
 /* ---------- footer / console ---------- */
 [hidden] { display: none !important; }
@@ -1468,10 +1443,6 @@ button:disabled {
 .device-dialog button:focus-visible, .device-dialog summary:focus-visible { outline: 2px solid var(--accent-border, #8fa9e8); outline-offset: 3px; }
 .device-dialog button svg { width: 15px; height: 15px; }
 .device-dialog-header { display: flex; align-items: center; flex-shrink: 0; gap: 12px; padding: 20px 24px 18px; border-bottom: 1px solid var(--border, #34363f); }
-.device-heading-icon { display: grid; place-items: center; width: 42px; height: 42px; flex-shrink: 0; color: var(--accent, #a7bdf0); background: var(--accent-surface, #2c3346); border: 1px solid var(--accent-border, #3b4560); border-radius: 10px; }
-.device-heading { flex: 1; min-width: 0; }
-.device-heading h3 { margin: 0; color: var(--text-primary, #eef0f6); font-size: 18px; font-weight: 600; }
-.device-heading p { margin: 3px 0 0; color: var(--text-secondary, #959ba9); font-size: 12px; }
 .device-dialog .device-icon-button { width: 30px; min-height: 30px; padding: 0; color: var(--text-secondary, #9399a8); background: transparent; border: 0; }
 .device-dialog .device-icon-button:hover { color: var(--text-primary, #edf0f8); background: var(--surface-raised, #333640); }
 .device-dialog .device-icon-button svg { width: 18px; height: 18px; }
@@ -1503,9 +1474,6 @@ button:disabled {
 .device-checkbox input { flex-shrink: 0; width: 14px; height: 14px; margin: 2px 0 0; accent-color: var(--accent, #7599e8); }
 .device-checkbox input:focus-visible { outline: 2px solid var(--accent-border, #8fa9e8); outline-offset: 3px; }
 .device-option p { margin: 6px 0 0 22px; color: var(--text-secondary, #9099ac); font-size: 11px; line-height: 1.7; }
-.device-notice { display: flex; align-items: flex-start; gap: 9px; margin-top: 16px; padding: 11px 12px; color: var(--text-secondary, #9daac4); background: var(--surface-control, #272d3a); border: 1px solid var(--accent-border, #384152); border-radius: 7px; }
-.device-notice svg { width: 15px; height: 15px; margin-top: 2px; }
-.device-notice p { margin: 0; font-size: 11px; line-height: 1.7; }
 .device-usb-button { align-self: flex-start; }
 .device-test-result { margin: 16px 0 0; padding: 12px; max-height: 140px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--accent, #b7c8e7); background: var(--surface-panel, #191c24); border: 1px solid var(--border-strong, #394252); border-radius: 7px; font-size: 12px; }
 .device-dialog-footer { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; flex-wrap: wrap; gap: 12px; padding: 16px 24px; background: var(--surface-raised, #1e2027); border-top: 1px solid var(--border, #34363f); }
@@ -1532,10 +1500,11 @@ button:disabled {
 
 /* ---------- USB sharing dialog ---------- */
 .usb-dialog {
-  width: min(800px, calc(100vw - 48px));
-  max-height: min(780px, calc(100vh - 64px));
+  width: min(720px, calc(100vw / var(--browser-ui-zoom, 1) - 32px));
+  max-height: min(740px, calc(100vh / var(--browser-ui-zoom, 1) - 32px));
   padding: 0;
   overflow: hidden;
+  container: usb-dialog / inline-size;
   color: var(--text-primary, #dce0e9);
   background: var(--surface-raised, #22232a);
   border: 1px solid var(--border-strong, #42444e);
@@ -1552,24 +1521,17 @@ button:disabled {
 .usb-dialog button:focus-visible, .usb-dialog summary:focus-visible { outline: 2px solid var(--accent-border, #8fa9e8); outline-offset: 3px; }
 .usb-dialog button:disabled { opacity: 0.4; }
 .usb-dialog button svg { width: 14px; height: 14px; }
-.usb-dialog-header { display: flex; align-items: center; gap: 12px; flex-shrink: 0; padding: 22px 24px 19px; border-bottom: 1px solid var(--border, #34363f); }
-.usb-heading-icon { display: grid; place-items: center; width: 42px; height: 42px; flex-shrink: 0; color: var(--accent, #a7bdf0); background: var(--accent-surface, #2c3346); border: 1px solid var(--accent-border, #3b4560); border-radius: 10px; }
-.usb-heading-icon svg { width: 23px; height: 23px; }
-.usb-heading { flex: 1; min-width: 0; }
-.usb-heading h3 { margin: 0; color: var(--text-primary, #eef0f6); font-size: 17px; font-weight: 600; letter-spacing: 0.2px; }
-.usb-heading p { margin: 3px 0 0; color: var(--text-secondary, #9399a8); font-size: 12px; }
+.usb-dialog-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-shrink: 0; flex-wrap: wrap; padding: 14px 24px; border-bottom: 1px solid var(--line-subtle); }
+.usb-dialog-header h2 { margin: 0; font-size: 17px; font-weight: 600; }
 .usb-dependency { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary, #8e95a5); font-size: 11px; white-space: nowrap; }
 .usb-dependency i, .usb-badge i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 .usb-dependency-ready { color: var(--text-secondary, #95c5ad); }
 .usb-dependency-warning { color: var(--warning, #d4b58c); }
-.usb-dialog .usb-icon-button { width: 30px; min-height: 30px; padding: 0; margin-left: 4px; color: var(--text-secondary, #9399a8); background: transparent; border: 0; }
-.usb-dialog .usb-icon-button:hover:not(:disabled) { color: var(--text-primary, #edf0f8); background: var(--surface-raised, #333640); }
-.usb-dialog .usb-icon-button svg { width: 18px; height: 18px; }
 .usb-dialog-body { min-height: 0; padding: 18px 24px 14px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #484f60 transparent; }
 .usb-dialog-body::-webkit-scrollbar { width: 6px; }
 .usb-dialog-body::-webkit-scrollbar-thumb { background: var(--surface-raised, #484f60); border-radius: 4px; }
 .usb-dialog-body:focus-visible { outline: 1px solid var(--accent-border, #8fa9e8); outline-offset: -2px; }
-.usb-target { padding: 14px 16px 12px; background: var(--surface-panel, #1c1e25); border: 1px solid var(--border, #343741); border-radius: 8px; }
+.usb-target { padding-bottom: 8px; border-bottom: 1px solid var(--line-subtle); }
 .usb-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .usb-section-heading h4 { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text-primary, #d4d9e4); font-size: 12px; font-weight: 600; }
 .usb-target-kind { padding: 1px 6px; border: 1px solid var(--border-strong, #424755); border-radius: 4px; color: var(--text-secondary, #a4aec5); font-size: 10px; letter-spacing: 0.3px; }
@@ -1606,8 +1568,7 @@ button:disabled {
 .usb-dialog .usb-text-button:hover:not(:disabled) { color: var(--accent, #dce5fa); background: var(--surface-raised, #303440); }
 .usb-refresh { margin-right: -7px; }
 .usb-refreshing { animation: usb-spin 1s linear infinite; }
-.usb-ownership-note { display: flex; align-items: center; gap: 6px; margin: 8px 0 12px; color: var(--text-secondary, #929bad); font-size: 11px; }
-.usb-ownership-note svg { width: 13px; height: 13px; }
+.usb-ownership-note { margin: 5px 0 10px; color: var(--text-secondary); font-size: 11px; }
 .usb-devices { display: flex; flex-direction: column; gap: 7px; }
 .usb-device { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 0 12px; padding: 13px 14px; background: var(--surface-control, #262830); border: 1px solid var(--border-strong, #393d48); border-radius: 7px; }
 .usb-device-attached { border-color: var(--border-strong, #3e514c); background: var(--surface-control, #262d30); }
@@ -1669,15 +1630,11 @@ button:disabled {
 .usb-help > div { padding: 4px 0 0 20px; color: var(--text-secondary, #858fa3); font-size: 11px; line-height: 1.7; }
 .usb-help p { margin: 8px 0; }
 .usb-help code { display: block; overflow-wrap: anywhere; color: var(--text-secondary, #6f7b91); font-size: 10px; }
-.usb-dialog-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-shrink: 0; padding: 13px 24px; background: var(--surface-raised, #1e2027); border-top: 1px solid var(--border, #34363f); }
-.usb-dialog-footer > span { color: var(--text-secondary, #848da0); font-size: 11px; }
+.usb-dialog-footer { display: flex; justify-content: flex-end; flex-shrink: 0; padding: 12px 24px; border-top: 1px solid var(--line-subtle); }
 .usb-dialog-footer > button { min-width: 72px; }
 @keyframes usb-spin { to { transform: rotate(360deg); } }
-@media (max-width: 640px) {
-  .usb-dialog { width: calc(100vw - 24px); max-height: calc(100vh - 24px); }
+@container usb-dialog (max-width: 560px) {
   .usb-dialog-header { padding: 16px; gap: 10px; }
-  .usb-heading-icon { width: 36px; height: 36px; }
-  .usb-dependency { display: none; }
   .usb-dialog-body { padding: 16px; }
   .usb-device { grid-template-columns: 28px minmax(0, 1fr); gap: 0 9px; padding: 12px; }
   .usb-device-icon { width: 28px; height: 30px; }

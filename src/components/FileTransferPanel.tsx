@@ -154,7 +154,7 @@ function Browser({ side, hidden, exclude }: { side: "local" | "device"; hidden: 
       {entries.length === 0 && !browser.error && <div role={browser.loading ? "status" : undefined}>
         <EmptyState compact icon={browser.loading ? "refresh" : "folderOpen"}
           title={t(browser.loading ? "transfer.loading" : browser.directory ? "transfer.emptyDirectory" : side === "device" && !deviceId ? "transfer.selectDevice" : "transfer.chooseDirectory")}
-          description={!browser.loading && !browser.directory ? t(side === "device" && !deviceId ? "transfer.chooseDeviceHint" : "transfer.chooseDirectoryHint") : undefined}>
+          description={!browser.loading && !browser.directory && side === "device" && deviceId ? t("transfer.chooseDirectoryHint") : undefined}>
           {!browser.loading && !browser.directory && side === "local" && <button onClick={() => void chooseFolder()}><Icon name="folderOpen" />{t("transfer.chooseFolder")}</button>}
         </EmptyState>
       </div>}
@@ -193,7 +193,11 @@ export function FileTransferPanel({ visible, collapsed, onToggleCollapse }: Pane
       })}><Icon name="close" /></button>
     </PanelTitle>
     {!collapsed && <div className="transfer-content">
-      <div className="transfer-toolbar"><label><input type="checkbox" checked={hidden} onChange={(e) => setHidden(e.target.checked)} /> {t("transfer.showHidden")}</label><label><input type="checkbox" checked={exclude} onChange={(e) => setExclude(e.target.checked)} /> {t("transfer.projectFiles")}</label><span>{t("transfer.limits")}</span></div>
+      <div className="transfer-toolbar">
+        <label><input type="checkbox" checked={hidden} onChange={(e) => setHidden(e.target.checked)} /> {t("transfer.showHidden")}</label>
+        <label><input type="checkbox" checked={exclude} onChange={(e) => setExclude(e.target.checked)} /> {t("transfer.projectFiles")}</label>
+        <details className="transfer-limits"><summary>{t("transfer.limitLabel")}</summary><p>{t("transfer.limits")}</p></details>
+      </div>
       <div className="transfer-browsers"><Browser side="local" hidden={hidden} exclude={exclude} /><Browser side="device" hidden={hidden} exclude={exclude} /></div>
       {planning && <p role="status" className="transfer-hint">{t("transfer.scanning")}</p>}
       {error && <div role="alert" className="transfer-error">{error} <button aria-label={t("transfer.dismiss")} onMouseDown={preserveContentFocus} onClick={() => useTransferStore.setState({ error: null })}>×</button></div>}

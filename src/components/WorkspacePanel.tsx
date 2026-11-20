@@ -452,7 +452,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
                 onEditing={setEditing}
               />
             </div>
-          ) : <EmptyState icon="folderOpen" title={t("workspace.empty")} description={t("workspace.emptyHint")} compact>
+          ) : <EmptyState icon="folderOpen" title={t("workspace.empty")} compact>
             <button className="primary" disabled={disabled} onClick={() => void executeAppCommand("openWorkspace")}>{t("workspace.openLocal")}</button>
             <button disabled={disabled} onClick={() => void executeAppCommand("openRemoteWorkspace")}>{t("workspace.openRemote")}</button>
           </EmptyState>}

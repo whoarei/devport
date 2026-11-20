@@ -5,6 +5,7 @@ import { canBrowseDevicePath, isDevicePath, joinDevicePath, parentDevicePath } f
 import { useAppStore } from "../store";
 import { transferApi, type TransferDirectory } from "../transferApi";
 import { DirectoryPathInput } from "./DirectoryPathInput";
+import { Icon } from "./Icon";
 import "./RemoteWorkspaceDialog.css";
 
 export { isDevicePath, joinDevicePath, parentDevicePath } from "../directoryCompletion";
@@ -14,20 +15,6 @@ export async function resolveDeviceWorkspacePath(id: string, path: string): Prom
   if (!path.startsWith("~/")) return path;
   const directory = await transferApi.list(deviceWorkspace(id, path));
   return directory.endpoint.type === "device" ? directory.endpoint.path : path;
-}
-
-function DirectoryIcon({ name = "folder" }: { name?: "folder" | "up" | "go" | "refresh" | "close" | "device" | "next" | "check" }) {
-  const paths = {
-    folder: <path d="M3 7V5h6l3 3h9v12H3V7Z" />,
-    up: <path d="M12 20V4m-6 6 6-6 6 6" />,
-    go: <path d="M4 12h16m-6-6 6 6-6 6" />,
-    refresh: <><path d="M20 6v6h-6" /><path d="M20 12a8 8 0 1 0-2 5" /></>,
-    close: <path d="m6 6 12 12M18 6 6 18" />,
-    device: <><rect x="3" y="3" width="18" height="13" rx="2" /><path d="M8 21h8m-4-5v5" /></>,
-    next: <path d="m9 5 7 7-7 7" />,
-    check: <path d="m5 12 4 4L19 6" />,
-  };
-  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
 export function RemoteWorkspaceDialog() {
@@ -111,31 +98,24 @@ function RemoteWorkspacePicker({ hosts, close }: { hosts: DeviceProfile[]; close
 
   return <dialog ref={dialog} className="remote-workspace-dialog" aria-labelledby="remote-workspace-title"
     onCancel={(event) => { event.preventDefault(); dismiss(); }}>
-    <header className="remote-workspace-header">
-      <span className="remote-workspace-icon"><DirectoryIcon /></span>
-      <h2 id="remote-workspace-title">{t("workspace.remoteTitle")}</h2>
-      <button type="button" className="remote-icon-button" aria-label={t("workspace.close")} disabled={opening} onClick={dismiss}><DirectoryIcon name="close" /></button>
-    </header>
+    <h2 id="remote-workspace-title">{t("workspace.remoteTitle")}</h2>
     <div className="remote-workspace-body">
       {!hosts.length ? <p className="remote-directory-status">{t("workspace.remoteNoDevices")}</p> : <>
         <label htmlFor="remote-workspace-device">{t("workspace.remoteDevice")}</label>
-        <div className="remote-device-control"><DirectoryIcon name="device" />
-          <select id="remote-workspace-device" value={deviceId} disabled={opening} onChange={(event) => {
-            ++sequence.current; ++edits.current; setDirectory(null); setSelected(null); setError(null); setDeviceId(event.target.value);
-          }}>{hosts.map((device) => <option key={device.id} value={device.id}>{device.name} · {device.transport.toUpperCase()}</option>)}</select>
-        </div>
+        <select id="remote-workspace-device" value={deviceId} disabled={opening} onChange={(event) => {
+          ++sequence.current; ++edits.current; setDirectory(null); setSelected(null); setError(null); setDeviceId(event.target.value);
+        }}>{hosts.map((device) => <option key={device.id} value={device.id}>{device.name} · {device.transport.toUpperCase()}</option>)}</select>
         <label htmlFor="remote-workspace-path">{t("workspace.remotePath")}</label>
         <div className="remote-path-bar">
           <button type="button" className="remote-icon-button" aria-label={t("workspace.remoteUp")} title={t("workspace.remoteUp")}
-            disabled={opening || loading || !canBrowseDevicePath(path) || path === "/"} onClick={() => void navigate(parentDevicePath(path))}><DirectoryIcon name="up" /></button>
-          <div className="remote-path-control"><DirectoryIcon />
+            disabled={opening || loading || !canBrowseDevicePath(path) || path === "/"} onClick={() => void navigate(parentDevicePath(path))}><Icon name="arrowUp" /></button>
+          <div className="remote-path-control">
             <DirectoryPathInput id="remote-workspace-path" label={t("workspace.remotePath")} value={path}
               endpoint={deviceId ? deviceWorkspace(deviceId, path) : null} contextKey={contextKey} directory={directory}
               disabled={opening} placeholder={t("workspace.remotePathPlaceholder")}
               onChange={(value) => { ++edits.current; setPath(value); setSelected(null); setError(null); }} onNavigate={(value) => void navigate(value)} />
-            <button type="button" className="remote-icon-button" aria-label={t("transfer.go")} title={t("transfer.go")} disabled={opening || loading || !canBrowseDevicePath(path)} onClick={() => void navigate(path)}><DirectoryIcon name="go" /></button>
+            <button type="button" className="remote-icon-button" aria-label={t("transfer.go")} title={t("transfer.go")} disabled={opening || loading || !canBrowseDevicePath(path)} onClick={() => void navigate(path)}><Icon name="arrowRight" /></button>
           </div>
-          <button type="button" className="remote-icon-button" aria-label={t("workspace.remoteRefresh")} title={t("workspace.remoteRefresh")} disabled={opening || loading || !canBrowseDevicePath(path)} onClick={() => void navigate(path)}><DirectoryIcon name="refresh" /></button>
         </div>
         <div className="remote-directory-list" aria-busy={loading}>
           {loading ? <p role="status" className="remote-directory-status">{t("workspace.remoteLoading")}</p>
@@ -146,17 +126,17 @@ function RemoteWorkspacePicker({ hosts, close }: { hosts: DeviceProfile[]; close
                 <button type="button" className="remote-directory-name" aria-pressed={selected === entry.name} disabled={opening}
                   title={entry.name} onClick={() => { setSelected(entry.name); if (currentPath) setPath(currentPath); }}
                   onDoubleClick={() => currentPath && void navigate(joinDevicePath(currentPath, entry.name))}>
-                  <DirectoryIcon /><span>{entry.name}</span>
+                  <Icon name="folder" /><span>{entry.name}</span>
                 </button>
-                {selected === entry.name && <DirectoryIcon name="check" />}
-                <button type="button" className="remote-icon-button" aria-label={t("workspace.remoteEnter", { name: entry.name })} disabled={opening} onClick={() => currentPath && void navigate(joinDevicePath(currentPath, entry.name))}><DirectoryIcon name="next" /></button>
+                {selected === entry.name && <Icon name="check" />}
+                <button type="button" className="remote-icon-button" aria-label={t("workspace.remoteEnter", { name: entry.name })} disabled={opening} onClick={() => currentPath && void navigate(joinDevicePath(currentPath, entry.name))}><Icon name="chevronRight" /></button>
               </li>)}
             </ul>}
         </div>
       </>}
     </div>
-    <footer className="remote-workspace-footer">
-      <button type="button" disabled={opening} onClick={dismiss}>{t("workspace.remoteCancel")}</button>
+    <footer className="dialog-actions">
+      <button type="button" disabled={opening} onClick={dismiss}>{t("dialog.cancel")}</button>
       <button type="button" className="primary" disabled={opening || loading || !host || !canBrowseDevicePath(path)} onClick={() => void submit()}>{t("workspace.remoteOpen")}</button>
     </footer>
   </dialog>;
