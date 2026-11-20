@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 import type { AppCommandId } from "../shortcuts";
+import { Icon } from "../components/Icon";
 
 /**
  * 面板注册表：界面所有功能模块（侧栏面板 + 中间区面板）的元数据。
  * 新增面板 = 在 PANELS 中加一项 + 在 ./components 的 PANEL_COMPONENTS 中关联组件，
- * App 的 dock 渲染、视图菜单、标题栏切换按钮、布局状态持久化全部自动适配。
+ * 工作台渲染、侧栏导航、视图菜单和布局状态持久化全部自动适配。
  *
  * 本文件只含元数据（不 import 组件实现），保证 layoutState.ts 可以安全引用。
  */
@@ -25,18 +26,18 @@ export interface PanelDef {
   toggleKey?: string;
   /** 显隐入口共用的应用命令（包含快捷键与焦点处理）。 */
   toggleCommand?: AppCommandId;
-  /** 标题栏切换按钮图标（center 面板使用） */
+  /** 侧栏导航或标题栏的面板图标 */
   icon?: ReactNode;
   defaultVisible: boolean;
 }
 
 /** 数组顺序即侧栏堆叠顺序与标题栏按钮顺序 */
 export const PANELS: PanelDef[] = [
-  { id: "workspace", dock: "sidebar", titleKey: "menu.workspacePanel", defaultVisible: true },
-  { id: "deviceWorkspace", dock: "sidebar", titleKey: "deviceWorkspace.title", defaultVisible: false },
-  { id: "commands", dock: "sidebar", titleKey: "menu.commandsPanel", defaultVisible: true },
-  { id: "runtime", dock: "sidebar", titleKey: "menu.runtimePanel", defaultVisible: false },
-  { id: "history", dock: "sidebar", titleKey: "runHistory.title", defaultVisible: true },
+  { id: "workspace", dock: "sidebar", titleKey: "menu.workspacePanel", icon: <Icon name="folder" />, defaultVisible: true },
+  { id: "deviceWorkspace", dock: "sidebar", titleKey: "deviceWorkspace.title", icon: <Icon name="server" />, defaultVisible: false },
+  { id: "commands", dock: "sidebar", titleKey: "menu.commandsPanel", icon: <Icon name="terminal" />, defaultVisible: true },
+  { id: "runtime", dock: "sidebar", titleKey: "menu.runtimePanel", icon: <Icon name="code" />, defaultVisible: false },
+  { id: "history", dock: "sidebar", titleKey: "runHistory.title", icon: <Icon name="clock" />, defaultVisible: true },
   { id: "editor", dock: "center", titleKey: "menu.editorPanel", manualVisibility: false, defaultVisible: false },
   {
     id: "console", dock: "center", titleKey: "menu.consolePanel", toggleKey: "titlebar.toggleConsole", toggleCommand: "toggleConsole", defaultVisible: true,

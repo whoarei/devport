@@ -167,7 +167,7 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
     </div>
     <ContextMenu menu={menu} onClose={() => setMenu(null)} />
     {error && <div className="terminal-error" role="alert">{error}</div>}
-    <section className="run-page" role="tabpanel" id="panel-run" aria-labelledby="tab-run" hidden={!contentVisible || activeTab !== "run"}>
+    <section className={`run-page${activeRunId ? "" : " run-page-idle"}`} role="tabpanel" id="panel-run" aria-labelledby="tab-run" hidden={!contentVisible || activeTab !== "run"}>
       <RunToolbar />
       <RunConsole collapsed={!contentVisible || activeTab !== "run"} onToggleCollapse={onToggleCollapse} embedded autoFocus={!keyboardTabFocus.current} />
     </section>

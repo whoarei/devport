@@ -150,6 +150,7 @@ export const en: Messages = {
     close: "Close",
   },
   app: {
+    navigation: "Workspace navigation",
     windowError: "Window operation failed: {{message}}",
     closeGuardFailed: "Failed to register close guard: {{message}}",
     loadingEditor: "Loading editor…",

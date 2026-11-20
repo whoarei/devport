@@ -13,15 +13,12 @@ import { rootTree } from "../src/workspaceTree";
 import { DEFAULT_LAYOUT } from "../src/layoutState";
 import { initializeTheme, useThemeStore } from "../src/theme";
 import { TitleBar } from "../src/components/TitleBar";
-import { WorkspacePanel } from "../src/components/WorkspacePanel";
+import { Workbench } from "../src/components/Workbench";
 import { WorkspaceTransferDialogs } from "../src/components/WorkspaceTransferDialogs";
-import { DeviceWorkspacePanel } from "../src/components/DeviceWorkspacePanel";
-import { type PanelId } from "../src/panels/registry";
-import { CommandsPanel } from "../src/components/CommandsPanel";
-import { CenterDock } from "../src/components/CenterDock";
 import { DeviceManager } from "../src/components/DeviceManager";
 import { QuickSshDialog } from "../src/components/QuickSshDialog";
 import { WorkspaceRunDialogs } from "../src/components/WorkspaceRunDialogs";
+import { RunHistoryDialogs } from "../src/components/RunHistoryDialogs";
 import { UnsavedDialog } from "../src/components/UnsavedDialog";
 import i18n from "../src/i18n";
 import { applyUiZoom } from "../src/uiZoom";
@@ -270,24 +267,15 @@ if (params.has("rowActions")) {
   };
 }
 function Fixture() {
-  const layout = useAppStore(s => s.layout);
   React.useEffect(() => {
     if (!params.has("inlineTransfers") && !params.has("directTransfers")) return;
     const timer = setInterval(() => { void useTransferStore.getState().refresh(); }, 500);
     return () => clearInterval(timer);
   }, []);
-  const toggle = (id: PanelId) => useAppStore.getState().setLayout({ panelCollapsed: { ...layout.panelCollapsed, [id]: !layout.panelCollapsed[id] } });
   return <div className="app">
     <TitleBar closeReady uiZoom={100} onUiZoom={() => {}} onAbout={() => {}} onCheckUpdate={() => {}} />
-    <main className="app-main">
-      {layout.sidebarVisible && <aside className="dock-side" style={{ width: 252 }}>
-        <WorkspacePanel collapsed={layout.panelCollapsed.workspace} onToggleCollapse={() => toggle("workspace")} />
-        {layout.panelVisible.deviceWorkspace && <DeviceWorkspacePanel visible collapsed={layout.panelCollapsed.deviceWorkspace} onToggleCollapse={() => toggle("deviceWorkspace")} />}
-        <div className="commands-section"><CommandsPanel collapsed={layout.panelCollapsed.commands} onToggleCollapse={() => toggle("commands")} /></div>
-      </aside>}
-      <CenterDock />
-    </main>
-    <DeviceManager /><QuickSshDialog /><WorkspaceRunDialogs /><UnsavedDialog /><WorkspaceTransferDialogs />
+    <Workbench />
+    <DeviceManager /><QuickSshDialog /><WorkspaceRunDialogs /><RunHistoryDialogs /><UnsavedDialog /><WorkspaceTransferDialogs />
   </div>;
 }
 const root = createRoot(document.getElementById("root")!);

@@ -12,6 +12,7 @@ const paths = {
   close: <path d="m5.5 5.5 9 9m0-9-9 9" />,
   plus: <path d="M10 4v12M4 10h12" />,
   terminal: <><rect x="2.5" y="3.5" width="15" height="13" rx="2" /><path d="m6 7 3 3-3 3m5 0h3" /></>,
+  clock: <><circle cx="10" cy="10" r="7.5" /><path d="M10 5.5v5l3 2" /></>,
   server: <><rect x="3" y="3" width="14" height="6" rx="1.5" /><rect x="3" y="11" width="14" height="6" rx="1.5" /><path d="M6 6h.01M6 14h.01M10 6h4m-4 8h4" /></>,
   monitor: <><rect x="2.5" y="3" width="15" height="11" rx="1.5" /><path d="M6 17h8m-4-3v3" /></>,
   serial: <path d="M7 2v4m6-4v4M5 6h10v3a5 5 0 0 1-10 0Zm5 8v4" />,

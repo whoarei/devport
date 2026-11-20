@@ -4,13 +4,14 @@ import type { ITheme } from "@xterm/xterm";
 export type Theme = "light" | "dark";
 export type ThemePreference = Theme | "system";
 const STORAGE_KEY = "devport.theme.v1";
+const DEFAULT_THEME = "light";
 
 export function loadThemePreference(): ThemePreference {
   try {
     const value = typeof localStorage === "undefined" ? null : localStorage.getItem(STORAGE_KEY);
-    return value === "light" || value === "system" ? value : "dark";
+    return value === "light" || value === "dark" || value === "system" ? value : DEFAULT_THEME;
   } catch {
-    return "dark";
+    return DEFAULT_THEME;
   }
 }
 
@@ -75,8 +76,8 @@ export function terminalTheme(theme: Theme): ITheme {
     brightBlack: "#96a2b6", brightRed: "#ffb0bc", brightGreen: "#b0dfb0", brightYellow: "#ead29c",
     brightBlue: "#b0cdff", brightMagenta: "#d9b8f0", brightCyan: "#a6dfe3", brightWhite: "#edf2fa",
   } : {
-    background: "#ffffff", foreground: "#273347", cursor: "#315fbd", cursorAccent: "#ffffff",
-    selectionBackground: "#cbdcfb", selectionInactiveBackground: "#dfe6f1",
+    background: "#ffffff", foreground: "#272522", cursor: "#973e20", cursorAccent: "#ffffff",
+    selectionBackground: "#f1d9c8", selectionInactiveBackground: "#eee8e2",
     black: "#202733", red: "#b42332", green: "#26723b", yellow: "#856000",
     blue: "#245ac2", magenta: "#8542a4", cyan: "#087586", white: "#626e80",
     brightBlack: "#626e80", brightRed: "#c02b3d", brightGreen: "#237943", brightYellow: "#8a6200",

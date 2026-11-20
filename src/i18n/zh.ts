@@ -151,6 +151,7 @@ export const zh = {
     close: "关闭",
   },
   app: {
+    navigation: "工作区导航",
     windowError: "窗口操作失败：{{message}}",
     closeGuardFailed: "关闭保护注册失败：{{message}}",
     loadingEditor: "正在加载编辑器…",

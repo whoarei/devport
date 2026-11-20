@@ -114,7 +114,7 @@ export function TitleBar({ closeReady, uiZoom, onUiZoom, onAbout, onCheckUpdate 
             className="titlebar-button titlebar-update"
             disabled={!!updatePhase}
             aria-label={t("titlebar.updateAvailable", { version: availableUpdate.latest_version })}
-            title={t("titlebar.updateAvailable", { version: availableUpdate.latest_version })}
+            title={updatePhase ? updateButtonLabel(updatePhase) : t("titlebar.updateAvailable", { version: availableUpdate.latest_version })}
             onClick={() => void startOneClickUpdate(availableUpdate, setUpdatePhase)}
           >
             {updateButtonLabel(updatePhase)}

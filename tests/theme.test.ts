@@ -24,14 +24,14 @@ function environment(t: test.TestContext) {
 
 test("theme restores before rendering and persists an explicit choice", (t) => {
   const env = environment(t);
-  assert.equal(loadThemePreference(), "dark");
-  env.data.set("devport.theme.v1", "light");
+  assert.equal(loadThemePreference(), "light");
+  env.data.set("devport.theme.v1", "dark");
   const stop = initializeTheme();
   t.after(stop);
-  assert.equal(env.document.documentElement.dataset.theme, "light");
-  useThemeStore.getState().setPreference("dark");
   assert.equal(env.document.documentElement.dataset.theme, "dark");
-  assert.equal(env.data.get("devport.theme.v1"), "dark");
+  useThemeStore.getState().setPreference("light");
+  assert.equal(env.document.documentElement.dataset.theme, "light");
+  assert.equal(env.data.get("devport.theme.v1"), "light");
 });
 
 test("system theme follows live changes without overriding manual selection and unsubscribes", (t) => {
@@ -58,13 +58,13 @@ test("theme survives invalid or unavailable storage and receives preference chan
   env.data.set("devport.theme.v1", "invalid");
   const stop = initializeTheme();
   t.after(stop);
-  assert.equal(useThemeStore.getState().theme, "dark");
-  env.data.set("devport.theme.v1", "light");
+  assert.equal(useThemeStore.getState().theme, "light");
+  env.data.set("devport.theme.v1", "dark");
   const event = Object.assign(new Event("storage"), { key: "devport.theme.v1", storageArea: env.storage });
   env.browserEvents.dispatchEvent(event);
-  assert.equal(env.document.documentElement.dataset.theme, "light");
+  assert.equal(env.document.documentElement.dataset.theme, "dark");
   Object.defineProperty(globalThis, "localStorage", { configurable: true, get: () => { throw new Error("blocked"); } });
-  assert.equal(loadThemePreference(), "dark");
+  assert.equal(loadThemePreference(), "light");
   assert.doesNotThrow(() => useThemeStore.getState().setPreference("dark"));
   assert.equal(env.document.documentElement.dataset.theme, "dark");
 });
