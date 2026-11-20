@@ -1277,7 +1277,98 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .runner-dialog h3 { position: sticky; top: -20px; padding: 12px 0; background: var(--surface-raised, #23252d); z-index: 1; }
 .runner-dialog code, .runner-dialog pre { overflow-wrap: anywhere; white-space: pre-wrap; }
 .runner-location { overflow-wrap: anywhere; color: var(--text-secondary, #aaa); font-size: 12px; }
-.runner-project-info { border: 1px solid var(--border, #3a3b42); border-radius: 6px; padding: 12px; margin: 12px 0; font-size: 12px; line-height: 1.8; }
+.runner-dialog.run-settings-dialog {
+  width: min(520px, calc(100vw / var(--browser-ui-zoom, 1) - 32px));
+  max-height: calc(100vh / var(--browser-ui-zoom, 1) - 32px);
+  padding: 0;
+  overflow: hidden;
+  border-color: var(--border);
+}
+.run-settings-dialog[open] { display: flex; flex-direction: column; }
+.run-settings-header { flex-shrink: 0; padding: 18px 22px 13px; }
+.run-settings-header h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.run-settings-header p {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-settings-body {
+  container: run-settings / inline-size;
+  min-height: 0;
+  padding: 4px 22px 8px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.run-settings-body:focus-visible { outline: 1px solid var(--accent-border); outline-offset: -2px; }
+.run-settings-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px 14px;
+  margin-bottom: 14px;
+}
+.run-settings-directory { grid-column: 1 / -1; }
+.run-settings-dialog label { min-width: 0; margin: 0; }
+.run-settings-dialog :is(input, select, textarea) {
+  width: 100%;
+  min-width: 0;
+  border-radius: var(--radius-control);
+  background: var(--surface-base);
+}
+.run-settings-dialog :is(input, select) { min-height: 32px; text-overflow: ellipsis; }
+.run-settings-directory input { font-family: Consolas, "Courier New", monospace; }
+.run-settings-section { border-top: 1px solid var(--border); }
+.run-settings-section > summary {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 4px 0;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+}
+.run-settings-section > summary::-webkit-details-marker { display: none; }
+.run-settings-section > summary:hover { color: var(--accent); }
+.run-settings-section > summary .ui-icon { width: 14px; height: 14px; color: var(--text-secondary); }
+.run-settings-section[open] > summary .ui-icon { transform: rotate(90deg); }
+.run-settings-summary-value { margin-left: auto; color: var(--text-secondary); font-size: 12px; text-align: right; }
+.run-settings-section[open] .run-settings-version { display: none; }
+.run-settings-section-body { display: grid; min-width: 0; gap: 10px; padding: 3px 0 12px 20px; font-size: 12px; }
+.run-settings-section-body p { margin: 0 0 5px; overflow-wrap: anywhere; }
+.run-settings-meta {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.run-settings-meta dt { color: var(--text-secondary); }
+.run-settings-meta dd { margin: 0; }
+.run-settings-actions, .run-settings-file-links { display: flex; flex-wrap: wrap; gap: 6px; }
+.run-settings-actions button { font-size: 12px; padding: 4px 8px; }
+.run-settings-file-links button {
+  color: var(--accent);
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+}
+.run-settings-file-links button:hover:not(:disabled) { background: var(--accent-surface); }
+.run-settings-notices { padding-top: 6px; }
+.run-settings-footer {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  padding: 10px 22px 13px;
+  border-top: 1px solid var(--border);
+}
+.run-settings-footer button { min-width: 62px; }
+.run-settings-session { margin-right: auto; }
+@container run-settings (max-width: 285px) {
+  .run-settings-fields, .run-settings-meta { grid-template-columns: minmax(0, 1fr); }
+  .run-settings-meta dd + dt { margin-top: 4px; }
+}
 .runner-inline-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .runner-inline-actions label { flex: 1; min-width: 100px; }
 .runner-preparation { border: 1px solid var(--border, #3a3b42); border-radius: 6px; padding: 12px; margin: 12px 0; font-size: 12px; line-height: 1.8; }

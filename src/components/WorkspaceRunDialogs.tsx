@@ -11,11 +11,18 @@ import type { OutputBuffer } from "../outputBuffer";
 import { handleRunShortcut, parseRunArguments } from "../runArguments";
 import { ArgumentsEditor } from "./ArgumentsEditor";
 import { editorPathInWorkspace } from "../editorSources";
+import { Icon } from "./Icon";
 
-function Modal({ open, title, close, children, onKeyDown }: { open: boolean; title: string; close: () => void; children: ReactNode; onKeyDown?: KeyboardEventHandler<HTMLDialogElement> }) {
+function Modal({ open, title, close, children, onKeyDown, className, heading }: {
+  open: boolean; title: string; close: () => void; children: ReactNode;
+  onKeyDown?: KeyboardEventHandler<HTMLDialogElement>; className?: string; heading?: ReactNode;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { const d = ref.current; if (open && d && !d.open) d.showModal(); if (!open && d?.open) d.close(); }, [open]);
-  return <dialog className="runner-dialog" ref={ref} aria-label={title} onKeyDown={onKeyDown} onCancel={(e) => { e.preventDefault(); close(); }}><h3>{title}</h3>{children}</dialog>;
+  return <dialog className={className ? `runner-dialog ${className}` : "runner-dialog"} ref={ref} aria-label={title}
+    onKeyDown={onKeyDown} onCancel={(e) => { e.preventDefault(); close(); }}>
+    {heading ?? <h3>{title}</h3>}{children}
+  </dialog>;
 }
 
 function ArgsDialog() {
@@ -79,7 +86,9 @@ function PreparationStatus() {
     {active && <progress aria-label={t("workspaceRun.preparationStatus")} />}
     {active && progress && <div className="runner-preparation-progress">{progress}</div>}
     {error && <div className="runtime-error" role="alert">{error}</div>}
-    {text && <details open className="runner-preparation-details"><summary>{t("workspaceRun.preparationLog")}</summary><pre ref={log} onScroll={() => { const el = log.current; if (el) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}>{text}</pre></details>}
+    {text && <details className="runner-preparation-details" onToggle={(event) => {
+      if (event.currentTarget.open && follow.current && log.current) log.current.scrollTop = log.current.scrollHeight;
+    }}><summary>{t("workspaceRun.preparationLog")}</summary><pre ref={log} onScroll={() => { const el = log.current; if (el) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}>{text}</pre></details>}
     {active && <div className="runner-inline-actions"><button className="danger" disabled={!p.runId || p.stopping || status?.state === "stopping"} onClick={() => void cancel()}>{t(p.stopping || status?.state === "stopping" ? "workspaceRun.preparationStopping" : "workspaceRun.cancelPreparation")}</button><span className="secondary-text">{t("workspaceRun.preparationBackground")}</span></div>}
   </section>;
 }
@@ -90,16 +99,33 @@ function SettingsDialog() {
   const device = devices.find((d) => d.id === selectedDeviceId), key = workspaceKey(workspace);
   const sourceRevision = workspaceSourceRevision(workspace, devices);
   const preparing = preparationActive(state.preparation);
+  const python = selectedDeviceId ? state.preferences.python[selectedDeviceId] ?? "device_default" : "device_default";
+  const serial = device?.transport === "serial";
+  const project = state.info?.project;
+  const location = workspaceLabel(workspace, devices);
+  const title = t("runSettings.title");
   const [cwd, setCwd] = useState("."), [env, setEnv] = useState("{}"), [error, setError] = useState<string | null>(null), [busy, setBusy] = useState(false);
   const [shells, setShells] = useState<LocalShellInfo[]>([]), [probe, setProbe] = useState<PythonProbe | null>(null), [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const probeEpoch = useRef(0);
   const loadedCwd = useRef(".");
+  const advanced = useRef<HTMLDetailsElement>(null);
+  const notices = useRef<HTMLDivElement>(null);
+  const messages = [...new Set([error ?? state.configError, state.infoError, state.launchError])].filter(Boolean);
   useEffect(() => { setBusy(false); }, [key, sourceRevision]);
   useEffect(() => { setConfirm(null); if (state.settingsOpen) { loadedCwd.current = state.config?.config.run_defaults.cwd ?? "."; setCwd(loadedCwd.current); setEnv(JSON.stringify(state.preferences.env, null, 2)); setError(null); void api.listLocalShells().then(setShells).catch(() => {}); } }, [state.settingsOpen, key, sourceRevision]);
   useEffect(() => { const next = state.config?.config.run_defaults.cwd ?? ".", previous = loadedCwd.current; setCwd((draft) => draft === previous ? next : draft); loadedCwd.current = next; }, [state.config]);
   useEffect(() => { ++probeEpoch.current; setProbe(null); }, [selectedDeviceId, device?.revision, key, sourceRevision, state.settingsOpen]);
+  useEffect(() => { if (error && state.settingsOpen) notices.current?.scrollIntoView({ block: "nearest" }); }, [error]);
   const close = () => useWorkspaceRunStore.setState({ settingsOpen: false });
-  const parseEnv = () => { const value = JSON.parse(env); if (!value || Array.isArray(value) || typeof value !== "object" || Object.values(value).some((v) => typeof v !== "string")) throw new Error(t("workspaceRun.envInvalid")); return value as Record<string, string>; };
+  const parseEnv = () => {
+    let value: unknown;
+    try { value = JSON.parse(env); } catch { /* Show the same message for malformed JSON. */ }
+    if (value && !Array.isArray(value) && typeof value === "object" && Object.values(value).every((v) => typeof v === "string")) {
+      return value as Record<string, string>;
+    }
+    if (advanced.current) advanced.current.open = true;
+    throw new Error(t("workspaceRun.envInvalid"));
+  };
   const save = async (session = false) => {
     if (!workspace) return;
     setBusy(true); setError(null);
@@ -129,30 +155,99 @@ function SettingsDialog() {
       setConfirm({ title: t("workspaceRun.recoverLock"), message: `${t("workspaceRun.lockMessage")}\n${JSON.stringify(lock.content)}`, confirmLabel: t("workspaceRun.recoverLock"), danger: true, onCancel: () => setConfirm(null), onConfirm: () => { setConfirm(null); if (workspaceSourceCurrent(workspace, state.sourceRevision)) void api.recoverRunnerLock(workspace, lock.revision).then(() => { if (workspaceSourceCurrent(workspace, state.sourceRevision)) void state.load(); }).catch((e) => { if (workspaceSourceCurrent(workspace, state.sourceRevision)) setError(errorMessage(e)); }); } });
     } catch (e) { if (workspaceSourceCurrent(workspace, state.sourceRevision)) setError(errorMessage(e)); }
   };
-  return <><Modal open={state.settingsOpen} title={t("workspaceRun.settings")} close={close}>
-    <p className="runner-location">{workspaceLabel(workspace, devices)}</p>
-    <label>{t("workspaceRun.target")}<select value={selectedDeviceId ?? ""} onChange={(e) => state.selectTarget(e.target.value || null)}><option value="">{t("run.selectDeviceFirst")}</option>{devices.map((d) => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label>
-    <label>{t("workspaceRun.python")}<select value={selectedDeviceId ? state.preferences.python[selectedDeviceId] ?? "device_default" : "device_default"} onChange={(e) => state.selectPython(e.target.value as "project" | "device_default")}><option value="device_default">{t("workspaceRun.system")}</option><option value="project" disabled={device?.transport === "serial"}>{t("workspaceRun.project")}</option></select></label>
-    <div className="runner-project-info">
-      {state.checking && <div role="status">{t("workspaceRun.loading")}</div>}
-      <div>{t("workspaceRun.version")}: {state.info?.python_version ?? "—"}</div><div>{t("workspaceRun.pythonPath")}: {state.info?.python_path.join(", ") || "—"}</div>
-      {state.info?.project && <div>uv.lock: {state.info.project.lock_sha256.slice(0, 12)} · {t(state.cached ? "runnerEntry.cached" : "runnerEntry.notPrepared")}</div>}
-      {state.info?.legacy_entry && <div>{t("workspaceRun.legacyEntry", { entry: state.info.legacy_entry })}</div>}
-      {state.info?.legacy_entry && workspace && <button onClick={() => { if (!workspaceSourceCurrent(workspace, state.sourceRevision)) return; const name = state.info!.legacy_entry!; useWorkspaceRunStore.setState({ settingsOpen: false, args: { workspace, command: { entry: state.info!.legacy_module ? { type: "python_module", name } : { type: "python_script", path: name }, args: [] }, module: state.info!.legacy_module } }); }}>{t("runnerEntry.useLegacy")}</button>}
-      {state.infoError && <div className="runtime-error">{state.infoError}</div>}
-      <div className="runner-inline-actions">{[".python-version", "pyproject.toml", "uv.lock"].map((file) => <button key={file} onClick={() => { close(); void useAppStore.getState().openWorkspaceFile(file); }}>{file}</button>)}</div>
-      <div className="runner-inline-actions"><button disabled={state.checking} onClick={() => void check()}>{t("workspaceRun.recheck")}</button><button disabled={preparing || !selectedDeviceId || !state.info?.project || device?.transport === "serial"} onClick={() => void state.prepare()}>{t("workspaceRun.prepare")}</button><button disabled={preparing || !selectedDeviceId || !state.info?.project || device?.transport === "serial"} onClick={() => void state.prepare(true)}>{t("runtime.rebuild")}</button></div>
-      {probe && <code>{probe.program} · Python {probe.version}</code>}
+  const openLegacyEntry = () => {
+    const name = state.info?.legacy_entry;
+    if (!name || !workspace || !workspaceSourceCurrent(workspace, sourceRevision)) return;
+    const module = state.info?.legacy_module ?? false;
+    const entry = module ? { type: "python_module" as const, name } : { type: "python_script" as const, path: name };
+    useWorkspaceRunStore.setState({ settingsOpen: false, args: { workspace, command: { entry, args: [] }, module } });
+  };
+
+  return <><Modal open={state.settingsOpen} title={title} close={close} className="run-settings-dialog"
+    heading={<header className="run-settings-header">
+      <h2>{title}</h2>
+      {location && <p title={location}>{location}</p>}
+    </header>}>
+    <div className="run-settings-body" key={`${state.settingsOpen}:${key}:${sourceRevision}`}>
+      <div className="run-settings-fields">
+        <label>{t("workspaceRun.target")}
+          <select title={device?.name} value={selectedDeviceId ?? ""} onChange={(e) => state.selectTarget(e.target.value || null)}>
+            <option value="">{t("run.selectDeviceFirst")}</option>
+            {devices.map((d) => <option value={d.id} key={d.id}>{d.name}</option>)}
+          </select>
+        </label>
+        <label>{t("workspaceRun.python")}
+          <select value={python} onChange={(e) => state.selectPython(e.target.value as typeof python)}>
+            <option value="device_default">{t("workspaceRun.system")}</option>
+            <option value="project" disabled={serial}>{t("workspaceRun.project")}</option>
+          </select>
+        </label>
+        <label className="run-settings-directory">{t("workspaceRun.cwd")}
+          <input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="." />
+        </label>
+        <label>{t("run.consoleModeLabel")}
+          <select disabled={serial} value={serial ? "pty" : state.preferences.console_mode}
+            onChange={(e) => state.preference({ console_mode: e.target.value as "pty" | "pipe" })}>
+            <option value="pty">PTY</option><option value="pipe">pipe</option>
+          </select>
+        </label>
+        <label>{t("runHistory.timeout")}
+          <input type="number" min="0" title={t("runSettings.timeoutHint")} aria-description={t("runSettings.timeoutHint")}
+            value={state.preferences.timeout_secs} onChange={(e) => state.preference({ timeout_secs: Number(e.target.value) || 0 })} />
+        </label>
+      </div>
+      <PreparationStatus />
+      <details className="run-settings-section">
+        <summary><Icon name="chevronRight" /><span>{t("runSettings.pythonDetails")}</span>
+          {state.checking ? <span className="run-settings-summary-value" role="status">{t("workspaceRun.loading")}</span>
+            : state.info?.python_version && <span className="run-settings-summary-value run-settings-version">Python {state.info.python_version}</span>}
+        </summary>
+        <div className="run-settings-section-body">
+          {(state.info?.python_version || !!state.info?.python_path.length || project) && <dl className="run-settings-meta">
+            {state.info?.python_version && <><dt>{t("workspaceRun.version")}</dt><dd>{state.info.python_version}</dd></>}
+            {!!state.info?.python_path.length && <><dt>{t("workspaceRun.pythonPath")}</dt><dd><code>{state.info.python_path.join(", ")}</code></dd></>}
+            {project && <><dt>uv.lock</dt><dd><code>{project.lock_sha256.slice(0, 12)}</code> · {t(state.cached ? "runnerEntry.cached" : "runnerEntry.notPrepared")}</dd></>}
+          </dl>}
+          {probe && <code>{probe.program} · Python {probe.version}</code>}
+          {state.info?.legacy_entry && workspace && <div>
+            <p>{t("workspaceRun.legacyEntry", { entry: state.info.legacy_entry })}</p>
+            <button type="button" onClick={openLegacyEntry}>{t("runnerEntry.useLegacy")}</button>
+          </div>}
+          <div className="run-settings-file-links">
+            {[".python-version", "pyproject.toml", "uv.lock"].map((file) => <button type="button" key={file}
+              onClick={() => { close(); void useAppStore.getState().openWorkspaceFile(file); }}><code>{file}</code></button>)}
+          </div>
+          <div className="run-settings-actions">
+            <button type="button" disabled={state.checking} onClick={() => void check()}>{t("workspaceRun.recheck")}</button>
+            {project && !serial && <>
+              <button type="button" disabled={preparing || !selectedDeviceId} onClick={() => void state.prepare()}>{t("workspaceRun.prepare")}</button>
+              <button type="button" disabled={preparing || !selectedDeviceId} onClick={() => void state.prepare(true)}>{t("runtime.rebuild")}</button>
+            </>}
+          </div>
+        </div>
+      </details>
+      <details className="run-settings-section" ref={advanced}>
+        <summary><Icon name="chevronRight" /><span>{t("device.advancedOptions")}</span></summary>
+        <div className="run-settings-section-body">
+          {device?.transport === "local" && <label>{t("workspaceRun.bash")}
+            <select value={state.preferences.bash[device.id] ?? ""} onChange={(e) => state.preference({ bash: { ...state.preferences.bash, [device.id]: e.target.value } })}>
+              <option value="">{t("workspaceRun.autoBash")}</option>
+              {shells.filter((s) => ["bash", "gitbash", "msys2"].includes(s.id)).map((s) => <option key={s.id} value={s.id}>{s.label} · {s.path}</option>)}
+            </select>
+          </label>}
+          <label>{t("workspaceRun.environment")}<textarea rows={3} value={env} onChange={(e) => setEnv(e.target.value)} spellCheck={false} /></label>
+          <div className="run-settings-actions"><button type="button" onClick={() => void recoverLock()}>{t("workspaceRun.recoverLock")}</button></div>
+        </div>
+      </details>
+      {messages.length > 0 && <div className="run-settings-notices" ref={notices}>
+        {messages.map((message) => <div key={message} className="runtime-error" role="alert">{message}</div>)}
+      </div>}
     </div>
-    <PreparationStatus />
-    <label>{t("workspaceRun.cwd")}<input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="." /></label>
-    <div className="runner-inline-actions"><label>{t("run.consoleModeLabel")}<select disabled={device?.transport === "serial"} value={device?.transport === "serial" ? "pty" : state.preferences.console_mode} onChange={(e) => state.preference({ console_mode: e.target.value as "pty" | "pipe" })}><option value="pty">PTY</option><option value="pipe">pipe</option></select></label><label>{t("run.timeoutLabel")}<input type="number" min="0" value={state.preferences.timeout_secs} onChange={(e) => state.preference({ timeout_secs: Number(e.target.value) || 0 })} /></label></div>
-    {device?.transport === "local" && <label>{t("workspaceRun.bash")}<select value={state.preferences.bash[device.id] ?? ""} onChange={(e) => state.preference({ bash: { ...state.preferences.bash, [device.id]: e.target.value } })}><option value="">{t("workspaceRun.autoBash")}</option>{shells.filter((s) => ["bash", "gitbash", "msys2"].includes(s.id)).map((s) => <option key={s.id} value={s.id}>{s.label} · {s.path}</option>)}</select></label>}
-    <label>{t("workspaceRun.environment")}<textarea rows={3} value={env} onChange={(e) => setEnv(e.target.value)} spellCheck={false} /></label>
-    {(error || state.configError) && <div className="runtime-error" role="alert">{error ?? state.configError}</div>}
-    {state.launchError && <div className="runtime-error" role="alert">{state.launchError}</div>}
-    <div className="runner-inline-actions"><button onClick={() => void recoverLock()}>{t("workspaceRun.recoverLock")}</button>{(error || state.configError) && <button disabled={busy} onClick={() => void save(true)}>{t("workspaceRun.sessionOnly")}</button>}</div>
-    <div className="dialog-actions"><button onClick={close}>{t(preparing ? "workspaceRun.close" : "dialog.cancel")}</button><button className="primary" disabled={busy || !workspace} onClick={() => void save()}>{t("workspaceRun.save")}</button></div>
+    <footer className="dialog-actions run-settings-footer">
+      {(error || state.configError) && <button className="run-settings-session" type="button" disabled={busy} onClick={() => void save(true)}>{t("workspaceRun.sessionOnly")}</button>}
+      <button type="button" onClick={close}>{t(preparing ? "workspaceRun.close" : "dialog.cancel")}</button>
+      <button type="button" className="primary" disabled={busy || !workspace} onClick={() => void save()}>{t("workspaceRun.save")}</button>
+    </footer>
   </Modal><ConfirmDialog request={confirm} /></>;
 }
 
