@@ -140,9 +140,11 @@ test("same-device project Python is selectable and old records without snapshots
   setup(t); t.mock.method(React, "useSyncExternalStore", (_subscribe, getSnapshot) => getSnapshot());
   const remote = deviceWorkspace("a", "/project");
   useAppStore.setState({ workspace: remote, activeRunId: "id", runs: { id: { run_id: "id", device_name: "a", label: "tools/test.py", state: "exited", exit_code: 0, error: null, started_at: "", ended_at: "" } } });
-  useWorkspaceRunStore.setState({ sessions: { id: { request: { workspace, device_id: "a", device_revision: "rev-a", command, python: "project", settings: { cwd: ".", env: {}, console_mode: "pty", timeout_secs: 0, cols: 80, rows: 24 } }, launch: null, warning: null } } });
+  useWorkspaceRunStore.setState((state) => ({ preferences: { ...state.preferences, python: { a: "project" } } }));
   const html = renderToStaticMarkup(createElement(RunToolbar));
-  assert.match(html, /option value="project"/); assert.doesNotMatch(html, /option value="project" disabled/);
+  const settings = renderToStaticMarkup(createElement(WorkspaceRunDialogs));
+  assert.doesNotMatch(html, /option value="project"/);
+  assert.match(settings, /<option value="project" selected="">/);
   assert.match(html, /disabled="" title="这条旧记录没有保存运行配置/);
 });
 
@@ -524,10 +526,11 @@ test("a queued workspace run remains active and exposes a cancellable waiting st
   useAppStore.setState({ activeRunId: waiting.run_id });
   const html = renderToStaticMarkup(createElement(RunToolbar));
   assert.ok(html.includes(i18n.t("workspaceSync.waiting")));
-  const stopButton = html.match(/<button class="danger"([^>]*)>[^<]+<\/button>/);
+  const stopButton = html.match(/<button type="button" class="danger"([^>]*)>[^<]+<\/button>/);
   assert.ok(stopButton, "waiting tasks retain the stop action");
   assert.doesNotMatch(stopButton[1], /disabled/);
   assert.ok(stopButton[0].includes(i18n.t("run.stop")));
+  assert.doesNotMatch(html, /重新启动/);
   assert.equal(useAppStore.getState().history.length, 0);
 });
 

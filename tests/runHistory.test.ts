@@ -141,7 +141,12 @@ test("history includes every workspace, pins running tasks, and excludes prepara
 test("toolbar has no task picker; history shows compact actions and hover summaries omit environment values", t => {
   setup(t);
   const toolbar = renderToStaticMarkup(createElement(RunToolbar));
-  assert.doesNotMatch(toolbar, /run-task-select|选择运行中的任务/); assert.match(toolbar, /最后一次任务/); assert.match(toolbar, /重新启动/);
+  assert.doesNotMatch(toolbar, /run-task-select|选择运行中的任务/);
+  assert.match(toolbar, /运行详情/);
+  const restart = toolbar.match(/<div class="run-replay-button standalone">([\s\S]*?)<\/div>/)?.[1] ?? "";
+  assert.match(restart, /title="重新启动/);
+  assert.equal(restart.match(/<button\b/g)?.length, 1);
+  assert.doesNotMatch(restart, /<span>/);
   const panel = renderToStaticMarkup(createElement(RunHistoryPanel, { visible: true, collapsed: false, onToggleCollapse() {} }));
   assert.match(panel, /原设备重跑/); assert.doesNotMatch(panel, /private-value/);
   assert.doesNotMatch(panel, /<select|当前工作区|全部工作区/);

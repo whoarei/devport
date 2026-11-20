@@ -60,7 +60,8 @@ test("older running tasks remain visible and stoppable in history without changi
   s.setActiveRun("old-task");
   const toolbar = renderToStaticMarkup(createElement(RunToolbar));
   assert.doesNotMatch(toolbar, /选择运行中的任务/);
-  assert.match(toolbar, /old-task @ test/);
+  assert.doesNotMatch(toolbar.split('<dl class="run-task-details"')[0], /old-task|state-exited/);
+  assert.match(toolbar, /<code>old-task<\/code>/);
   const history = renderToStaticMarkup(createElement(RunHistoryPanel, { visible: true, collapsed: false, onToggleCollapse() {} }));
   assert.match(history, /long-task/);
   assert.match(history, /停止.*long-task/);
@@ -82,11 +83,16 @@ test("legacy drafts no longer expose arbitrary commands or argument forms in the
   assert.equal(useAppStore.getState().runDraft.command, "echo retained");
 });
 
-test("toolbar shows selected task status, live progress and failure details", (t) => {
+test("toolbar keeps live progress and failure details and moves finished status into the console", (t) => {
   const s = setup(t);
-  s.handleRunEvents([{ type: "status", status: status("task") }]);
+  s.handleRunEvents([{ type: "status", status: { ...status("task"), workspace_sync: {
+    destination: "/runs/project", added: 2, updated: 1, deleted: 0, skipped: 3, permissions: 0, uploaded_bytes: 12,
+  } } }]);
   s.setActiveRun("task");
-  assert.match(renderToStaticMarkup(createElement(RunToolbar)), /state-exited/);
+  const finished = renderToStaticMarkup(createElement(RunToolbar));
+  assert.doesNotMatch(finished, /state-exited|已退出/);
+  assert.match(finished, /class="run-tool run-details-toggle"[^>]*aria-expanded="false"/);
+  assert.match(finished, /<dl class="run-task-details"[^>]*hidden=""[^>]*>[\s\S]*<code>\/runs\/project<\/code>/);
 
   s.handleRunEvents([{ type: "status", status: { ...status("live", "preparing"), phase: "syncing_dependencies" } }]);
   s.setActiveRun("live");
@@ -154,7 +160,7 @@ test("slow terminal keeps one write in flight and resets only after switching sa
   let done: (() => void) | undefined;
   let resets = 0;
   const current = { runId: "a", buffer: { chunks: [new Uint8Array([65]), new Uint8Array([66])], start: 0, bytes: 2 } };
-  const replay = createConsoleReplay({ reset: () => resets++, write: (data, callback) => {
+  const replay = createConsoleReplay({ buffer: { active: { baseY: 0, cursorX: 0, cursorY: 0, getLine: () => undefined } }, reset: () => resets++, write: (data, callback) => {
     assert.equal(done, undefined, "never queue a second terminal write");
     writes.push(data); done = callback;
   } }, () => current);
@@ -171,4 +177,33 @@ test("slow terminal keeps one write in flight and resets only after switching sa
   replay.dispose();
   const second = done!; done = undefined; second();
   assert.equal(writes.length, 2);
+});
+
+test("the console result follows all output, including bytes received after a completion snapshot", () => {
+  const first = new TextEncoder().encode("Job finished");
+  const last = new TextEncoder().encode(" with warnings");
+  let writes: (string | Uint8Array)[] = [];
+  let done: () => void;
+  const current = { runId: "run", status: status("run", "running"), buffer: { chunks: [first], start: 0, bytes: first.length } };
+  const replay = createConsoleReplay({
+    buffer: { active: { baseY: 0, cursorX: 12, cursorY: 0, getLine: () => undefined } },
+    reset: () => { writes = []; },
+    write: (data, callback) => { writes.push(data); done = callback; },
+  }, () => current);
+  replay.pump();
+  current.status = status("run");
+  replay.pump();
+  assert.deepEqual(writes, [first]);
+  done!();
+  assert.match(String(writes[1]), /\r\n.*\[已退出 \(0\) · 0:01\]/);
+  done!();
+  replay.pump();
+  assert.equal(writes.length, 2);
+  current.buffer = { chunks: [first, last], start: 0, bytes: first.length + last.length };
+  replay.pump();
+  assert.deepEqual(writes, [first]);
+  done!();
+  done!();
+  assert.deepEqual(writes.slice(0, 2), [first, last]);
+  assert.match(String(writes[2]), /\[已退出 \(0\) · 0:01\]/);
 });

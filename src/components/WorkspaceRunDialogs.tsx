@@ -134,6 +134,7 @@ function SettingsDialog() {
     <label>{t("workspaceRun.target")}<select value={selectedDeviceId ?? ""} onChange={(e) => state.selectTarget(e.target.value || null)}><option value="">{t("run.selectDeviceFirst")}</option>{devices.map((d) => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label>
     <label>{t("workspaceRun.python")}<select value={selectedDeviceId ? state.preferences.python[selectedDeviceId] ?? "device_default" : "device_default"} onChange={(e) => state.selectPython(e.target.value as "project" | "device_default")}><option value="device_default">{t("workspaceRun.system")}</option><option value="project" disabled={device?.transport === "serial"}>{t("workspaceRun.project")}</option></select></label>
     <div className="runner-project-info">
+      {state.checking && <div role="status">{t("workspaceRun.loading")}</div>}
       <div>{t("workspaceRun.version")}: {state.info?.python_version ?? "—"}</div><div>{t("workspaceRun.pythonPath")}: {state.info?.python_path.join(", ") || "—"}</div>
       {state.info?.project && <div>uv.lock: {state.info.project.lock_sha256.slice(0, 12)} · {t(state.cached ? "runnerEntry.cached" : "runnerEntry.notPrepared")}</div>}
       {state.info?.legacy_entry && <div>{t("workspaceRun.legacyEntry", { entry: state.info.legacy_entry })}</div>}

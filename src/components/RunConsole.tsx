@@ -5,8 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { api, errorMessage } from "../api";
 import { useAppStore } from "../store";
-import { isActiveRun, runStateLabel } from "../runState";
-import { PanelTitle } from "./PanelTitle";
+import { isActiveRun, runResultLabel } from "../runState";
 import { useShallow } from "zustand/react/shallow";
 import { useTranslation } from "react-i18next";
 import { createConsoleReplay } from "../consoleReplay";
@@ -24,8 +23,8 @@ import { EmptyState } from "./EmptyState";
  * Run Console：绑定的是“远程进程”的 stdin/stdout/stderr，不是 SSH shell。
  * 折叠时终端保持挂载，仅隐藏 DOM，避免 xterm 重新附着和输出丢失。
  */
-export function RunConsole({ collapsed, onToggleCollapse, embedded = false, autoFocus = true }: { collapsed: boolean; onToggleCollapse: () => void; embedded?: boolean; autoFocus?: boolean }) {
-  const { t } = useTranslation();
+export function RunConsole({ collapsed, autoFocus = true }: { collapsed: boolean; autoFocus?: boolean }) {
+  const { t, i18n } = useTranslation();
   const theme = useThemeStore((state) => state.theme);
   const accent = useThemeStore((state) => state.accent);
   const workspace = useAppStore((state) => state.workspace);
@@ -96,8 +95,8 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false, auto
     fitRef.current = fit;
     const replay = createConsoleReplay(term, () => {
       const s = useAppStore.getState();
-      return { runId: s.activeRunId, buffer: s.activeRunId ? s.outputBuffers[s.activeRunId] : undefined,
-        status: s.activeRunId ? s.runs[s.activeRunId] : undefined };
+      const runId = s.activeRunId;
+      return { runId, buffer: runId ? s.outputBuffers[runId] : undefined, status: runId ? s.runs[runId] : undefined };
     });
     replayRef.current = replay;
     replay.pump();
@@ -128,7 +127,7 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false, auto
 
   useEffect(() => { if (termRef.current) termRef.current.options.theme = terminalTheme(theme, accent); }, [theme, accent]);
 
-  useEffect(() => { replayRef.current?.pump(); }, [activeRunId, buffer]);
+  useEffect(() => { replayRef.current?.pump(); }, [activeRunId, activeRun, buffer, i18n.resolvedLanguage]);
 
   // 变为可见时 fit 并聚焦，保证 Ctrl+Tab 循环时焦点跟随当前标签（与 TerminalPage 行为一致）
   useEffect(() => {
@@ -144,8 +143,6 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false, auto
       useCommandUiStore.setState({ focus: null });
     }
   }, [focus, collapsed]);
-
-  // 状态行
 
   useEffect(() => {
     const term = termRef.current;
@@ -187,21 +184,10 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false, auto
 
   return (
     <div className="run-console">
-      {!embedded && <PanelTitle className="console-header" title={t("console.runTab")} collapsed={collapsed} onToggle={onToggleCollapse}>
-        {activeRun && (
-          <span className={`run-state state-${activeRun.state}`}>
-            {activeRun.run_id} · {activeRun.waiting_workspace ? t("workspaceSync.waiting") : runStateLabel(activeRun.state)}
-            {activeRun.exit_code != null && ` · exit=${activeRun.exit_code}`}
-          </span>
-        )}
-      </PanelTitle>}
-      {!collapsed && activeRun?.workspace_sync && <div className="run-launch" role="status">
-        <span>{t("workspaceSync.summary", { ...activeRun.workspace_sync, bytes: activeRun.workspace_sync.uploaded_bytes.toLocaleString() })}</span>
-        <code>{activeRun.workspace_sync.destination}</code>
-      </div>}
       {inputError?.runId === activeRunId && <div className="terminal-error" role="alert">{t("console.inputFailed", { error: inputError.message })}</div>}
       {clipboardError && <div className="terminal-error" role="status">{t(clipboardError.action === "copy" ? "terminal.copyFailed" : "terminal.pasteFailed", { message: clipboardError.message })}</div>}
       <div className="console-viewport" hidden={collapsed}>
+        <span className="sr-only" role="status">{runResultLabel(activeRun)}</span>
         <div ref={containerRef} className="console-body" onContextMenu={openMenu}
           onPasteCapture={() => { if (!collapsed) termRef.current?.focus(); }} />
         {!activeRunId && <div className="console-placeholder">

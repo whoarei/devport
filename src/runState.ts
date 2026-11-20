@@ -32,6 +32,13 @@ export function runDuration(start: string, end: string | null, now = Date.now())
   return minutes < 60 ? `${minutes}:${s}` : `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}:${s}`;
 }
 
+export function runResultLabel(run: RunStatus | undefined): string {
+  if (!run || isActiveRun(run)) return "";
+  const status = runStateLabel(run.state) + (run.exit_code == null ? "" : ` (${run.exit_code})`);
+  const duration = run.ended_at && runDuration(run.started_at, run.ended_at);
+  return duration ? `${status} · ${duration}` : status;
+}
+
 export function newestStatus(current: RunStatus | undefined, incoming: RunStatus): RunStatus {
   if (current && (!isActiveRun(current) || phase.indexOf(current.state) > phase.indexOf(incoming.state) && isActiveRun(incoming))) return current;
   return incoming;

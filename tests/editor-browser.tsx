@@ -139,7 +139,7 @@ function Fixture() {
       <button onClick={() => { useAppStore.getState().handleRunEvent({ type: "status", status: { run_id: "fixture-run", device_name: "模拟设备", label: "同步中", state: "syncing", exit_code: null, error: null, started_at: "", ended_at: null } }); }}>模拟同步中（禁止改动工作区）</button>
     </header>
     <main className="app-main"><aside className="dock-side" style={{ width: 240 }}><WorkspacePanel collapsed={false} onToggleCollapse={() => {}} /></aside><section className="dock-center"><Editor /></section></main>
-    <footer style={{ height: 220, flexShrink: 0, display: "flex", flexDirection: "column" }}><RunToolbar /><RunConsole collapsed={false} onToggleCollapse={() => {}} /></footer>
+    <footer style={{ height: 220, flexShrink: 0, display: "flex", flexDirection: "column" }}><RunToolbar /><RunConsole collapsed={false} /></footer>
   </div>;
 }
 createRoot(document.getElementById("root")!).render(<React.StrictMode><Fixture /></React.StrictMode>);

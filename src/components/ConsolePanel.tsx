@@ -169,7 +169,7 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
     {error && <div className="terminal-error" role="alert">{error}</div>}
     <section className={`run-page${activeRunId ? "" : " run-page-idle"}`} role="tabpanel" id="panel-run" aria-labelledby="tab-run" hidden={!contentVisible || activeTab !== "run"}>
       <RunToolbar />
-      <RunConsole collapsed={!contentVisible || activeTab !== "run"} onToggleCollapse={onToggleCollapse} embedded autoFocus={!keyboardTabFocus.current} />
+      <RunConsole collapsed={!contentVisible || activeTab !== "run"} autoFocus={!keyboardTabFocus.current} />
     </section>
     {tabs.map((tab) => <TerminalPage key={tab.id} tab={tab} visible={contentVisible && activeTab === tab.id} autoFocus={!keyboardTabFocus.current} />)}
   </div>;
