@@ -3,6 +3,7 @@ use crate::error::{HostKeyChange, Result, RunnerError};
 use russh::client::{self, Config, Handle};
 use russh::keys::HashAlg;
 use std::collections::HashMap;
+use std::net::{Shutdown, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -198,6 +199,86 @@ mod tests {
         let _ = server.await;
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[tokio::test]
+    async fn ssh_device_probe_times_out_and_disconnects_when_exec_stalls() {
+        use russh::{server, Channel, ChannelId};
+        use tokio::{sync::oneshot, time};
+
+        struct ProbeServer(Option<oneshot::Sender<()>>);
+        impl server::Handler for ProbeServer {
+            type Error = russh::Error;
+
+            async fn auth_password(
+                &mut self,
+                _: &str,
+                _: &str,
+            ) -> std::result::Result<server::Auth, Self::Error> {
+                Ok(server::Auth::Accept)
+            }
+
+            async fn channel_open_session(
+                &mut self,
+                _: Channel<server::Msg>,
+                reply: server::ChannelOpenHandle,
+                _: &mut server::Session,
+            ) -> std::result::Result<(), Self::Error> {
+                reply.accept().await;
+                Ok(())
+            }
+
+            async fn exec_request(
+                &mut self,
+                channel: ChannelId,
+                _: &[u8],
+                session: &mut server::Session,
+            ) -> std::result::Result<(), Self::Error> {
+                session.channel_success(channel)?;
+                self.0.take().unwrap().send(()).unwrap();
+                Ok(())
+            }
+        }
+
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let device: DeviceProfile = serde_json::from_value(serde_json::json!({
+            "id": "test", "name": "test", "host": "127.0.0.1", "port": listener.local_addr().unwrap().port(),
+            "username": "test", "auth": { "type": "password", "password": "test" }
+        })).unwrap();
+        let key = russh::keys::PrivateKey::new(
+            russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[73; 32]).into(),
+            "test",
+        )
+        .unwrap();
+        let config = Arc::new(server::Config {
+            keys: vec![key],
+            ..Default::default()
+        });
+        let (started, exec_started) = oneshot::channel();
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let connection = server::run_stream(config, stream, ProbeServer(Some(started)))
+                .await
+                .unwrap();
+            let _ = connection.await;
+        });
+
+        let probe = probe_device(&device, &root, None);
+        tokio::pin!(probe);
+        tokio::select! {
+            result = &mut probe => panic!("probe ended before exec stalled: {result:?}"),
+            start = time::timeout(Duration::from_secs(5), exec_started) => start.unwrap().unwrap(),
+        }
+        time::pause();
+        time::advance(Duration::from_secs(10)).await;
+        assert!(matches!(probe.await, Err(RunnerError::DeviceTestTimeout)));
+        time::resume();
+        time::timeout(Duration::from_secs(5), peer)
+            .await
+            .unwrap()
+            .unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }
 
 // All connections must read/check/write the same trust store under one lock.
@@ -292,10 +373,56 @@ impl client::Handler for ClientHandler {
     }
 }
 
+// russh owns the socket in a separate task during key exchange. Shut down the
+// probe's socket on drop so cancellation also stops a stalled handshake.
+struct ProbeSocket(TcpStream);
+
+impl Drop for ProbeSocket {
+    fn drop(&mut self) {
+        let _ = self.0.shutdown(Shutdown::Both);
+    }
+}
+
 /// 已认证的 SSH 连接（Arc 句柄；克隆共享同一连接，channel 各自独立）
 #[derive(Clone)]
 pub struct SshConnection {
     pub handle: Arc<Handle<ClientHandler>>,
+}
+
+pub(crate) async fn probe_device(
+    device: &DeviceProfile,
+    config_dir: &Path,
+    confirmation: Option<HostKeyChange>,
+) -> Result<String> {
+    let mut socket = None;
+    let conn =
+        SshConnection::connect_inner(device, config_dir, confirmation, Some(&mut socket)).await?;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let mut channel = conn.handle.channel_open_session().await?;
+        channel
+            .exec(true, "uname -a && python3 --version 2>&1; echo EXIT:$?")
+            .await?;
+        let mut output = Vec::new();
+        while let Some(message) = channel.wait().await {
+            match message {
+                russh::ChannelMsg::Data { data } | russh::ChannelMsg::ExtendedData { data, .. } => {
+                    let keep = data.len().min(64 * 1024 - output.len());
+                    output.extend_from_slice(&data[..keep]);
+                }
+                russh::ChannelMsg::Failure => {
+                    return Err(RunnerError::Ssh("SSH probe command was rejected".into()))
+                }
+                russh::ChannelMsg::Eof => {
+                    let _ = channel.close().await;
+                }
+                russh::ChannelMsg::Close => break,
+                _ => {}
+            }
+        }
+        Ok(String::from_utf8_lossy(&output).into_owned())
+    })
+    .await
+    .map_err(|_| RunnerError::DeviceTestTimeout)?
 }
 
 impl SshConnection {
@@ -307,6 +434,15 @@ impl SshConnection {
         device: &DeviceProfile,
         config_dir: &Path,
         confirmation: Option<HostKeyChange>,
+    ) -> Result<Self> {
+        Self::connect_inner(device, config_dir, confirmation, None).await
+    }
+
+    async fn connect_inner(
+        device: &DeviceProfile,
+        config_dir: &Path,
+        confirmation: Option<HostKeyChange>,
+        probe_socket: Option<&mut Option<ProbeSocket>>,
     ) -> Result<Self> {
         if confirmation
             .as_ref()
@@ -329,10 +465,18 @@ impl SshConnection {
             confirmation,
         };
 
-        let mut handle = tokio::time::timeout(
-            Duration::from_secs(10),
-            client::connect(config, device.addr(), handler),
-        )
+        let mut handle = tokio::time::timeout(Duration::from_secs(10), async {
+            if let Some(cleanup) = probe_socket {
+                let socket = tokio::net::TcpStream::connect(device.addr())
+                    .await?
+                    .into_std()?;
+                *cleanup = Some(ProbeSocket(socket.try_clone()?));
+                let socket = tokio::net::TcpStream::from_std(socket)?;
+                client::connect_stream(config, socket, handler).await
+            } else {
+                client::connect(config, device.addr(), handler).await
+            }
+        })
         .await
         .map_err(|_| RunnerError::Ssh(format!("connect to {} timed out", device.addr())))??;
 

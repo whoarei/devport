@@ -6,11 +6,53 @@ import { testDeviceConnection } from "../src/deviceConnection";
 import { SshHostKeyDialog } from "../src/components/SshHostKeyDialog";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import i18n from "../src/i18n";
 
 const device = { ...emptyDevice(), name: "box", host: "example.com" };
 const change: HostKeyChange = { addr: "example.com:22", saved_fingerprint: "SHA256:old", received_fingerprint: "SHA256:new" };
 const changed = (value = change) => ({ code: "ssh_host_key_changed", message: "changed", ...value });
+
+test("canceling before the backend reports its test ID still cancels that probe", async (t) => {
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { crypto: globalThis.crypto } });
+  t.after(() => {
+    clearMocks();
+    Reflect.deleteProperty(globalThis, "window");
+  });
+  const cancellation = new AbortController();
+  const calls: string[] = [];
+  let cancelPayload: unknown;
+  mockIPC(async (command, payload) => {
+    calls.push(command);
+    if (command === "test_device") {
+      const started = (payload as { started: { onmessage: (id: string) => void } }).started;
+      await Promise.resolve();
+      started.onmessage("probe-1");
+      return null;
+    }
+    cancelPayload = payload;
+  });
+  const test = api.testDevice(device, undefined, cancellation.signal);
+  cancellation.abort();
+  assert.deepEqual(calls, ["test_device"]);
+  assert.equal(await test, null);
+  assert.deepEqual(calls, ["test_device", "cancel_device_test"]);
+  assert.deepEqual(cancelPayload, { testId: "probe-1" });
+});
+
+test("a canceled probe ignores a late host key change and cannot prompt", async (t) => {
+  let reject!: (error: unknown) => void;
+  const response = new Promise<string>((_, rejectResponse) => { reject = rejectResponse; });
+  const attempt = t.mock.method(api, "testDevice", () => response);
+  const cancellation = new AbortController();
+  const test = testDeviceConnection(device, async () => {
+    assert.fail("must not prompt after cancellation");
+  }, cancellation.signal);
+  cancellation.abort();
+  reject(changed());
+  assert.equal(await test, null);
+  assert.equal(attempt.mock.callCount(), 1);
+});
 
 test("canceling a changed key keeps the old trust and never retries", async (t) => {
   const attempt = t.mock.method(api, "testDevice", async () => { throw changed(); });

@@ -50,13 +50,38 @@ function DeviceManagerDialog() {
   const drag = useRef<Drag | null>(null);
   const animation = useRef<number | null>(null);
   const locked = useRef(false);
+  const activeTest = useRef<AbortController | null>(null);
   const device = editing ? { ...editing, name: automaticName ? automaticDeviceName(editing) : editing.name } : null;
   const dirty = !!device && draftKey(device) !== baseline;
   const busy = operation !== null || testing;
   const ordered = previewIds ? previewIds.flatMap((id) => devices.find((item) => item.id === id) ?? []) : devices;
   const selectedIndex = ordered.findIndex((item) => item.id === editing?.id);
 
+  const cancelTest = () => {
+    const current = activeTest.current;
+    if (!current) return;
+    activeTest.current = null;
+    current.abort();
+    setTesting(false);
+  };
+
+  const runTest = async (run: (signal: AbortSignal) => Promise<void>) => {
+    if (locked.current || activeTest.current) return;
+    const current = new AbortController();
+    activeTest.current = current;
+    setTesting(true);
+    try {
+      await run(current.signal);
+    } finally {
+      if (activeTest.current === current) {
+        activeTest.current = null;
+        setTesting(false);
+      }
+    }
+  };
+
   const choose = (next: DeviceProfile | null) => {
+    cancelTest();
     setEditing(next);
     setBaseline(next ? draftKey(next) : "");
     setAutomaticName(!!next && !next.id && !next.name.trim());
@@ -69,6 +94,7 @@ function DeviceManagerDialog() {
     dialog.current?.querySelector<HTMLInputElement>("#device-name")?.focus();
     void useAppStore.getState().loadDevices().catch((e) => setError(`${t("device.refreshFailed")}: ${errorMessage(e)}`));
     return () => {
+      activeTest.current?.abort();
       dialog.current?.close();
       if (animation.current !== null) cancelAnimationFrame(animation.current);
     };
@@ -89,11 +115,14 @@ function DeviceManagerDialog() {
   }, [devices, editing?.id]);
 
   const navigate = (action: () => void) => {
-    if (locked.current || testing) return;
+    if (locked.current || activeTest.current) return;
     if (dirty) setPending(() => action);
     else action();
   };
-  const close = () => navigate(() => useAppStore.getState().closeDeviceManager());
+  const close = () => {
+    cancelTest();
+    navigate(() => useAppStore.getState().closeDeviceManager());
+  };
   const add = () => navigate(() => choose({ ...emptyDevice(), is_default: devices.length === 0 }));
   const copy = () => {
     const id = editing?.id;
@@ -109,7 +138,7 @@ function DeviceManagerDialog() {
   };
 
   const save = async (): Promise<boolean> => {
-    if (!device || locked.current || testing) return false;
+    if (!device || locked.current || activeTest.current) return false;
     locked.current = true;
     setOperation("save");
     setError(null);
@@ -129,7 +158,7 @@ function DeviceManagerDialog() {
   };
 
   const reorder = async (ids: string[]) => {
-    if (locked.current || testing || ids.every((id, index) => devices[index]?.id === id)) return;
+    if (locked.current || activeTest.current || ids.every((id, index) => devices[index]?.id === id)) return;
     locked.current = true;
     setOperation("order");
     setPreviewIds(ids);
@@ -243,7 +272,7 @@ function DeviceManagerDialog() {
       onKeyDown={(event) => { if (event.key === "Escape" && drag.current) { event.preventDefault(); event.stopPropagation(); stopDrag(); } }}>
       <header className="device-dialog-header">
         <h2 id="device-manager-title">{t("device.manageTitle")}</h2>
-        <button type="button" className="device-icon-button" disabled={busy} aria-label={t("device.closeManager")} onClick={close}><DeviceIcon name="close" /></button>
+        <button type="button" className="device-icon-button" disabled={operation !== null} aria-label={t("device.closeManager")} onClick={close}><DeviceIcon name="close" /></button>
       </header>
       {error && <div className="device-manager-error" role="alert">{error}</div>}
       <div className="device-manager-body">
@@ -270,7 +299,7 @@ function DeviceManagerDialog() {
         </aside>
         {editing ? <DeviceEditor key={`${editing.id || "new"}:${editorSession}`} editing={editing} automaticName={automaticName} onAutomaticName={setAutomaticName}
           onChange={(patch) => setEditing((current) => current ? { ...current, ...patch } : current)} onSave={() => { void save(); }} onDelete={remove} onCopy={copy}
-          dirty={dirty} busy={busy} testing={testing} onTesting={setTesting}
+          dirty={dirty} busy={busy} testing={testing} onTest={runTest} onCancelTest={cancelTest}
           status={operation ? t(operation === "order" ? "device.orderSaving" : "device.saving") : !dirty && notice ? t(`device.${notice}`) : null} />
           : <div className="device-manager-empty-editor">{t("device.emptyDescription")}</div>}
       </div>

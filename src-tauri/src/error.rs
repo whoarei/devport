@@ -31,6 +31,9 @@ pub enum RunnerError {
     #[error("host key mismatch for {0}")]
     HostKeyMismatch(HostKeyChange),
 
+    #[error("connection test timed out")]
+    DeviceTestTimeout,
+
     #[error("device not found: {0}")]
     DeviceNotFound(String),
 

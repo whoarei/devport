@@ -12,16 +12,20 @@ export function hostKeyChange(error: unknown): HostKeyChange | null {
 export async function testDeviceConnection(
   device: DeviceProfile,
   confirm: (change: HostKeyChange) => Promise<boolean>,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   let confirmation: HostKeyChange | undefined;
-  for (;;) {
+  while (!signal?.aborted) {
     try {
-      return await api.testDevice(device, confirmation);
+      const result = await api.testDevice(device, confirmation, signal);
+      return signal?.aborted ? null : result;
     } catch (error) {
+      if (signal?.aborted) return null;
       const change = device.transport === "ssh" ? hostKeyChange(error) : null;
       if (!change) throw error;
       if (!await confirm(change)) return null;
       confirmation = change;
     }
   }
+  return null;
 }

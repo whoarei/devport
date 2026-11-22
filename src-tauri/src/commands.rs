@@ -1,14 +1,18 @@
 use crate::device::{DeviceProfile, DeviceStore};
-use crate::error::Result;
+use crate::error::{Result, RunnerError};
 use crate::runner::{RunManager, RunStatus};
 use crate::workspace_ref::WorkspaceRef;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf, time::Duration};
+use tokio::sync::oneshot;
+
+const DEVICE_TEST_TIMEOUT: Duration = Duration::from_secs(40);
 
 pub struct AppState {
     pub transfer_manager: crate::file_transfer::TransferManager,
     pub terminal_manager: crate::terminal::TerminalManager,
     pub run_manager: RunManager,
     pub device_store: DeviceStore,
+    pub(crate) device_tests: parking_lot::Mutex<HashMap<String, oneshot::Sender<()>>>,
     pub config_dir: PathBuf,
     pub event_rx: parking_lot::Mutex<tokio::sync::broadcast::Receiver<crate::runner::RunEvent>>,
     /// 活跃 Run 持有的 Environment lease（00005-python-runtime.md）；删除/GC 不得触碰
@@ -238,10 +242,31 @@ pub async fn test_device(
     state: tauri::State<'_, AppState>,
     device: DeviceProfile,
     host_key_confirmation: Option<crate::error::HostKeyChange>,
-) -> std::result::Result<String, serde_json::Value> {
-    test_device_connection(&device, &state.config_dir, host_key_confirmation)
-        .await
-        .map_err(connection_error)
+    started: tauri::ipc::Channel<String>,
+) -> std::result::Result<Option<String>, serde_json::Value> {
+    let test_id = uuid::Uuid::new_v4().to_string();
+    let (cancel, canceled) = oneshot::channel();
+    state.device_tests.lock().insert(test_id.clone(), cancel);
+    let result = match started.send(test_id.clone()) {
+        Ok(()) => tokio::select! {
+            biased;
+            _ = canceled => Ok(None),
+            result = tokio::time::timeout(
+                DEVICE_TEST_TIMEOUT,
+                test_device_connection(&device, &state.config_dir, host_key_confirmation),
+            ) => result.unwrap_or(Err(RunnerError::DeviceTestTimeout)).map(Some).map_err(connection_error),
+        },
+        Err(error) => Err(serde_json::json!(error.to_string())),
+    };
+    state.device_tests.lock().remove(&test_id);
+    result
+}
+
+#[tauri::command]
+pub fn cancel_device_test(state: tauri::State<'_, AppState>, test_id: String) {
+    if let Some(cancel) = state.device_tests.lock().remove(&test_id) {
+        let _ = cancel.send(());
+    }
 }
 
 fn connection_error(error: crate::error::RunnerError) -> serde_json::Value {
@@ -252,6 +277,9 @@ fn connection_error(error: crate::error::RunnerError) -> serde_json::Value {
             "addr": change.addr,
             "saved_fingerprint": change.saved_fingerprint,
             "received_fingerprint": change.received_fingerprint,
+        }),
+        RunnerError::DeviceTestTimeout => serde_json::json!({
+            "code": "device_test_timeout", "message": error.to_string(),
         }),
         other => serde_json::json!(other.to_string()),
     }
@@ -277,34 +305,7 @@ async fn test_device_connection(
     if device.transport == crate::device::TransportKind::Serial {
         return crate::serial::test_device(device).await;
     }
-    let conn = crate::ssh::client::SshConnection::connect_confirmed(
-        device,
-        config_dir,
-        host_key_confirmation,
-    )
-    .await?;
-    let channel = conn.handle.channel_open_session().await?;
-    channel
-        .exec(true, "uname -a && python3 --version 2>&1; echo EXIT:$?")
-        .await?;
-    let mut out = String::new();
-    let mut ch = channel;
-    while let Some(msg) = ch.wait().await {
-        match msg {
-            russh::ChannelMsg::Data { data } => {
-                out.push_str(&String::from_utf8_lossy(&data));
-            }
-            russh::ChannelMsg::ExtendedData { data, .. } => {
-                out.push_str(&String::from_utf8_lossy(&data));
-            }
-            russh::ChannelMsg::Eof => {
-                let _ = ch.close().await;
-            }
-            russh::ChannelMsg::Close => break,
-            _ => {}
-        }
-    }
-    Ok(out)
+    crate::ssh::client::probe_device(device, config_dir, host_key_confirmation).await
 }
 
 // ---------- 工作区 ----------

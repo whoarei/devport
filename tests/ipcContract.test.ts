@@ -19,7 +19,7 @@ function rustSources(dir: string): string {
 }
 
 /** Tauri 自己注入的参数：不出现在 IPC 载荷里 */
-const INJECTED = /State<|AppHandle|Window|ipc::Channel/;
+const INJECTED = /State<|AppHandle|Window/;
 
 const camel = (name: string) => name.replace(/_+([a-z0-9])/g, (_, char: string) => char.toUpperCase());
 

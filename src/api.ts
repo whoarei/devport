@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type { WorkEnvironment } from "./environmentState";
 
 export type AuthMethod =
@@ -371,8 +371,24 @@ export const api = {
   listDeletedDevices: () => invoke<DeletedDevice[]>("list_deleted_devices"),
   restoreDevice: (id: string) => invoke<DeviceProfile>("restore_device", { id }),
   purgeDeletedDevice: (id: string, deletedAt: string) => invoke<void>("purge_deleted_device", { id, deletedAt }),
-  testDevice: (device: DeviceProfile, hostKeyConfirmation?: HostKeyChange) =>
-    invoke<string>("test_device", { device, hostKeyConfirmation }),
+  testDevice: async (device: DeviceProfile, hostKeyConfirmation?: HostKeyChange, signal?: AbortSignal) => {
+    if (signal?.aborted) return null;
+    let testId: string | undefined;
+    const cancel = () => {
+      if (testId) void invoke<void>("cancel_device_test", { testId }).catch(() => {});
+    };
+    const started = new Channel<string>((id) => {
+      testId = id;
+      // The backend registers the probe before sending its ID, even if the UI already canceled.
+      if (signal?.aborted) cancel();
+    });
+    signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      return await invoke<string | null>("test_device", { device, hostKeyConfirmation, started });
+    } finally {
+      signal?.removeEventListener("abort", cancel);
+    }
+  },
   listSerialPorts: () => invoke<string[]>("list_serial_ports"),
   listWslDistributions: () => invoke<string[]>("list_wsl_distributions"),
   usbSnapshot: () => invoke<UsbSnapshot>("usb_snapshot"),

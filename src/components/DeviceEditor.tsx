@@ -61,12 +61,13 @@ interface DeviceEditorProps {
   dirty: boolean;
   busy: boolean;
   testing: boolean;
-  onTesting: (value: boolean) => void;
+  onTest: (run: (signal: AbortSignal) => Promise<void>) => void;
+  onCancelTest: () => void;
   status: string | null;
 }
 
 /** Attribute form; the manager owns the draft, persistence and navigation guards. */
-export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange: update, onSave, onDelete, onCopy, dirty, busy, testing, onTesting, status }: DeviceEditorProps) {
+export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange: update, onSave, onDelete, onCopy, dirty, busy, testing, onTest, onCancelTest, status }: DeviceEditorProps) {
   const { t } = useTranslation();
   const [testResult, setTestResult] = useState<string | null>(null);
   const [hostKeyPrompt, setHostKeyPrompt] = useState<HostKeyPrompt | null>(null);
@@ -124,11 +125,15 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
     if (editing.transport === "local") void refreshShells();
   }, [editing.transport]);
 
-  const test = async (d: DeviceProfile) => {
+  const test = async (signal: AbortSignal) => {
     setTestResult(t("device.connecting"));
-    onTesting(true);
+    const canceled = () => {
+      hostKeyResponse.current?.(false);
+      setTestResult(t("device.testStopped"));
+    };
+    signal.addEventListener("abort", canceled, { once: true });
     try {
-      const result = await testDeviceConnection(d, (change: HostKeyChange) => new Promise<boolean>((resolve) => {
+      const result = await testDeviceConnection(device, (change: HostKeyChange) => new Promise<boolean>((resolve) => {
         const respond = (confirmed: boolean) => {
           if (hostKeyResponse.current !== respond) return;
           hostKeyResponse.current = null;
@@ -137,11 +142,16 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
         };
         hostKeyResponse.current = respond;
         setHostKeyPrompt({ change, respond });
-      }));
-      setTestResult(result ?? t("device.testCanceled"));
+      }), signal);
+      if (!signal.aborted) setTestResult(result ?? t("device.testCanceled"));
     } catch (e) {
-      setTestResult(t("device.testFailed", { message: errorMessage(e) }));
-    } finally { onTesting(false); }
+      if (!signal.aborted) {
+        const timedOut = e && typeof e === "object" && "code" in e && e.code === "device_test_timeout";
+        setTestResult(timedOut ? t("device.testTimedOut") : t("device.testFailed", { message: errorMessage(e) }));
+      }
+    } finally {
+      signal.removeEventListener("abort", canceled);
+    }
   };
 
   const transports = [
@@ -352,8 +362,8 @@ export function DeviceEditor({ editing, automaticName, onAutomaticName, onChange
     </section>
     <footer className="device-dialog-footer">
       <div className="device-footer-secondary">
-        <button type="button" disabled={busy} onClick={() => test(device)}>
-          {testing && <span className="device-spinner" />}{t(testing ? "device.connecting" : "device.testConnection")}
+        <button type="button" disabled={busy && !testing} onClick={testing ? onCancelTest : () => onTest(test)}>
+          {testing && <span className="device-spinner" aria-hidden="true" />}{t(testing ? "device.cancelTest" : "device.testConnection")}
         </button>
       </div>
       <div className="device-footer-primary">
