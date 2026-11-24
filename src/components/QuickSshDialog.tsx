@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { errorMessage, type AuthMethod, type HostKeyChange } from "../api";
-import { activateQuickSsh, connectQuickSsh, recentSshAddresses, useQuickSshStore } from "../quickSsh";
+import { activateQuickSsh, closeQuickSsh, connectQuickSsh, useQuickSshStore } from "../quickSsh";
 import { useAppStore } from "../store";
 import { SshHostKeyDialog, type HostKeyPrompt } from "./SshHostKeyDialog";
 import "./QuickSshDialog.css";
@@ -9,22 +9,22 @@ import "./QuickSshDialog.css";
 type AuthChoice = "key" | "customKey" | "password";
 
 export function QuickSshDialog() {
-  const open = useQuickSshStore((state) => state.open);
-  return open ? <QuickSshForm /> : null;
+  const initialAddress = useQuickSshStore((state) => state.initialAddress);
+  return initialAddress === null ? null : <QuickSshForm initialAddress={initialAddress} />;
 }
 
-function QuickSshForm() {
+function QuickSshForm({ initialAddress }: { initialAddress: string }) {
   const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
   const addressInput = useRef<HTMLInputElement>(null);
   const passwordInput = useRef<HTMLInputElement>(null);
   const response = useRef<((confirmed: boolean) => void) | null>(null);
   const locked = useRef(false);
-  const [address, setAddress] = useState("");
+  const [address, setAddress] = useState(initialAddress);
   const [method, setMethod] = useState<AuthChoice>("key");
   const [password, setPassword] = useState("");
   const [keyPath, setKeyPath] = useState("");
-  const [recent] = useState(recentSshAddresses);
+  const recent = useQuickSshStore((state) => state.recentAddresses);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState<HostKeyPrompt | null>(null);
@@ -35,7 +35,7 @@ function QuickSshForm() {
     addressInput.current?.focus();
     return () => { response.current?.(false); };
   }, []);
-  const close = () => { if (!locked.current) useQuickSshStore.setState({ open: false }); };
+  const close = () => { if (!locked.current) closeQuickSsh(); };
   const confirm = (change: HostKeyChange) => new Promise<boolean>((resolve) => {
     const respond = (value: boolean) => { response.current = null; setPrompt(null); resolve(value); };
     response.current = respond;

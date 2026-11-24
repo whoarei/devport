@@ -3,7 +3,7 @@ import type { Messages } from "./zh";
 /** 英文字典：key 集合与 zh 完全一致（typeof zh 约束，漏翻编译报错）。 */
 export const en: Messages = {
   quickSsh: {
-    title: "SSH Quick Connect", help: "Connection help",
+    title: "SSH Quick Connect", help: "Connection help", recent: "Recent connections",
     address: "Address", addressHint: "Use [user@]host[:port] or ssh://user@host:port. Defaults: root, port 22. Use brackets for IPv6.",
     key: "SSH agent / default keys", customKey: "Specific private key", keyPath: "Private key path",
     privacy: "Recent connections store only addresses. Temporary connections and passwords are discarded on exit. Save as Device keeps the configuration and credentials.",

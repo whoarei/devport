@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { api, deviceWorkspace, localWorkspace } from "../src/api";
 import { emptyDevice } from "../src/components/DeviceEditor";
-import { activateQuickSsh, connectQuickSsh, recentSshAddresses, rememberSshAddress, useQuickSshStore } from "../src/quickSsh";
+import { activateQuickSsh, closeQuickSsh, connectQuickSsh, openQuickSsh, recentSshAddresses, rememberSshAddress, useQuickSshStore } from "../src/quickSsh";
 import { useAppStore } from "../src/store";
 import { useTerminalStore } from "../src/terminalStore";
 import { saveTemporaryDevice } from "../src/deviceActions";
@@ -23,6 +23,7 @@ function reset(t: test.TestContext) {
     if (original) Object.defineProperty(globalThis, "localStorage", original); else Reflect.deleteProperty(globalThis, "localStorage");
   });
   useAppStore.setState({ devices: [], selectedDeviceId: null, openTabs: [], recentWorkspaces: [], workspace: null });
+  useQuickSshStore.setState({ initialAddress: null, recentAddresses: [] });
   return storage;
 }
 
@@ -65,9 +66,31 @@ test("activation selects a temporary device, opens both panels and terminal, and
   assert.equal(app.layout.panelVisible.deviceWorkspace, true); assert.equal(app.layout.panelCollapsed.deviceWorkspace, false);
   assert.equal(app.layout.sidebarVisible, true); assert.equal(open.mock.callCount(), 1);
   assert.deepEqual(recentSshAddresses(), ["alice@server:2222"]);
+  assert.deepEqual(useQuickSshStore.getState().recentAddresses, ["alice@server:2222"]);
   assert.ok(!JSON.stringify([...storage]).includes("do-not-write"));
   rememberSshAddress({ ...temporary(), username: "alice:password" });
   assert.deepEqual(recentSshAddresses(), ["alice@server:2222"]);
+});
+
+test("recent SSH addresses are deduplicated, bounded, and can prefill a fresh connection", (t) => {
+  reset(t);
+  const device = temporary();
+  const hosts = Array.from({ length: 11 }, (_, index) => `server-${index}`);
+  for (const host of hosts) rememberSshAddress({ ...device, host });
+  rememberSshAddress({ ...device, host: hosts[4] });
+
+  const expected = [hosts[4], ...hosts.slice(1).reverse().filter((host) => host !== hosts[4])]
+    .map((host) => `alice@${host}:2222`);
+  assert.deepEqual(useQuickSshStore.getState().recentAddresses, expected);
+  assert.deepEqual(recentSshAddresses(), expected);
+
+  openQuickSsh(expected[1]);
+  assert.equal(useQuickSshStore.getState().initialAddress, expected[1]);
+  closeQuickSsh();
+  assert.equal(useQuickSshStore.getState().initialAddress, null);
+  openQuickSsh();
+  assert.equal(useQuickSshStore.getState().initialAddress, "");
+  assert.deepEqual(recentSshAddresses(), expected);
 });
 
 test("saving a temporary device keeps its identity and live editor source valid", async (t) => {

@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api";
 import { presetRunSessions, useAppStore } from "../store";
@@ -12,11 +12,14 @@ import { Icon } from "./Icon";
 import { RunElapsed } from "./RunElapsed";
 import { useShallow } from "zustand/react/shallow";
 import { preserveContentFocus } from "../focus";
-import { openQuickSsh } from "../quickSsh";
+import { openQuickSsh, useQuickSshStore } from "../quickSsh";
 import { SaveTemporaryDevice } from "./SaveTemporaryDevice";
 import { needsWorkspaceCopy } from "../workspaceRun";
 import { deviceDisplayNames } from "../workspacePresentation";
 import { historyArgs, historyCommand } from "../runHistory";
+
+const QUICK_SSH_OPTION = "__quick_ssh__";
+const RECENT_SSH_OPTION_PREFIX = "__quick_ssh_recent__:";
 
 export function RunToolbar() {
   const { t } = useTranslation();
@@ -28,6 +31,9 @@ export function RunToolbar() {
     activeRunId: s.activeRunId, active: s.activeRunId ? s.runs[s.activeRunId] : null,
   })));
   const feature = useWorkspaceRunStore();
+  const quickSshOption = useRef<HTMLOptionElement>(null);
+  const recentAddresses = useQuickSshStore((state) => state.recentAddresses);
+  const hasRecentAddresses = recentAddresses.length > 0;
   const device = devices.find((d) => d.id === selectedDeviceId);
   const deviceNames = deviceDisplayNames(devices);
   const running = useAppStore((s) => Object.values(s.runs).some(isActiveRun));
@@ -48,14 +54,31 @@ export function RunToolbar() {
     setDetailsRunId(null);
     if (activeRunId) void feature.recover(activeRunId);
   }, [activeRunId, feature.recover]);
+  useEffect(() => {
+    const option = quickSshOption.current;
+    if (!option || !devices.length || !hasRecentAddresses) return;
+    // Chromium supports a native separator, but React 18's select nesting check predates it.
+    const separator = document.createElement("hr");
+    option.before(separator);
+    return () => separator.remove();
+  }, [devices, hasRecentAddresses]);
+
+  const selectTarget = (value: string) => {
+    if (value === QUICK_SSH_OPTION) openQuickSsh();
+    else if (value.startsWith(RECENT_SSH_OPTION_PREFIX)) openQuickSsh(value.slice(RECENT_SSH_OPTION_PREFIX.length));
+    else feature.selectTarget(value || null);
+  };
 
   return <div className="run-toolbar">
     <div className="run-toolbar-strip">
       <div className="run-target">
-        <select aria-label={t("run.selectDeviceAria")} title={device ? deviceLabel(device) : t("run.selectDeviceFirst")} value={selectedDeviceId ?? ""} onChange={(e) => e.target.value === "__quick_ssh__" ? openQuickSsh() : feature.selectTarget(e.target.value || null)}>
+        <select aria-label={t("run.selectDeviceAria")} title={device ? deviceLabel(device) : t("run.selectDeviceFirst")} value={selectedDeviceId ?? ""} onChange={(e) => selectTarget(e.target.value)}>
           <option value="" disabled>{t("run.selectDeviceFirst")}</option>
           {devices.map((d) => <option key={d.id} value={d.id}>{deviceNames.get(d.id)}</option>)}
-          <option value="__quick_ssh__">{t("quickSsh.title")}…</option>
+          <option ref={quickSshOption} value={QUICK_SSH_OPTION}>{t("quickSsh.title")}…</option>
+          {hasRecentAddresses && <optgroup label={t("quickSsh.recent")}>
+            {recentAddresses.map((address) => <option key={address} value={`${RECENT_SSH_OPTION_PREFIX}${address}`}>{address}</option>)}
+          </optgroup>}
         </select>
         {device?.temporary && <SaveTemporaryDevice key={device.id} device={device}
           onSaveErrorChange={(message) => setSaveError(message ? { deviceId: device.id, message } : null)} />}

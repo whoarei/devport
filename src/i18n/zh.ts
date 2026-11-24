@@ -4,7 +4,7 @@
  */
 export const zh = {
   quickSsh: {
-    title: "SSH 快速连接", help: "连接说明",
+    title: "SSH 快速连接", help: "连接说明", recent: "最近连接",
     address: "连接地址", addressHint: "支持 [用户@]主机[:端口] 或 ssh://用户@主机:端口；默认 root、22 端口。IPv6 请使用方括号。",
     key: "SSH agent / 默认密钥", customKey: "指定私钥", keyPath: "私钥路径",
     privacy: "最近连接只记录地址。退出时丢弃临时连接和密码，选择「保存为设备」可保存配置和凭据。",
