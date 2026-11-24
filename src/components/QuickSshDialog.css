@@ -18,5 +18,3 @@
 .quick-ssh-help summary { width: fit-content; cursor: pointer; }
 .quick-ssh-help p { margin: 6px 0 0; line-height: 1.55; overflow-wrap: anywhere; }
 .quick-ssh-dialog .dialog-actions { margin-top: 16px; }
-.temporary-device-notice { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; color: var(--text-secondary); font-size: 12px; }
-.temporary-device-notice button { white-space: nowrap; }

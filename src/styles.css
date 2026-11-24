@@ -995,6 +995,11 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
   font-size: 12px;
   text-overflow: ellipsis;
 }
+.temporary-device-notice { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; color: var(--text-secondary); font-size: 12px; }
+.temporary-device-notice button { white-space: nowrap; }
+.temporary-device-notice button > .ui-icon { display: none; }
+.run-target .temporary-device-notice { flex-shrink: 0; gap: 6px; padding: 0; white-space: nowrap; }
+.run-target .temporary-device-notice button { min-height: 28px; padding: 2px 6px; font-size: 12px; }
 .run-tool {
   display: inline-flex;
   align-items: center;
@@ -1056,6 +1061,10 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .run-task-details dd { margin: 0; }
 .run-task-details code { white-space: pre-wrap; }
 
+@container run-toolbar (max-width: 600px) {
+  .run-target .temporary-device-label, .run-target .temporary-device-notice button > span { display: none; }
+  .run-target .temporary-device-notice button > .ui-icon { display: inline-block; }
+}
 @container run-toolbar (max-width: 460px) {
   .run-sync > span { display: none; }
 }

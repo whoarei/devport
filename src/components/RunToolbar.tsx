@@ -22,6 +22,7 @@ export function RunToolbar() {
   const { t } = useTranslation();
   const detailsId = useId();
   const [detailsRunId, setDetailsRunId] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<{ deviceId: string; message: string } | null>(null);
   const { devices, selectedDeviceId, workspace, activeRunId, active } = useAppStore(useShallow((s) => ({
     devices: s.devices, selectedDeviceId: s.selectedDeviceId, workspace: s.workspace,
     activeRunId: s.activeRunId, active: s.activeRunId ? s.runs[s.activeRunId] : null,
@@ -56,6 +57,8 @@ export function RunToolbar() {
           {devices.map((d) => <option key={d.id} value={d.id}>{deviceNames.get(d.id)}</option>)}
           <option value="__quick_ssh__">{t("quickSsh.title")}…</option>
         </select>
+        {device?.temporary && <SaveTemporaryDevice key={device.id} device={device}
+          onSaveErrorChange={(message) => setSaveError(message ? { deviceId: device.id, message } : null)} />}
         {canSync && <button type="button" className="run-tool run-sync" disabled={syncBlocked || running} onMouseDown={preserveContentFocus}
           aria-label={t("workspaceSync.action")} title={t(running ? "workspaceSync.running" : "workspaceSync.action")}
           onClick={() => void feature.syncWorkspace()}><Icon name="refresh" /><span>{t("workspaceSync.action")}</span></button>}
@@ -82,7 +85,7 @@ export function RunToolbar() {
           : !active.workspace_sync_only && <RunReplayButton run={active} standalone />}
       </div>}
     </div>
-    {device?.temporary && <SaveTemporaryDevice key={device.id} device={device} />}
+    {device?.temporary && saveError?.deviceId === device.id && <div className="runtime-error" role="alert">{saveError.message}</div>}
     {live && (active.waiting_workspace || active.phase || progress) && <div className="run-activity" role="status">
       {[active.waiting_workspace ? t("workspaceSync.waiting") : null, active.phase ? runPhaseLabel(active.phase) : null, progress].filter(Boolean).join(" · ")}
     </div>}

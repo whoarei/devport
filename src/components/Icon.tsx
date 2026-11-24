@@ -16,6 +16,7 @@ const paths = {
   server: <><rect x="3" y="3" width="14" height="6" rx="1.5" /><rect x="3" y="11" width="14" height="6" rx="1.5" /><path d="M6 6h.01M6 14h.01M10 6h4m-4 8h4" /></>,
   monitor: <><rect x="2.5" y="3" width="15" height="11" rx="1.5" /><path d="M6 17h8m-4-3v3" /></>,
   serial: <path d="M7 2v4m6-4v4M5 6h10v3a5 5 0 0 1-10 0Zm5 8v4" />,
+  save: <path d="M4 3h10l3 3v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm2 0v5h7V3M6 17v-5h8v5" />,
   arrowUp: <path d="M10 16V4m-5 5 5-5 5 5" />,
   arrowRight: <path d="M4 10h12m-5-5 5 5-5 5" />,
   arrowLeft: <path d="M16 10H4m5-5-5 5 5 5" />,
